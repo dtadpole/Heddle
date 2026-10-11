@@ -1,7 +1,7 @@
 ---
 title: heddle
-version: 0.2.0
-description: A harness and agent framework built on Cordis, in TypeScript, with ten verifiers deciding what completes it.
+version: 0.3.0
+description: A harness and agent framework built on Cordis, in TypeScript, with eleven verifiers deciding what completes it.
 level: L2
 status: unverified
 grounded_in:
@@ -18,9 +18,13 @@ English) → `heald` / `heddle` (modern); this project takes the modern word, th
 recognises. Its bare npm name belongs to an unrelated package, so releases go out under the owner's
 scope as **`@dtadpole/heddle`** while the command stays `heddle`.
 
-**Status: a scaffold, not a harness.** What exists is the frame the rest hangs on — a root context, one
-service, one consumer of it, a console exporter, and tests that pin the framework's behaviour. Tools,
-sessions, models, sandboxing and the config-driven plugin tree are all still to come.
+**Status: a harness, and a small one.** It loads its plugin tree from configuration, talks to real
+model backends and streams their reasoning and answers as they arrive, keeps sessions as append-only
+event logs grouped under workspaces, runs an agentic loop over registered tools, composes its context
+with a token budget and compaction, offers hook points around a model and a tool call, confines file
+effects with a permission sandbox, and serves a token-protected Web UI on localhost. What completes it
+is stated part by part in [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md), and decided by
+[`_verifiers_/`](_verifiers_/INDEX.md) — sixty-six checks, all passing.
 
 ## The Web UI
 
@@ -54,17 +58,28 @@ erasable syntax only so nothing needs a loader.
 
 ```
 src/
-  app.ts                     createApp(): root context plus the plugins
+  boot.ts                    composes the layers and starts the tree
   cli.ts                     the `heddle` command
-  events.ts                  the events Heddle's plugins may emit
-  index.ts                   the public surface
-  plugins/
-    greeting.ts              a service: config, lifecycle, `greet()`
-    announce.ts              a consumer: inject-gated, listens for `heddle/ready`
-    console-exporter.ts      sends the built-in logger to the terminal
-test/
-  boot.test.ts               what the framework is expected to guarantee
+  config/                    profiles, layers, includes, references, validation, provenance
+  agent/loop.ts              one turn: context, model, tools, recorded as it happens
+  llm/                       the model service, its wire adapters, and the HTTP client
+  context/                   assembly order, the token budget, pruning, compaction
+  session/                   the append-only event log and its service
+  workspace/                 workspaces as folders with records, sessions under them
+  sandbox/                   where a file effect may land, by mode
+  approvals/                 whether an action may be taken at all
+  tools/                     the tool registry and the tools this project ships
+  server/                    the Web UI and its token
+  stream/                    the live view on a terminal, from the same events
+  plugins/                   the Cordis plugins a profile names
+_context_/                   how DSH implements each mechanism this one mirrors
+_tools_/                     the verifier runner and the check helpers
+_verifiers_/                 the eleven verifications, one folder each
+test/                        the framework's own unit suite
 ```
+
+Every folder carries an `INDEX.md`; [`AGENTS.md`](AGENTS.md) is the entry point for whoever works
+here.
 
 ## The Cordis rules this code follows
 
@@ -81,11 +96,14 @@ test/
 
 ## Roadmap
 
-- [ ] the loader: `cordis.yml` plus `@deepseek-ai/cordis-plugin-loader`, so the tree is configuration
-- [ ] an LLM service and a session model
-- [ ] tools and commands as services, registered rather than imported
-- [ ] a sandbox and approval policy
-- [ ] one real end-to-end run, recorded as a test
+What is left is not a list of mechanisms — those are built and judged. It is what a harness needs
+once one person uses it daily:
+
+- [ ] **the published package**: `@dtadpole/heddle@0.0.1` exists; a release after this work does not
+- [ ] **a browser check**: the Web UI is judged over HTTP, not by a browser
+- [ ] **compaction that scales**: the summary is one model call; a long project will want a policy
+- [ ] **more than one workspace root**: workspaces are discovered from session directories today
+- [ ] **README-driven onboarding**: what a second person needs that this one supplies from memory
 
 ## License
 
