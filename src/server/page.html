@@ -191,6 +191,42 @@ const ledger = document.getElementById('ledger')
 const timeline = document.getElementById('timeline')
 /** Where each turn's section is, so picking a segment can take the reader to it. */
 const turnAnchors = new Map()
+
+/**
+ * Whether the ledger should keep moving to its newest record.
+ *
+ * The rule DSH states and the reason it exists: the view follows the tail while a session is running, and
+ * **stops following when the reader scrolls up**, so arriving records do not move the text being read. A
+ * ledger that always jumped to the bottom would be unusable during a long turn, which is exactly when a
+ * person wants to read what already happened.
+ *
+ * It starts true, because opening at the tail is what a reader wants from a view of what just happened.
+ */
+let followTail = true
+/** How close to the bottom still counts as following. A few pixels, because a scrollbar is not exact. */
+const FOLLOW_SLACK_PX = 24
+
+ledger.addEventListener('scroll', () => {
+  const distance = ledger.scrollHeight - ledger.scrollTop - ledger.clientHeight
+  followTail = distance <= FOLLOW_SLACK_PX
+})
+
+/**
+ * Put the newest record in view, when the reader has not scrolled away from it.
+ *
+ * Written on the next frame rather than immediately, and that is a fix rather than a flourish: measured, the
+ * ledger opened 40px short of its tail because the scroll was written before the legend that sits above the
+ * rows had been laid out, so the pane grew underneath the position. Scrolling after layout has settled is
+ * what makes "opens at the tail" true rather than nearly true.
+ */
+function followLedgerTail() {
+  if (!followTail || view !== 'trajectory') return
+  const place = () => {
+    if (followTail && view === 'trajectory') ledger.scrollTop = ledger.scrollHeight
+  }
+  place()
+  requestAnimationFrame(place)
+}
 const list = document.getElementById('sessions')
 let current = null
 
@@ -278,7 +314,11 @@ async function showView(next) {
   log.hidden = view !== 'chat'
   ledger.hidden = view !== 'trajectory'
   timeline.hidden = view !== 'trajectory'
-  if (view === 'trajectory' && current !== null) await showLedger(current)
+  if (view === 'trajectory' && current !== null) {
+    followTail = true
+    await showLedger(current)
+    followLedgerTail()
+  }
 }
 
 /** Read the ledger projection for one session and draw it. */
@@ -556,7 +596,21 @@ events.addEventListener('session', (message) => {
   else if (event.type === 'assistant/chunk' && event.chunk.type === 'tool-call') add('tool', event.chunk.arguments ?? '{}', false, '→ ' + event.chunk.name)
   else if (event.type === 'message' && event.message.role === 'user') add('user', event.message.content.map((part) => part.text ?? '').join(''))
   else if (event.type === 'message' && event.message.role === 'tool') add(event.message.content.some((part) => part.text?.startsWith('error')) ? 'denied' : 'tool', event.message.content.map((part) => part.text ?? '').join(''))
+  /**
+   * The ledger is a projection and is refetched rather than appended to, so following it means asking for it
+   * again — and only when the reader has not scrolled away.
+   */
+  if (view === 'trajectory' && followTail && current !== null) {
+    if (ledgerRefetchTimer !== null) clearTimeout(ledgerRefetchTimer)
+    ledgerRefetchTimer = setTimeout(() => {
+      ledgerRefetchTimer = null
+      void showLedger(current)
+    }, 500)
+  }
 })
+
+/** Coalesces the burst of events one turn produces into a single ledger refetch. */
+let ledgerRefetchTimer = null
 
 document.getElementById('prompt').addEventListener('submit', async (submitEvent) => {
   submitEvent.preventDefault()

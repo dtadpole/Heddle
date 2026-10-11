@@ -166,9 +166,15 @@ test('a browser renders the ledger, its timeline, and switches back to the conve
   if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
   const fixture = await startServer('browser')
   const server = await startCli(['web', '--host', '127.0.0.1', '--port', '0', ...fixture.args], fixture.env)
-  const browser = await openBrowser()
+  /**
+   * A deliberately **short** window, because the tail claim only means something if the ledger scrolls: in a
+   * tall window a ledger of a few records does not, and "opens at the tail" would pass by being at the top.
+   */
+  const browser = await openBrowser({ width: 1100, height: 420 })
   try {
     const cookie = await handshakeCookie(server.url)
+    await runOneTurn(server, cookie)
+    /** A second turn, so the ledger is longer than the pane and the position is testable. */
     await runOneTurn(server, cookie)
 
     await browser.goto(server.url)
@@ -235,6 +241,32 @@ test('a browser renders the ledger, its timeline, and switches back to the conve
     assert.ok(
       await browser.waitFor(`document.querySelector('#timeline button[aria-current="true"]') !== null`, 5_000),
       'picking a segment marks it as the one being shown',
+    )
+
+    /**
+     * The ledger opens at its **tail**, and following stops when the reader scrolls up.
+     *
+     * The rule DSH states, and the reason it exists: a ledger that always jumped to the bottom would be
+     * unusable during a long turn, which is exactly when a person wants to read what already happened. The
+     * domain is checked too, because a ledger with nothing to scroll would satisfy the position by accident.
+     */
+    const tail = JSON.parse(
+      await browser.evaluate(`(() => {
+        const pane = document.getElementById('ledger')
+        const atTail = pane.scrollHeight - pane.scrollTop - pane.clientHeight
+        return JSON.stringify({ scrollable: pane.scrollHeight > pane.clientHeight, distanceFromTail: atTail })
+      })()`),
+    )
+    assert.ok(tail.scrollable, `the ledger is long enough to scroll, so the position means something (${JSON.stringify(tail)})`)
+    assert.ok(tail.distanceFromTail <= 24, `it opens at its tail (${tail.distanceFromTail}px from it)`)
+
+    await browser.evaluate(`(() => { const pane = document.getElementById('ledger'); pane.scrollTop = 0; pane.dispatchEvent(new Event('scroll')) })()`)
+    await browser.evaluate(`document.querySelector('#ledger details.record > summary').click()`)
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 700))
+    assert.equal(
+      await browser.evaluate(`document.getElementById('ledger').scrollTop`),
+      0,
+      'and a reader who scrolls to the top is left there, rather than pulled back to the tail',
     )
 
     await browser.evaluate(`document.querySelector('#views button[data-view="chat"]').click()`)
