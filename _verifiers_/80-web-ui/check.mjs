@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { chatDouble, fixtureDir, httpConfig, isolatedHome, parseJson, removeDir, runCli, runCliSource, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
+import { browserAvailable, openBrowser } from '../../_tools_/check-helpers/browser.mjs'
 
 /**
  * Verifier 9 — the Web UI.
@@ -311,6 +312,53 @@ test('main content and reasoning reach the stream while the model is still writi
       `the content delta arrived at ${contentAt}ms and the turn finished at ${turnDoneAt}ms`,
     )
   } finally {
+    await server.close()
+  }
+})
+
+test('the composer fills the panel and does not run off the screen', async (context) => {
+  if (!skipUnless(context, await supportsWeb(), CAPABILITY)) return
+  /**
+   * The prompt box is the control a person uses most, and nothing judged its **width** — measured, after an
+   * edit that inserted the ledger's styles used the composer's CSS block as its anchor and replaced it
+   * without restoring it: the form fell back to `display: block`, the textarea became an inline-level box,
+   * and the prompt occupied 181px of a 1046px panel with the run button beside it.
+   *
+   * A screenshot would not have caught it either, which is why the claim is arithmetic: the input is the
+   * panel minus the button and the padding, and nothing overflows the viewport horizontally.
+   */
+  const server = await startServer('composer')
+  if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) {
+    await server.close()
+    return
+  }
+  const browser = await openBrowser({ width: 1400, height: 800 })
+  try {
+      await browser.goto(server.url)
+        assert.ok(await browser.waitFor('document.getElementById("prompt") !== null', 20_000), 'the composer is there')
+        const box = JSON.parse(
+          await browser.evaluate(`(() => {
+            const form = document.getElementById('prompt')
+            const field = document.querySelector('textarea')
+            const panel = document.querySelector('main')
+            return JSON.stringify({
+              formDisplay: getComputedStyle(form).display,
+              formWidth: Math.round(form.getBoundingClientRect().width),
+              fieldWidth: Math.round(field.getBoundingClientRect().width),
+              panelWidth: Math.round(panel.getBoundingClientRect().width),
+              fieldRight: Math.round(field.getBoundingClientRect().right),
+              viewport: window.innerWidth
+            })
+          })()`),
+        )
+        assert.equal(box.formDisplay, 'flex', 'the composer is a flex row')
+        assert.ok(
+          box.fieldWidth >= box.formWidth - 160,
+          `the input fills the panel rather than a fraction of it (${box.fieldWidth}px of ${box.formWidth}px)`,
+        )
+        assert.ok(box.fieldRight <= box.viewport, `and nothing runs off the screen (right edge ${box.fieldRight} of ${box.viewport})`)
+  } finally {
+    browser.close()
     await server.close()
   }
 })

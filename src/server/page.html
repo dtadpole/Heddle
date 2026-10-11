@@ -188,6 +188,16 @@
   #tree .empty { font-size: .78rem; opacity: .5; padding-left: 1.4rem; }
   #history { margin-top: .9rem; }
   #history > summary { cursor: pointer; font-size: .8rem; opacity: .6; }
+  /**
+   * The composer is a flex row, and **this rule is load-bearing**: without it the form is a block, the
+   * textarea is an inline-level box, and the prompt occupies about a sixth of the panel with the run button
+   * beside it. Measured after it went missing: form 1046px wide, textarea 181px.
+   *
+   * It went missing because an edit that inserted the ledger's styles used this block as its anchor and
+   * replaced it without restoring it — a regression no test noticed, because nothing judged the composer's
+   * width. The check that exists now does.
+   */
+  form { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid var(--line); }
   textarea { flex: 1; resize: vertical; min-height: 3.5rem; font: inherit; padding: .5rem; }
   button { font: inherit; padding: .5rem 1rem; }
 </style>

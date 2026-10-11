@@ -33,7 +33,7 @@ deliberately does not.
 
 ## Where each stands, 2026-10-11
 
-**94 checks, 0 failures, 0 unjudged**, measured by running every verifier after `npm run build` on
+**95 checks, 0 failures, 0 unjudged**, measured by running every verifier after `npm run build` on
 2026-10-11. Nothing is left unjudged: the fourteen checks that were waiting on part 7's mechanism —
 written ahead of it because the owner asked for the checks first — now pass, and the two that are
 allowed to report unjudged (part 1's real-backend probe and the daemon check) both found their subject
@@ -56,7 +56,7 @@ a diff against the previous measurement.
 | 6 | 6 | `0` — the hook points, retarget, refusal, replacement, a refusal that stops, a broken hook named |
 | 7 | 22 | `0` — the transcript, resume and a frame torn by an interruption; containment, the segment-wise trap and the nearest root; one session per folder and `--new`; the tree's one level, kinds, badges, laziness, plumbing and the boundary that only an instance carries a session; and, in a browser, that a folder opens and closes with the same control |
 | 8 | 5 | `0` — the three modes, the sibling prefix, and the temp directory only when admitted |
-| 9 | 4 | `0` — port, page, API, and the live stream |
+| 9 | 5 | `0` — port, page, API, the live stream, and a composer that fills the panel |
 | 10 | 10 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode, a stale token's recovery page, session history over the API and in a browser |
 | 11 | 2 | `0` — the ledger's fields and rules over the API, and a browser drawing both views with a timeline |
 | 12 | 1 | `0` — a divider that is a control, a pointer drag, the limits, the arrow keys, and the width after a reload |
