@@ -442,6 +442,103 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
   }
 
   /**
+   * How one session's context was **composed**, for the view that shows it.
+   *
+   * The answer is the same report `heddle context <id>` prints, plus the two things a person cannot get
+   * from a token count: the **surface** — which events the model will actually read, and which ones a
+   * compaction summary stands in for — and the **notes** the assembler wrote, which is where the system
+   * prompt and the instruction baseline come from. A budget is checkable from numbers; "the instructions
+   * on the surface are the current ones" and "the summary is in there once, where the span was" are
+   * claims about the messages themselves.
+   *
+   * It is a `GET` because assembling is a read after the first call, and it is per session because that
+   * is what the question means: the same folder can hold two sessions that were composed differently.
+   */
+  if (url.pathname === '/api/context' && request.method === 'GET') {
+    const context = ctx.context
+    if (context === undefined) {
+      respond(response, 503, 'application/json', `${JSON.stringify({ error: 'this profile does not load the context plugin' })}\n`)
+      return
+    }
+    const wanted = url.searchParams.get('session')
+    if (wanted === null || wanted.length === 0) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'a session is required' })}\n`)
+      return
+    }
+    const handle = ctx.session.store.open(wanted)
+    if (handle === null) {
+      respond(response, 404, 'application/json', `${JSON.stringify({ error: `no session ${wanted}` })}\n`)
+      return
+    }
+    /**
+     * The directory the run resolves its instructions from, not the shell's — asking for a resumed
+     * session's composition and getting a different answer than the run would produce is the failure
+     * this avoids, which is why the same option is passed here as the CLI passes there.
+     */
+    const cwd = ctx.sandbox?.workspaceRoot ?? process.cwd()
+    const endpoint = url.searchParams.get('endpoint')
+    const report = context.assemble(handle, {
+      cwd,
+      tools: ctx.tools.describe(),
+      ...(endpoint !== null && endpoint.length > 0 ? { endpoint } : {}),
+    })
+    const surface = ctx.session.store.surface(handle)
+    const notes = ctx.session
+      .events(handle)
+      .filter((event) => event.type === 'context/note')
+      .map((event) => {
+        /**
+         * A note's message is read defensively: the event type carries it, but `SessionEvent` does not
+         * narrow it, and a view that assumed the shape would break on the first note written differently.
+         */
+        const message = (event as { message?: { content?: readonly { type?: string; text?: string }[] } }).message
+        return {
+          seq: event.seq,
+          origin: typeof event.origin === 'string' ? event.origin : '',
+          text: (message?.content ?? []).map((part) => (part.type === 'text' ? part.text ?? '' : '')).join(''),
+        }
+      })
+    respond(
+      response,
+      200,
+      'application/json',
+      `${JSON.stringify(
+        {
+          session: handle.id,
+          cwd,
+          endpoint: endpoint !== null && endpoint.length > 0 ? endpoint : null,
+          instructions: report.instructions,
+          estimatedTokens: report.estimatedTokens,
+          contextWindow: report.contextWindow,
+          thresholdTokens: report.thresholdTokens,
+          pruned: report.pruned,
+          compacted: report.compacted,
+          surface: {
+            nodes: surface.nodes,
+            replacements: surface.replacements.map((replacement) => ({
+              seq: replacement.seq,
+              startSeq: replacement.startSeq,
+              endSeq: replacement.endSeq,
+              shadowedSeqs: replacement.shadowedSeqs,
+            })),
+          },
+          notes,
+          messages: report.messages.map((message) => ({
+            role: message.role,
+            ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
+            text: message.content
+              .map((part) => (part.type === 'tool-call' ? `→ ${part.name} ${part.arguments}` : part.text))
+              .join(''),
+          })),
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    return
+  }
+
+  /**
    * Register a folder as a workspace root, or unregister one.
    *
    * These are the two buttons the left column offers, and both go through the same record the CLI
