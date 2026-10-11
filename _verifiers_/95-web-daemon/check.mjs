@@ -122,9 +122,22 @@ test('the daemon is loaded, owns the port and answers, or this host has none', a
    * The server is the daemon's child, so asking the server is asking the daemon. The page is checked too,
    * because a health endpoint that answers while the UI does not is the shape of a half-started service.
    */
-  const page = await fetch(`http://127.0.0.1:${installed.port}/`)
-  assert.equal(page.status, 200, 'the UI page is served')
-  assert.match(await page.text(), /<title>heddle<\/title>/, 'and it is the harness page')
+  /**
+   * The bare page is refused, and served with a session: the daemon fronts a server that now requires one.
+   * This asserted a public page, which was the behaviour before the correction.
+   */
+  /**
+   * The bare page is refused, and the refusal is a document rather than a sentence.
+   *
+   * The check cannot hand itself a session here — the launch token is minted per process and printed into
+   * the daemon's log, which this check does not read — so it asserts the two things the daemon's own
+   * configuration decides: the refusal, and that the refusal is the page that offers the form. The
+   * authenticated page is judged by `80-web-ui` and `90-web-ui-token`, which start their own server.
+   */
+  const refused = await fetch(`http://127.0.0.1:${installed.port}/`)
+  assert.equal(refused.status, 401, 'the bare page is refused without a session')
+  assert.match(refused.headers.get('content-type') ?? '', /text\/html/, 'and the refusal is a document')
+  assert.match(await refused.text(), /<form[^>]*action="\/"/, 'carrying the form that opens it')
 
   // Authentication still applies to data, even though the daemon is trusted: the token protects the API.
   const api = await fetch(`http://127.0.0.1:${installed.port}/api/sessions`)

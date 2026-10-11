@@ -272,11 +272,28 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
     query: url.searchParams.get(TOKEN_QUERY),
   }
   const decision = authorize(credentials, { launchToken: state.token, secret: state.secret, authority })
+  /** What the request actually offered, so a refusal can say which it was. */
+  const offered = { cookie: credentials.cookie !== null, token: credentials.query !== null }
 
-  // The page itself may be served without the cookie; it carries no data and asks for
-  // the token in its own form. Everything that answers with data requires it.
+  /**
+   * The page is served to a **session**, and refused with an explanation otherwise.
+   *
+   * The first version served the app shell to anyone who asked for `/`, on the reasoning that the page
+   * carries no data and has a token form in it. Measured, that failed open in a way a person notices:
+   * `http://127.0.0.1:3082/` with no cookie answered `200` with the whole UI — session list, prompt box and
+   * an empty log — so it looked like a working page that had lost its data, rather than like a page that had
+   * not been opened with a token. DSH refuses the bare URL with `401`, and this now does too.
+   *
+   * The cookie is the same credential the launch token mints, so a browser that has been through the printed
+   * URL keeps working: the bare URL is served whenever the cookie matches, and refused when it does not.
+   */
   if (url.pathname === '/' && request.method === 'GET') {
-    respond(response, 200, 'text/html; charset=utf-8', page())
+    const access = pageAccess(decision, offered)
+    if (access.status === 200) {
+      respond(response, 200, 'text/html; charset=utf-8', page())
+      return
+    }
+    respond(response, access.status, 'text/html; charset=utf-8', tokenFormPage({ stale: access.stale }))
     return
   }
 
@@ -564,6 +581,19 @@ export function transcriptTurns(
  * was a bare sentence while the unauthenticated case had a form, and there was no reason for the two to
  * differ other than that they were written apart.
  */
+/**
+ * What a request for the page is answered with.
+ *
+ * A pure decision, so the rule can be judged without a server: the page needs a session, and a refusal says
+ * which of the two situations the caller is in. The first version of this route served the page to anyone —
+ * measured, the bare URL returned `200` and a whole UI with an empty log, which reads as a broken page
+ * rather than as an unopened one.
+ */
+export function pageAccess(decision: { readonly ok: boolean }, offered: { readonly cookie: boolean }): { readonly status: number; readonly stale: boolean } {
+  if (decision.ok) return { status: 200, stale: false }
+  return { status: 401, stale: offered.cookie }
+}
+
 export function tokenFormPage(options: { readonly stale?: boolean } = {}): string {
   /**
    * Two refusals, told apart on the page.

@@ -555,3 +555,61 @@ test('the page renders a session\'s history in blocks, and collapses reasoning a
     removeDir(fixture.work)
   }
 })
+
+test('the bare URL is refused with an explanation, or served when the cookie matches', async (context) => {
+  if (!skipUnless(context, await supportsWeb(), CAPABILITY)) return
+  /**
+   * Three cases, and the first is the one that was wrong: the bare URL used to answer `200` with the whole
+   * app — session list, prompt box, empty log — which reads as a page that lost its data rather than as one
+   * that was never opened with a token. Measured, and DSH refuses its bare URL outright, so this is also the
+   * behaviour the owner asked heddle to match.
+   *
+   * The cookie is the same credential the launch token mints, so the middle case is what makes the bare URL
+   * useful: a browser that has been through the printed URL once keeps working.
+   */
+  const fixture = await startServer('bare-url')
+  const server = await startCli(fixture.args, fixture.env)
+  const origin = new URL(server.url).origin
+  try {
+    // 1. No credential: a document that explains, and not the app.
+    const bare = await fetch(`${origin}/`)
+    assert.equal(bare.status, 401, 'the bare URL without a credential is refused')
+    const bareHtml = await bare.text()
+    assert.match(bareHtml, /launch token is required/i, 'and says a token is required')
+    assert.match(bareHtml, /<form[^>]*action="\/"/, 'with the form to paste one')
+    assert.doesNotMatch(bareHtml, /id="log"/, 'while NOT serving the app shell')
+
+    // 2. A valid cookie: the app, with no token in the URL.
+    const cookie = await handshakeCookie(server.url)
+    const withCookie = await fetch(`${origin}/`, { headers: { cookie } })
+    assert.equal(withCookie.status, 200, 'the bare URL with a session is served')
+    assert.match(await withCookie.text(), /id="log"/, 'and it is the app')
+
+    /**
+     * 3. A credential that was offered and refused is called stale, not missing.
+     *
+     * The cookie has to be one heddle **recognises as its own** or it is refused for the other reason: the
+     * first version of this check sent invented bytes, and heddle read them as no cookie at all — which was
+     * the check being wrong, and it is the same distinction the page makes. So the value is minted here with
+     * the server's own secret for a **different authority**, which is a cookie a restart's rotation would
+     * leave behind: well-formed, correctly signed, and no longer valid.
+     */
+    const { cookieName, mintCookie, readCookie } = await import('../../dist/server/token.js')
+    const { readOrCreateSecret } = await import('../../dist/server/token.js')
+    const { join } = await import('node:path')
+    const secret = readOrCreateSecret(join(fixture.home, 'web-secret'))
+    const authority = `127.0.0.1:${new URL(server.url).port}`
+    const staleValue = mintCookie(secret, '127.0.0.1:1')
+    const stale = await fetch(`${origin}/`, { headers: { cookie: `${cookieName(authority)}=${staleValue}` } })
+    assert.ok(readCookie(`${cookieName(authority)}=${staleValue}`, cookieName(authority)) !== null, 'the check sends a well-formed cookie')
+    assert.equal(stale.status, 401, 'a refused cookie is refused')
+    const staleHtml = await stale.text()
+    assert.match(staleHtml, /not the current one/i, 'and is told it is stale rather than missing')
+    assert.doesNotMatch(staleHtml, /id="log"/, 'while not serving the app shell either')
+  } finally {
+    server.kill()
+    await fixture.double.close()
+    removeDir(fixture.home)
+    removeDir(fixture.work)
+  }
+})

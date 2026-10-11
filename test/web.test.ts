@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { tokenFormPage, transcriptTurns } from '../src/server/web.ts'
+import { pageAccess, tokenFormPage, transcriptTurns } from '../src/server/web.ts'
 
 /**
  * Unit tests for the Web UI's two pure pieces.
@@ -98,4 +98,22 @@ test('a refusal with no token and a refusal with a stale one say different thing
     assert.match(html, /web\.log/, `${label}: says where the current token is`)
     assert.match(html, /^<!doctype html>/i, `${label}: is a document rather than a sentence`)
   }
+})
+
+test('the page needs a session, and a refusal says which situation the caller is in', () => {
+  /**
+   * The bare URL used to answer `200` with a whole UI and an empty log, which reads as a page that lost its
+   * data rather than as one that was never opened with a token. DSH refuses the bare URL, and so does this —
+   * while a browser that has been through the printed URL keeps working, because the cookie is the same
+   * credential the token mints.
+   */
+  assert.deepEqual(pageAccess({ ok: true }, { cookie: true }), { status: 200, stale: false }, 'a session is served')
+  assert.deepEqual(pageAccess({ ok: true }, { cookie: false }), { status: 200, stale: false }, 'a launch token in the query is a session too')
+
+  assert.deepEqual(pageAccess({ ok: false }, { cookie: false }), { status: 401, stale: false }, 'no credential is refused as a missing token')
+  assert.deepEqual(
+    pageAccess({ ok: false }, { cookie: true }),
+    { status: 401, stale: true },
+    'a credential that was offered and refused is called stale, which is a different message',
+  )
 })

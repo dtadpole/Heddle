@@ -202,8 +202,21 @@ test('the server serves a page on loopback and refuses a non-loopback bind', asy
   const server = await startServer('page')
   try {
     assert.match(server.url, /^http:\/\/127\.0\.0\.1:\d+\/\?token=/, `the URL names loopback and carries a token\n${server.url}`)
-    const page = await fetch(server.url)
-    assert.equal(page.status, 200, 'the page answers')
+    /**
+     * The page is a **session**, so the first request is refused and the session is what serves it.
+     *
+     * This check used to fetch the bare URL and expect the page. That was the behaviour, and it was wrong:
+     * the bare URL answered `200` with a whole app and an empty log, which reads as a page that lost its
+     * data rather than one that was never opened with a token. Measured, and corrected — a browser that has
+     * been through the printed URL keeps working because the cookie is the same credential.
+     */
+    const refused = await fetch(server.url)
+    assert.equal(refused.status, 401, 'the bare page is refused without a session')
+
+    const handshake = await fetch(server.url, { redirect: 'manual' })
+    const cookie = (handshake.headers.get('set-cookie') ?? '').split(';')[0]
+    const page = await fetch(server.url, { headers: { cookie } })
+    assert.equal(page.status, 200, 'the page answers with a session')
     const html = await page.text()
     assert.match(html, /<title>heddle<\/title>/, 'it is the harness page')
     assert.match(html, /EventSource|\/api\/events/, 'the page opens the event stream')
