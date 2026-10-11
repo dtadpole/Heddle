@@ -379,8 +379,19 @@ export function projectLedger(events: readonly LedgerEvent[]): Ledger {
     /**
      * Anything else is a record without a home yet, kept rather than dropped: a ledger that silently ignores
      * events it does not recognise cannot be trusted to be complete.
+     *
+     * The label is the event's own type and its **other** fields are the body, rather than the whole event
+     * dumped as JSON. Measured: a raw dump put `{"seq":2,"at":"…","type":"context/note",…` in the row, which
+     * is unreadable in a one-line summary and pushes the interesting part past the ellipsis. The type is what
+     * the row needs to say; the rest is what opening it is for.
      */
-    put({ kind: 'system', label: event.type, text: JSON.stringify(event).slice(0, 400), ...(event.at !== undefined ? { startedAt: event.at } : {}) })
+    const { seq: _seq, at: _at, type: _type, ...rest } = event as unknown as Record<string, unknown>
+    put({
+      kind: 'system',
+      label: event.type,
+      text: Object.keys(rest).length === 0 ? event.type : JSON.stringify(rest, null, 2).slice(0, 2_000),
+      ...(event.at !== undefined ? { startedAt: event.at } : {}),
+    })
   }
 
   /**

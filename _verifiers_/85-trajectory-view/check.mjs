@@ -207,7 +207,52 @@ test('a browser renders the ledger, its timeline, and switches back to the conve
     assert.ok(drawn.oneLine, 'every row is one line')
     assert.ok(drawn.closed, 'and closed by default, so a long ledger stays navigable')
     assert.ok(drawn.ellipsis, 'with a label that truncates rather than wrapping')
+    /**
+     * And the row shows the record's **own text**, not its kind.
+     *
+     * Measured: every assistant row read `assistant`, because the row printed the record's label — which is
+     * its kind, or a tool's name — so a reader learned nothing about what was said. The kind is the badge;
+     * the snippet is the content.
+     */
+    const content = JSON.parse(
+      await browser.evaluate(`(() => {
+        const rows = [...document.querySelectorAll('#ledger details.record')]
+        const labels = rows.map((r) => r.querySelector(':scope > summary > .label').innerText.trim())
+        return JSON.stringify({
+          rows: rows.length,
+          blank: labels.filter((text) => text.length === 0).length,
+          nonKind: labels.filter((text) => !['user', 'assistant', 'reasoning', 'tool', 'system', 'compaction'].includes(text)).length,
+          badges: [...new Set(rows.map((r) => r.querySelector(':scope > summary > .kind').innerText))].slice(0, 6),
+          longest: Math.max(...labels.map((text) => text.length))
+        })
+      })()`),
+    )
+    assert.equal(content.blank, 0, 'no row is blank — every one shows something')
+    assert.ok(content.nonKind > 0, 'and the rows carry the record text rather than only its kind')
+    assert.ok(
+      content.badges.some((badge) => badge.startsWith('tool ')),
+      `a tool row's badge names the tool (${JSON.stringify(content.badges)})`,
+    )
+    assert.ok(content.longest <= 200, `a snippet is short enough to scan (longest ${content.longest} chars)`)
     assert.ok(drawn.chatHidden, 'while the conversation is hidden')
+    /**
+     * And it is hidden **on screen**, not merely marked so.
+     *
+     * Measured: both views were visible at once. `#log` sets `display: flex` with an id selector and the
+     * browser's `[hidden] { display: none }` is a type-level default, so the id won and `hidden` did nothing —
+     * the ledger had chat rows drawn above it. A view ring that leaves the previous view visible is worse
+     * than no ring, because it looks like one view is wrong rather than two being shown.
+     */
+    const onlyOneView = JSON.parse(
+      await browser.evaluate(`JSON.stringify({
+        log: document.getElementById('log').offsetParent !== null,
+        ledger: document.getElementById('ledger').offsetParent !== null,
+        timeline: document.getElementById('timeline').offsetParent !== null
+      })`),
+    )
+    assert.equal(onlyOneView.log, false, 'the conversation is not drawn while the ledger is shown')
+    assert.equal(onlyOneView.ledger, true, 'the ledger is')
+    assert.equal(onlyOneView.timeline, true, 'with its timeline')
 
     // A row opens to its full input and output.
     await browser.evaluate(`document.querySelector('#ledger details.record > summary').click()`)
@@ -272,6 +317,14 @@ test('a browser renders the ledger, its timeline, and switches back to the conve
     await browser.evaluate(`document.querySelector('#views button[data-view="chat"]').click()`)
     assert.ok(await browser.waitFor('!document.getElementById("log").hidden', 5_000), 'and Chat comes back')
     assert.ok(await browser.evaluate('document.getElementById("ledger").hidden'), 'with the ledger put away')
+    const backToChat = JSON.parse(
+      await browser.evaluate(`JSON.stringify({
+        log: document.getElementById('log').offsetParent !== null,
+        ledger: document.getElementById('ledger').offsetParent !== null
+      })`),
+    )
+    assert.equal(backToChat.log, true, 'and the conversation drawn again')
+    assert.equal(backToChat.ledger, false, 'with the ledger off screen')
   } finally {
     browser.close()
     server.kill()

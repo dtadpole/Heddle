@@ -8,8 +8,34 @@
   :root { color-scheme: light dark; --line: color-mix(in oklab, currentColor 20%, transparent); }
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; display: flex; height: 100vh; }
-  aside { width: 22rem; border-right: 1px solid var(--line); overflow-y: auto; padding: .75rem; }
+  /**
+   * The sidebar's width is one custom property, read by the panel and by nothing else.
+   *
+   * The default lives here, so a reader without stored preferences gets 22rem, and the script only ever
+   * overwrites the property — measurement and layout can therefore never disagree about which width is in
+   * force, which is what happens when a script sets `style.width` on the panel and a stylesheet disagrees.
+   */
+  :root { --sidebar-width: 22rem; }
+  aside { width: var(--sidebar-width); flex: none; border-right: 1px solid var(--line); overflow-y: auto; padding: .75rem; }
   main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  /**
+   * The divider borrows the sidebar's border so the drag target is where the line already is, and widens its
+   * hit area into the content with a transparent border rather than by pushing the layout around.
+   */
+  #gutter-left {
+    flex: none;
+    width: 5px;
+    margin-left: -3px;
+    cursor: col-resize;
+    background: transparent;
+    border: none;
+    padding: 0;
+    touch-action: none;
+  }
+  #gutter-left:hover, #gutter-left:focus-visible, #gutter-left[data-dragging='true'] {
+    background: color-mix(in oklab, currentColor 25%, transparent);
+    outline: none;
+  }
   h1 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; opacity: .6; margin: .25rem 0 .5rem; }
   ol { list-style: none; margin: 0; padding: 0; }
   li { padding: .4rem .5rem; border-radius: .35rem; cursor: pointer; }
@@ -32,6 +58,18 @@
   nav#views { display: flex; gap: .25rem; padding: .5rem .75rem 0; border-bottom: 1px solid var(--line); }
   nav#views button { font: inherit; font-size: .82rem; padding: .3rem .7rem; background: none; border: 1px solid transparent; border-bottom: none; border-radius: .35rem .35rem 0 0; color: inherit; opacity: .6; cursor: pointer; }
   nav#views button[aria-current='true'] { opacity: 1; border-color: var(--line); background: color-mix(in oklab, currentColor 7%, transparent); }
+  /**
+   * `hidden` has to win over this file's own display rules.
+   *
+   * Measured: the Chat rows were still drawn above the ledger in the Trajectory view. `#log` sets
+   * `display: flex` with an **id** selector, and the browser's `[hidden] { display: none }` is a type-level
+   * default — so the id won, `hidden` did nothing, and both views were on screen at once. A view ring that
+   * leaves the previous view visible is worse than no ring: it looks like the ledger has chat in it.
+   *
+   * `!important` is the honest tool here rather than a specificity race, because the rule's meaning is
+   * "hidden means hidden" and every future display rule must lose to it.
+   */
+  [hidden] { display: none !important; }
   #ledger { flex: 1; overflow-y: auto; padding: .75rem 1rem 1rem; font-size: .85rem; }
   #ledger .summary { font-size: .8rem; opacity: .7; margin-bottom: .6rem; }
   #ledger .turn { border-left: 3px solid var(--line); margin: 0 0 .6rem; padding-left: .6rem; }
@@ -139,7 +177,6 @@
   #tree .row:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
   #tree .row[aria-current='true'] { background: color-mix(in oklab, currentColor 14%, transparent); }
   #tree .twisty { font: inherit; line-height: 1; padding: 0; width: 1.05rem; height: 1.05rem; display: inline-flex; align-items: center; justify-content: center; background: none; border: 1px solid var(--line); border-radius: .2rem; color: inherit; opacity: .75; cursor: pointer; }
-  #tree .twisty[disabled] { opacity: .25; cursor: default; }
   #tree .kind { display: inline-flex; opacity: .8; }
   #tree .badge { font-size: .66rem; letter-spacing: .04em; padding: 0 .25rem; border: 1px solid var(--line); border-radius: .25rem; opacity: .8; }
   #tree .label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -165,6 +202,15 @@
     <ol id="sessions"></ol>
   </details>
 </aside>
+<!--
+  The divider between the sidebar and the content.
+
+  It is a real separator rather than a styled border: `role="separator"` with `tabindex` makes it keyboard
+  operable, and `aria-valuenow` reports the width it sets, so the control is usable without a mouse. The
+  width it produces is a CSS custom property, which is what lets one number position the panel and its
+  divider without the two drifting apart.
+-->
+<div id="gutter-left" role="separator" aria-orientation="vertical" aria-label="resize the sidebar" aria-valuemin="12" aria-valuemax="48" aria-valuenow="22" tabindex="0"></div>
 <main>
   <nav id="views" aria-label="view">
     <button type="button" data-view="chat" aria-current="true">Chat</button>
@@ -352,6 +398,22 @@ function human(ms) {
   return Math.floor(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's'
 }
 
+/**
+ * One line of a record's own text, for the row.
+ *
+ * The row used to show the record's **label** — which is its kind, or a tool's name — so every assistant row
+ * read `assistant` and told a reader nothing about what was said. The label names the kind and the snippet
+ * carries the content; a reader scanning a ledger wants both, and the second is the reason they are looking.
+ *
+ * Newlines and runs of spaces are collapsed, because a summary is one line by construction and a tool's
+ * arguments are usually JSON with both.
+ */
+function snippet(text, limit = 110) {
+  const flat = String(text ?? '').replace(/\s+/g, ' ').trim()
+  if (flat.length === 0) return ''
+  return flat.length > limit ? flat.slice(0, limit) + '…' : flat
+}
+
 /** The wall clock a record started at, to the second. */
 function clock(at) {
   if (at === undefined) return null
@@ -372,12 +434,16 @@ function recordNode(record) {
   node.dataset.kind = record.kind
   if (record.inFlight === true) node.dataset.inflight = 'true'
   const line = document.createElement('summary')
+  /**
+   * The badge carries the kind, and for a call it carries the tool's name too — that is the one thing a
+   * reader scans for when asking "which of these was the shell".
+   */
   const kind = document.createElement('span')
   kind.className = 'kind'
-  kind.textContent = record.kind
+  kind.textContent = record.kind === 'tool' && record.label.startsWith('→ ') ? 'tool ' + record.label.slice(2) : record.kind
   const label = document.createElement('span')
   label.className = 'label clip'
-  label.textContent = record.label
+  label.textContent = snippet(record.text) || record.label
   const when = document.createElement('span')
   when.className = 'when'
   const started = clock(record.startedAt)
@@ -612,6 +678,123 @@ events.addEventListener('session', (message) => {
 /** Coalesces the burst of events one turn produces into a single ledger refetch. */
 let ledgerRefetchTimer = null
 
+/**
+ * The sidebar is resizable, and the width survives a reload.
+ *
+ * The bounds are in `rem` and expressed in the same unit as the layout, so a reader who has enlarged their
+ * default text size gets a proportionally wider panel rather than one measured in pixels that no longer
+ * fits its contents. The upper bound also respects the window: a sidebar wider than four fifths of the
+ * viewport leaves nothing to work in, which reads as the app being broken rather than as a choice.
+ */
+const SIDEBAR_KEY = 'heddle.layout.sidebar.v1'
+const SIDEBAR_MIN_REM = 12
+const SIDEBAR_MAX_REM = 48
+
+/** The root font size, so rem bounds can be compared with pixel measurements from the window. */
+function remPx() {
+  return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+}
+
+/** How wide the sidebar may be right now: its own bounds, and the window's. */
+function sidebarBounds() {
+  const root = remPx()
+  const byWindow = (window.innerWidth * 0.8) / root
+  return { min: SIDEBAR_MIN_REM, max: Math.max(SIDEBAR_MIN_REM, Math.min(SIDEBAR_MAX_REM, byWindow)) }
+}
+
+function clampSidebar(rem) {
+  const bounds = sidebarBounds()
+  return Math.min(Math.max(rem, bounds.min), bounds.max)
+}
+
+/** Apply a width, and report it so assistive technology can read the control's value. */
+function setSidebarWidth(rem, options = {}) {
+  const width = clampSidebar(rem)
+  document.documentElement.style.setProperty('--sidebar-width', width + 'rem')
+  gutterLeft.setAttribute('aria-valuenow', String(Math.round(width)))
+  if (options.persist !== false) {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, String(width))
+    } catch {
+      // A browser that refuses storage still gets a working divider; only the memory is lost.
+    }
+  }
+  return width
+}
+
+/** The stored width, when it is a number this layout can use. */
+function storedSidebarWidth() {
+  try {
+    const value = Number(localStorage.getItem(SIDEBAR_KEY))
+    return Number.isFinite(value) && value > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+const gutterLeft = document.getElementById('gutter-left')
+
+/**
+ * Drag the divider.
+ *
+ * Pointer capture is what keeps the drag attached to the divider when the pointer leaves it — without it a
+ * quick drag across the content drops the gesture and the panel stops following, which feels like the
+ * control is broken. The width is computed from the pointer's distance to the sidebar's own left edge
+ * rather than from a stored offset, so the result cannot drift if the window is resized mid-drag.
+ */
+gutterLeft.addEventListener('pointerdown', (downEvent) => {
+  downEvent.preventDefault()
+  /**
+   * Capture is attempted, not required.
+   *
+   * It is what keeps a drag attached when the pointer leaves the divider — without it a quick drag across
+   * the content drops the gesture and the panel stops following. But it throws for a pointer the browser is
+   * not tracking, which is exactly what a synthetic event is: measured, an automated drag dispatched
+   * `pointerdown`/`pointermove`/`pointerup` and the panel never moved, because the throw aborted the handler
+   * before the listeners were bound. Guarding it means the control works for real pointers and can still be
+   * exercised, and judged, by a script.
+   */
+  try {
+    gutterLeft.setPointerCapture(downEvent.pointerId)
+  } catch {
+    // A pointer the browser is not tracking still drags; it simply is not captured.
+  }
+  gutterLeft.dataset.dragging = 'true'
+  const left = document.querySelector('aside').getBoundingClientRect().left
+
+  const move = (moveEvent) => setSidebarWidth((moveEvent.clientX - left) / remPx())
+  const stop = () => {
+    delete gutterLeft.dataset.dragging
+    gutterLeft.removeEventListener('pointermove', move)
+    gutterLeft.removeEventListener('pointerup', stop)
+    gutterLeft.removeEventListener('pointercancel', stop)
+  }
+  gutterLeft.addEventListener('pointermove', move)
+  gutterLeft.addEventListener('pointerup', stop)
+  gutterLeft.addEventListener('pointercancel', stop)
+})
+
+/** Keyboard: a separator with focus is a control, and a control responds to the arrow keys. */
+gutterLeft.addEventListener('keydown', (keyEvent) => {
+  const step = keyEvent.shiftKey ? 4 : 1
+  const current = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 22
+  if (keyEvent.key === 'ArrowLeft') setSidebarWidth(current - step)
+  else if (keyEvent.key === 'ArrowRight') setSidebarWidth(current + step)
+  else if (keyEvent.key === 'Home') setSidebarWidth(SIDEBAR_MIN_REM)
+  else if (keyEvent.key === 'End') setSidebarWidth(SIDEBAR_MAX_REM)
+  else return
+  keyEvent.preventDefault()
+})
+
+/** A window narrowed past the stored width must not leave the sidebar wider than the space for it. */
+window.addEventListener('resize', () => setSidebarWidth(
+  parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 22,
+  { persist: false },
+))
+
+const rememberedSidebar = storedSidebarWidth()
+if (rememberedSidebar !== null) setSidebarWidth(rememberedSidebar, { persist: false })
+
 document.getElementById('prompt').addEventListener('submit', async (submitEvent) => {
   submitEvent.preventDefault()
   const textarea = submitEvent.target.elements.prompt
@@ -775,6 +958,8 @@ function selectNode(node) {
 function nodeRow(node) {
   const li = document.createElement('li')
   li.setAttribute('role', 'treeitem')
+  // The state lives on the tree item, where a reader is told about it, and on the control's label.
+  li.setAttribute('aria-expanded', 'false')
   li.dataset.kind = node.kind
   li.dataset.open = 'false'
 
@@ -857,13 +1042,19 @@ async function loadChildren(node, li, twisty) {
     }
   }
   if (children.length === 0) {
+    /**
+     * A folder with nothing inside still opens **and closes**.
+     *
+     * The first version disabled the disclosure here and turned it into `·`, which the owner hit at
+     * once: a leaf could be opened and then had no way back, because the only control that closed a
+     * node was the one just disabled. Whether a folder is empty is only known after asking, so the
+     * control cannot be the thing that reports it — the note below does, and `+` / `−` keep meaning
+     * what they say.
+     */
     const empty = document.createElement('div')
     empty.className = 'empty'
     empty.textContent = 'no folders inside'
     group.append(empty)
-    twisty.disabled = true
-    twisty.textContent = '·'
-    twisty.setAttribute('aria-label', node.label + ' has no folders inside')
     return
   }
   for (const child of children) group.append(nodeRow(child))
@@ -873,6 +1064,7 @@ async function toggle(node, li, twisty) {
   const open = li.dataset.open === 'true'
   if (open) {
     li.dataset.open = 'false'
+    li.setAttribute('aria-expanded', 'false')
     twisty.textContent = '+'
     twisty.setAttribute('aria-label', 'expand ' + node.label)
     li.querySelector('ul[role=group]')?.remove()
@@ -881,6 +1073,7 @@ async function toggle(node, li, twisty) {
     return
   }
   li.dataset.open = 'true'
+  li.setAttribute('aria-expanded', 'true')
   twisty.textContent = '−'
   twisty.setAttribute('aria-label', 'collapse ' + node.label)
   expanded.add(node.path)
