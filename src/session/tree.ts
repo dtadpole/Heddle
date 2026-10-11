@@ -43,12 +43,22 @@ export interface TreeNode {
   readonly session: TreeSession | null
   /** Direct children when they were asked for, `null` when they were not. */
   readonly children: readonly TreeNode[] | null
+  /**
+   * The adopted roots, on the virtual root node only.
+   *
+   * They are returned beside the tree rather than inside it because they are not a project a person
+   * named: they exist because a session ran in that folder, and listing them apart is what lets the
+   * UI show them as ad-hoc work while keeping every session reachable.
+   */
+  readonly adHoc?: readonly TreeNode[]
 }
 
 /** A registered root, as the workspace record states it. */
 export interface TreeRoot {
   readonly path: string
   readonly title: string
+  /** How the root came to exist; absent means a person registered it. See `WorkspaceRecord.origin`. */
+  readonly origin?: 'added' | 'auto'
 }
 
 export interface TreeInput {
@@ -127,7 +137,11 @@ interface Context {
 }
 
 function buildContext(input: TreeInput): Context {
-  const roots = input.roots.map((root) => ({ path: canonicalPath(root.path), title: root.title }))
+  const roots = input.roots.map((root) => ({
+    path: canonicalPath(root.path),
+    title: root.title,
+    ...(root.origin !== undefined ? { origin: root.origin } : {}),
+  }))
   const byPath = new Map(roots.map((root) => [root.path, root]))
   const ordered = [...roots].sort((left, right) => depthOf(right.path) - depthOf(left.path))
   return {
@@ -208,13 +222,18 @@ export function tree(path: string | null, input: TreeInput): TreeNode {
 
   if (path === null || path === '') {
     const tops = context.roots.filter((root) => context.ownerOf(root.path) === undefined)
+    const asNode = (root: TreeRoot): TreeNode => ({
+      ...row(root.path, 'workspace', root.title, context),
+      children: childrenOf(root.path, 'workspace', context),
+    })
     return {
       path: '',
       kind: 'roots',
       label: 'workspaces',
       badge: null,
       session: null,
-      children: tops.map((root) => ({ ...row(root.path, 'workspace', root.title, context), children: childrenOf(root.path, 'workspace', context) })),
+      children: tops.filter((root) => root.origin !== 'auto').map(asNode),
+      adHoc: tops.filter((root) => root.origin === 'auto').map(asNode),
     }
   }
 

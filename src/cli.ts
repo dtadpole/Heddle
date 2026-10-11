@@ -51,6 +51,10 @@ interface Args {
   generated: string[]
   /** The word after a two-part command, such as `add` in `workspace add`. */
   subcommand?: string
+  /** Do the thing even though the command warned it would be undone (`workspace remove --force`). */
+  force?: boolean
+  /** An optional workspace name, given to `workspace add`. */
+  name?: string
   command?: string
 }
 
@@ -87,7 +91,8 @@ commands:
   commands                   list the registered commands
   sessions                   list the sessions this store holds
   workspaces                 list the workspaces and their sessions
-  workspace add <path>       register a target folder as a workspace root
+  workspace add <path> [name]  register a target folder as a workspace root
+  workspace remove <id|path>   unregister a root, reporting where its sessions went
   tree [<path>]              print one level of the folder tree the left column shows
   context                    show the assembled context for a session, without calling a model
   hooks                      list the hook points this build emits
@@ -141,6 +146,9 @@ function parseArgs(argv: readonly string[]): Args {
         break
       case '--turn':
         args.turn = next()
+        break
+      case '--force':
+        args.force = true
         break
       case '--resume':
         args.resume = next()
@@ -235,14 +243,29 @@ function parseArgs(argv: readonly string[]): Args {
          */
         args.command = 'workspace'
         const subcommand = next() ?? ''
-        if (subcommand !== 'add' && subcommand !== 'list') {
-          throw new Error(`unknown workspace subcommand '${subcommand}'; try 'heddle workspace add <path>' or 'heddle workspace list'`)
+        if (subcommand !== 'add' && subcommand !== 'list' && subcommand !== 'remove') {
+          throw new Error(
+            `unknown workspace subcommand '${subcommand}'; try 'heddle workspace add <path> [name]', 'heddle workspace remove <id|path>' or 'heddle workspace list'`,
+          )
         }
         args.subcommand = subcommand
         if (subcommand === 'add') {
           const path = next()
           if (path === undefined || path.startsWith('-')) throw new Error('workspace add needs a path')
           args.target = path
+          /**
+           * An optional name, taken only when it is not a flag.
+           *
+           * Same trap as `web --port` and `tree --json`: reading the next token unconditionally would
+           * make `heddle workspace add ~/x --json` register a workspace called `--json`.
+           */
+          const candidate = argv[index + 1]
+          if (candidate !== undefined && !candidate.startsWith('-')) args.name = next() ?? undefined
+        }
+        if (subcommand === 'remove') {
+          const id = next()
+          if (id === undefined || id.startsWith('-')) throw new Error('workspace remove needs a workspace id or path')
+          args.target = id
         }
         break
       }
@@ -592,7 +615,7 @@ async function runCommand(command: string, target: string | undefined, json: boo
       const sessions = app.ctx.session.list()
       if (json) process.stdout.write(`${JSON.stringify(sessions, null, 2)}\n`)
       else {
-        process.stdout.write(`heddle: ${sessions.length} session(s) in ${defaultSessionRoot()}\n`)
+        process.stdout.write(`heddle: ${sessions.length} session(s) in ${app.ctx.session.store.root}\n`)
         for (const meta of sessions.slice(0, 20)) {
           process.stdout.write(`  ${meta.id}  ${meta.created}  turns=${meta.turns}  ${meta.title ?? ''}\n`)
         }
@@ -627,9 +650,22 @@ async function runCommand(command: string, target: string | undefined, json: boo
       }
       return true
     }
+    if (command === 'workspace' && args.subcommand === 'remove') {
+      if (target === undefined) throw new Error('workspace remove needs a workspace id or path')
+      const outcome = requireWorkspace(app.ctx).remove(target, {
+        all: app.ctx.session.list(),
+        ...(args.force === true ? { force: true } : {}),
+      })
+      if (json) process.stdout.write(`${JSON.stringify(outcome, null, 2)}\n`)
+      else {
+        process.stdout.write(`heddle: removed ${outcome.removed.title}  ${outcome.removed.path}\n`)
+        if (outcome.adoptedBy !== undefined) process.stdout.write(`  ${outcome.ownedSessions} session(s) adopted by ${outcome.adoptedBy}\n`)
+      }
+      return true
+    }
     if (command === 'workspace') {
       if (target === undefined) throw new Error('workspace add needs a path')
-      const { record, created } = requireWorkspace(app.ctx).add(target)
+      const { record, created } = requireWorkspace(app.ctx).add(target, args.name)
       if (json) process.stdout.write(`${JSON.stringify({ ...record, created }, null, 2)}\n`)
       else process.stdout.write(`heddle: ${created ? 'registered' : 'already registered'} ${record.title}  ${record.path}\n`)
       return true
@@ -648,7 +684,7 @@ async function runCommand(command: string, target: string | undefined, json: boo
         throw new Error(`${wanted} is not under any workspace root; register it with 'heddle workspace add ${wanted}'`)
       }
       const node = tree(wanted, {
-        roots: workspaces.list().map((record) => ({ path: record.path, title: record.title })),
+        roots: workspaces.list().map((record) => ({ path: record.path, title: record.title, ...(record.origin !== undefined ? { origin: record.origin } : {}) })),
         sessions: app.ctx.session.list(),
         generated: [...workspaces.generated, ...args.generated],
       })

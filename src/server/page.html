@@ -207,16 +207,20 @@
   form { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid var(--line); }
   textarea { flex: 1; resize: vertical; min-height: 3.5rem; font: inherit; padding: .5rem; }
   button { font: inherit; padding: .5rem 1rem; }
+  h1 button { font: inherit; padding: 0 .35rem; line-height: 1.2; }
+  .untwisty { font: inherit; padding: 0 .3rem; opacity: .55; }
+  .untwisty:hover { opacity: 1; }
 </style>
 </head>
 <body>
 <aside>
-  <h1>Workspaces</h1>
+  <h1>Workspaces <button id="add-workspace" type="button" title="register a folder as a workspace root" aria-label="register a folder">+</button></h1>
   <ul id="tree" role="tree" aria-label="workspace folders"></ul>
   <p id="tree-note" class="meta" hidden></p>
   <details id="history">
-    <summary>All sessions</summary>
-    <ol id="sessions"></ol>
+    <summary>ad hoc</summary>
+    <p class="meta" id="adhoc-note" hidden></p>
+    <ul id="adhoc" role="tree" aria-label="folders adopted because a session ran in them"></ul>
   </details>
 </aside>
 <!--
@@ -290,7 +294,16 @@ function followLedgerTail() {
   place()
   requestAnimationFrame(place)
 }
-const list = document.getElementById('sessions')
+/**
+ * The bottom group: folders **adopted** because a session ran in them.
+ *
+ * Not "all sessions": those are already in the tree above, and a second list of the same thing was
+ * duplication. What is worth showing apart is ad-hoc work — a folder nobody registered, which exists
+ * as a root only because `bootstrap` adopts any folder a session ran in. Registering one (the `+`
+ * above, or `heddle workspace add`) promotes it into the tree, sessions and all.
+ */
+const list = document.getElementById('adhoc')
+const adhocNote = document.getElementById('adhoc-note')
 let current = null
 
 function add(kind, text, merge = true, label) {
@@ -647,26 +660,22 @@ async function refreshSessions() {
   /**
    * The newest session is selected when nothing is yet.
    *
-   * Without this the page starts attached to nothing: the list appears, the log stays empty even though
+   * Without this the page starts attached to nothing: the tree appears, the log stays empty even though
    * sessions exist, and a prompt sent from that state creates a NEW session instead of continuing the one
    * a person is looking at. Measured: asking a question produced a two-message live view while the session
    * beside it held the whole transcript, because `current` was null and the click that followed selected
    * the session the prompt had just created rather than the one holding history.
+   *
+   * The list itself is drawn from the tree — this walk only needs to know which session is newest, and it
+   * deliberately asks for **every** session rather than only the ad-hoc ones: a page that started with no
+   * selection because all its sessions happened to be registered would be the same bug again.
    */
-  const select = current ?? sessions[0]?.id ?? null
-  if (current === null && select !== null) {
+  if (current !== null) return
+  const select = sessions[0]?.id ?? null
+  if (select !== null) {
     current = select
     await showSession(select)
-    return
   }
-  const rows = sessions.slice(0, 50).map((session) => {
-    const item = document.createElement('li')
-    item.innerHTML = '<div>' + (session.title ?? session.id) + '</div><div class="meta">' + session.turns + ' turn(s) · ' + session.created + '</div>'
-    if (session.id === current) item.setAttribute('aria-current', 'true')
-    item.onclick = () => { showSession(session.id) }
-    return item
-  })
-  list.replaceChildren(...rows)
 }
 
 const events = new EventSource('/api/events')
@@ -1008,6 +1017,38 @@ function nodeRow(node) {
   label.textContent = node.label
   row.append(label)
   /**
+   * A workspace row can be unregistered, and only a workspace row can.
+   *
+   * The record is found by **path**, which is what a tree node carries: ids exist and are stable, but
+   * they are not what the UI draws, and inventing an id column to hold a delete button would put an
+   * identifier in front of a person for the sake of a request body. The server resolves a path as
+   * readily as an id.
+   *
+   * A refusal is shown rather than swallowed — `bootstrap` re-registers any folder that still has
+   * sessions and no root above it, so "removed" and "gone" are different answers and the second one
+   * is not available.
+   */
+  if (node.kind === 'workspace') {
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'untwisty'
+    remove.textContent = '×'
+    remove.title = 'unregister this workspace root'
+    remove.setAttribute('aria-label', 'unregister ' + node.label)
+    remove.onclick = async (event) => {
+      event.stopPropagation()
+      const response = await fetch('/api/workspaces/' + encodeURIComponent(node.path), { method: 'DELETE' })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        setNote(body.error ?? 'could not unregister that workspace')
+        return
+      }
+      setNote('')
+      await renderTree()
+    }
+    row.append(remove)
+  }
+  /**
    * The marker says whether there is a session **and** whether there could be one: a hollow dot on an
    * instance with none is the invitation, and a filled one is the record.
    */
@@ -1118,9 +1159,21 @@ async function renderTree() {
     return
   }
   const tops = body.children ?? []
-  if (tops.length === 0) setNote('no workspace root yet — register one with heddle workspace add')
+  if (tops.length === 0) setNote('no workspace root yet — register one with the + above')
   else setNote(activeFolder === null ? '' : 'a new conversation in ' + activeFolder.split('/').filter(Boolean).pop())
   treeList.replaceChildren(...tops.map(nodeRow))
+
+  /**
+   * The adopted folders, drawn with the same rows as the tree.
+   *
+   * They are the sessions nobody chose a project for: a folder that exists as a root only because a
+   * session ran there. Same component, same lazy expansion, one level at a time — the difference is
+   * a heading a person can act on.
+   */
+  const adhoc = body.adHoc ?? []
+  list.replaceChildren(...adhoc.map(nodeRow))
+  adhocNote.hidden = adhoc.length > 0
+  adhocNote.textContent = 'nothing ad hoc — every session is under a workspace you registered'
   /**
    * A reload comes back to the shape a person left: the remembered nodes are opened again shallowest
    * first, so a deeper one is drawn by the time its turn comes, and each level is re-read rather than
@@ -1137,6 +1190,22 @@ document.getElementById('views').addEventListener('click', (clickEvent) => {
   const button = clickEvent.target.closest('button[data-view]')
   if (button) showView(button.dataset.view)
 })
+
+document.getElementById('add-workspace').onclick = async () => {
+  const path = prompt('Folder to register as a workspace root')
+  if (path === null || path.trim() === '') return
+  const response = await fetch('/api/workspaces', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: path.trim() }),
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    setNote(body.error ?? 'could not register that folder')
+    return
+  }
+  await renderTree()
+}
 
 refreshSessions()
 renderTree()

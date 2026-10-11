@@ -891,3 +891,92 @@ test('a folder opens and closes with the same control, including a leaf with not
     removeDir(h.work)
   }
 })
+
+test('a folder nobody registered is adopted as ad hoc, and registering it promotes it into the tree', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  /**
+   * The distinction this judges is a view rather than a mechanism: `bootstrap` adopts every folder a
+   * session ran in so that "every session has a root" stays true, but a folder adopted that way is
+   * not a project a person named. The tree lists the chosen ones; the adopted ones are reported
+   * apart, and registering one moves it — and its sessions — with no file moving and no id changing.
+   */
+  const h = harness('adhoc')
+  const loose = fixtureDir('adhoc-loose')
+  try {
+    mkdirSync(loose, { recursive: true })
+    const run = await runCli([...h.args, '--turn', 'work somewhere nobody registered'], { env: h.env, cwd: loose })
+    assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
+
+    const before = parseJson((await runCli([...h.args, 'tree', '--json'], { env: h.env })).stdout)
+    const adopted = (before.adHoc ?? []).map((node) => node.path)
+    assert.ok(
+      adopted.some((path) => path.endsWith(loose.split('/').filter(Boolean).pop())),
+      `the folder the session ran in is reported as ad hoc rather than as a project\nsaw: ${adopted.join(', ')}`,
+    )
+    assert.ok(
+      !(before.children ?? []).some((node) => node.path.endsWith(loose.split('/').filter(Boolean).pop())),
+      'and it is not in the tree a person reads as their projects',
+    )
+
+    const added = await runCli([...h.args, 'workspace', 'add', loose, '--json'], { env: h.env })
+    assert.equal(added.code, 0, `registering it succeeded\n${added.stdout}${added.stderr}`)
+
+    const after = parseJson((await runCli([...h.args, 'tree', '--json'], { env: h.env })).stdout)
+    const inTree = (after.children ?? []).map((node) => node.path)
+    assert.ok(
+      inTree.some((path) => path.endsWith(loose.split('/').filter(Boolean).pop())),
+      `registering it promoted it into the tree\nsaw: ${inTree.join(', ')}`,
+    )
+    assert.ok(
+      !(after.adHoc ?? []).some((node) => node.path.endsWith(loose.split('/').filter(Boolean).pop())),
+      'and it is no longer ad hoc',
+    )
+  } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+    removeDir(loose)
+  }
+})
+
+test('a workspace is unregistered, and a root that still holds sessions is refused', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  /**
+   * Removal is judged by its answer rather than by the file: a root that still holds sessions and has
+   * no root above it would be re-registered by `bootstrap` on the next run, so the command refuses
+   * and says why — and with a parent above it, or with nothing under it, it goes.
+   */
+  const h = harness('remove')
+  const empty = fixtureDir('remove-empty')
+  const busy = fixtureDir('remove-busy')
+  const parent = fixtureDir('remove-parent')
+  const child = join(parent, 'child')
+  try {
+    for (const path of [empty, busy, child]) mkdirSync(path, { recursive: true })
+
+    assert.equal((await runCli([...h.args, 'workspace', 'add', empty], { env: h.env })).code, 0, 'the empty one registered')
+    const removed = await runCli([...h.args, 'workspace', 'remove', empty], { env: h.env })
+    assert.equal(removed.code, 0, `an empty root is removed\n${removed.stdout}${removed.stderr}`)
+    assert.equal((await runCli([...h.args, 'workspaces', '--json'], { env: h.env })).stdout.includes(empty), false, 'and it is gone')
+
+    await runCli([...h.args, 'workspace', 'add', busy], { env: h.env })
+    const turn = await runCli([...h.args, '--turn', 'a session that keeps this root alive'], { env: h.env, cwd: busy })
+    assert.equal(turn.code, 0, `the session ran in it\n${turn.stdout}${turn.stderr}`)
+    const refused = await runCli([...h.args, 'workspace', 'remove', busy], { env: h.env })
+    assert.notEqual(refused.code, 0, 'a root that still holds sessions is refused')
+    assert.match(`${refused.stdout}${refused.stderr}`, /still holds \d+ session/, 'and the refusal says why')
+
+    await runCli([...h.args, 'workspace', 'add', parent], { env: h.env })
+    await runCli([...h.args, 'workspace', 'add', child], { env: h.env })
+    const inner = await runCli([...h.args, '--turn', 'a session under the child root'], { env: h.env, cwd: child })
+    assert.equal(inner.code, 0, `a session ran under the child\n${inner.stdout}${inner.stderr}`)
+    const adopted = await runCli([...h.args, 'workspace', 'remove', child], { env: h.env })
+    assert.equal(adopted.code, 0, `a root with a parent above it is removed\n${adopted.stdout}${adopted.stderr}`)
+    assert.match(`${adopted.stdout}${adopted.stderr}`, /adopted by/, 'and it reports where its sessions went')
+  } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+    removeDir(empty)
+    removeDir(busy)
+    removeDir(parent)
+  }
+})

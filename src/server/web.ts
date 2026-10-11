@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
 
 import { runTurn } from '../agent/loop.ts'
 import { projectLedger, projectTimeline } from './ledger.ts'
+import { expandHome } from '../config/schema.ts'
 import { canonicalPath } from '../paths.ts'
 import { tree } from '../session/tree.ts'
 import type { SessionEvent, SessionHandle } from '../session/store.ts'
@@ -279,6 +280,27 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
   const offered = { cookie: credentials.cookie !== null, token: credentials.query !== null }
 
   /**
+   * A cross-site request is refused **when it would change state and is not authenticated**.
+   *
+   * Both halves matter. Refusing every cross-site write broke a sandboxed viewer, whose requests are all
+   * marked cross-site — measured, and it made the page's own composer answer `403`. Allowing every one would
+   * drop the fence's only remaining job. Keying on the credential keeps the protection and removes the
+   * breakage, because the credential cannot travel cross-site: the cookie is `SameSite=Strict`, so a browser
+   * never attaches it to an attacker's request, and `decision.ok` is false exactly when it did not.
+   */
+  const method = String(request.method ?? 'GET').toUpperCase()
+  const changesState = method !== 'GET' && method !== 'HEAD'
+  if (changesState && offered.cookie && !decision.ok) {
+    respond(
+      response,
+      403,
+      'text/plain',
+      'refused: a cross-site request that changes state and carries no valid session; a cross-site request may read, but writing requires the cookie this page was opened with\n',
+    )
+    return
+  }
+
+  /**
    * The page is served to a **session**, and refused with an explanation otherwise.
    *
    * The first version served the app shell to anyone who asked for `/`, on the reasoning that the page
@@ -338,11 +360,82 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
       return
     }
     const node = tree(wanted === null || wanted.length === 0 ? null : wanted, {
-      roots: workspaces.list().map((record) => ({ path: record.path, title: record.title })),
+      roots: workspaces.list().map((record) => ({ path: record.path, title: record.title, ...(record.origin !== undefined ? { origin: record.origin } : {}) })),
       sessions: ctx.session.list(),
       generated: workspaces.generated,
     })
     respond(response, 200, 'application/json', `${JSON.stringify(node, null, 2)}\n`)
+    return
+  }
+
+  /**
+   * Register a folder as a workspace root, or unregister one.
+   *
+   * These are the two buttons the left column offers, and both go through the same record the CLI
+   * writes: a folder is registered by path (the name defaults to the folder's own name), and a root
+   * is unregistered by id. Registration is idempotent — registering an already-registered folder
+   * reports `created: false` rather than failing — and registering a folder that was **adopted**
+   * because a session ran in it promotes it into the tree, which is how ad-hoc work becomes a
+   * project without moving anything.
+   *
+   * `DELETE` refuses when the root still holds sessions that no other root could adopt, and says so:
+   * `bootstrap` re-registers any folder that has sessions and no owner, so removing such a root
+   * would be undone on the next run. A refusal a person can read is better than a button that lies.
+   */
+  if (url.pathname === '/api/workspaces' && request.method === 'POST') {
+    const workspaces = ctx.workspace
+    if (workspaces === undefined) {
+      respond(response, 503, 'application/json', `${JSON.stringify({ error: 'this profile does not load the workspace plugin' })}\n`)
+      return
+    }
+    const body = await readJson(request, response)
+    if (body === null) return
+    const path = typeof body.path === 'string' ? body.path.trim() : ''
+    if (path.length === 0) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'a path is required' })}\n`)
+      return
+    }
+    if (!path.startsWith('/') && !path.startsWith('~')) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'the path must be absolute' })}\n`)
+      return
+    }
+    let stat
+    try {
+      stat = statSync(expandHome(path))
+    } catch {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: `${path} does not exist` })}\n`)
+      return
+    }
+    if (!stat.isDirectory()) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: `${path} is not a folder` })}\n`)
+      return
+    }
+    const name = typeof body.name === 'string' && body.name.trim().length > 0 ? body.name.trim() : undefined
+    if (name !== undefined && !/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'a name must be lowercase letters, digits and dashes' })}\n`)
+      return
+    }
+    const { record, created } = workspaces.add(path, name)
+    respond(response, 200, 'application/json', `${JSON.stringify({ record, created }, null, 2)}\n`)
+    return
+  }
+  if (url.pathname.startsWith('/api/workspaces/') && request.method === 'DELETE') {
+    const workspaces = ctx.workspace
+    if (workspaces === undefined) {
+      respond(response, 503, 'application/json', `${JSON.stringify({ error: 'this profile does not load the workspace plugin' })}\n`)
+      return
+    }
+    const id = decodeURIComponent(url.pathname.slice('/api/workspaces/'.length))
+    if (workspaces.find(id) === undefined) {
+      respond(response, 404, 'application/json', `${JSON.stringify({ error: `no workspace ${id}` })}\n`)
+      return
+    }
+    try {
+      const outcome = workspaces.remove(id, { all: ctx.session.list() })
+      respond(response, 200, 'application/json', `${JSON.stringify(outcome, null, 2)}\n`)
+    } catch (error) {
+      respond(response, 409, 'application/json', `${JSON.stringify({ error: (error as Error).message })}\n`)
+    }
     return
   }
 
@@ -455,30 +548,20 @@ export function rejectUntrusted(request: { headers: Record<string, string | stri
   if (host !== '' && !isLoopback(hostname ?? '')) return `refused: Host ${host} is not loopback`
 
   /**
-   * A cross-site request may **read**, and may not change anything.
+   * `Sec-Fetch-Site` is **not** judged here, and that is a correction with a reason.
    *
-   * The first version refused every cross-site request, and that broke a legitimate consumer: a viewer that
-   * embeds the page in a **sandboxed iframe** has an opaque origin, so the browser marks its requests
-   * cross-site — measured, `allow-same-origin` renders the page and a fully sandboxed frame gets
-   * `refused: a cross-site request`. heddle's own Web UI was unreachable from the very sidebar it is meant
-   * to be watched in.
+   * Whether a cross-site request may write depends on whether it is **already authenticated**, and this
+   * function has no access to the credential. Measured: a viewer that embeds the page in a **sandboxed
+   * iframe** has an opaque origin, so the browser marks every request it makes cross-site — reads worked and
+   * sending a prompt was refused with `403`, because the write path judged the header on its own. The owner
+   * could watch heddle in the sidebar and not talk to it.
    *
-   * Reads are safe to allow because the credential cannot travel: the session cookie is `SameSite=Strict`,
-   * so a browser does not attach it to a cross-site request, and an attacker who issues one receives the
-   * token form rather than a session. A state-changing request is a different matter — it is refused unless
-   * it names this authority in `Origin`, which is checked below.
+   * The rule now lives where the credential is known, and it reads: a cross-site write is refused unless it
+   * carries a valid session. That is the safe half of both previous behaviours — an attacker issuing a
+   * cross-site POST cannot carry the session, because the cookie is `SameSite=Strict` and a browser does not
+   * attach it, so they are refused for the older and better reason: they are unauthenticated.
+   *
    */
-  const site = String(request.headers['sec-fetch-site'] ?? '')
-  const method = String(request.method ?? 'GET').toUpperCase()
-  const changesState = method !== 'GET' && method !== 'HEAD'
-  if (site === 'cross-site' && changesState) {
-    /**
-     * The message says what the rule is, because the reader is usually the author of a viewer that embeds
-     * the page: a cross-site request may read and may not change anything.
-     */
-    return 'refused: a cross-site request that changes state; a cross-site request may read, but writes must come from this origin'
-  }
-
   const origin = request.headers.origin
   if (typeof origin === 'string' && origin.length > 0) {
     try {

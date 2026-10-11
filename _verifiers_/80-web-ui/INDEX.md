@@ -16,6 +16,14 @@ The harness needs a face. This part judges that a documented default port serves
 
 `check.mjs` starts the server on an ephemeral port and fetches the root and the API.
 
+## What decides it
+
+- [`check.mjs`](check.mjs) — the port, the page, the API and the live stream.
+- [`check-workspaces.mjs`](check-workspaces.mjs) — the left column's two workspace controls: registering
+  a folder over the API the button posts to, the refusals that keep the controls honest, the split
+  between a chosen root and one adopted because a session ran in it, and a browser clicking both
+  controls.
+
 ## Running it
 
 ```bash

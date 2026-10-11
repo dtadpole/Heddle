@@ -37,6 +37,12 @@ stops, so the reader walks the frames itself; that walk is the module's whole re
 Plain `session.jsonl` transcripts are still read and still appended to in plain text — a session
 keeps the format it was born with.
 
+A frame torn by an interruption is **cut back to the last whole frame when the session is opened**,
+and the session records `transcript/repaired` with how many bytes went. This is not cosmetic: the
+frame walk stops at the first incomplete frame, so appending past one writes events nothing can ever
+read. Measured before the repair existed: a torn file plus one appended frame read back as one event
+instead of two, with the new event silently gone.
+
 **The file is read once per process** (`SessionStore.load`). Events are kept in memory and advanced
 on append, because a single turn used to re-read and re-parse the whole transcript twenty-one times:
 five `read` calls and sixteen `count` calls, and `count` read the file too. That made a turn's cost

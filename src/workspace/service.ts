@@ -42,6 +42,19 @@ export interface WorkspaceRecord {
   /** Canonical absolute path of the target folder. The root, and the association key. */
   readonly path: string
   readonly title: string
+  /**
+   * How this root came to exist, which is what tells a chosen folder from an adopted one.
+   *
+   * `added` is a folder a person registered — by `workspace add`, by the Web UI's button, or by
+   * promoting an adopted one. `auto` is a folder a session was found in and `bootstrap` or
+   * `ensureOwner` adopted, because "every session has a root" is what keeps the tree total. The
+   * distinction is a **view**: the tree lists what a person chose, and the sessions of adopted
+   * folders are listed apart, as ad-hoc work rather than as a project.
+   *
+   * Absent means `added`: a record written before this field existed should stay where it was
+   * already being shown rather than silently moving out of the tree.
+   */
+  readonly origin?: 'added' | 'auto'
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -124,19 +137,20 @@ export class WorkspaceService extends Service {
           id: typeof record.id === 'string' ? record.id : id,
           path: record.path,
           title: record.title,
+          origin: record.origin === 'auto' ? 'auto' : 'added',
           createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date(0).toISOString(),
           updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : new Date(0).toISOString(),
         }
       }
-      return { version: 2, workspaceIds: parsed.workspaceIds ?? [], workspaces }
+      return { version: 3, workspaceIds: parsed.workspaceIds ?? [], workspaces }
     } catch {
-      return { version: 2, workspaceIds: [], workspaces: {} }
+      return { version: 3, workspaceIds: [], workspaces: {} }
     }
   }
 
   private write(shape: WorkspaceStoreShape): void {
     mkdirSync(dirname(this.file), { recursive: true })
-    writeFileSync(this.file, `${JSON.stringify({ ...shape, version: 2 }, null, 2)}\n`)
+    writeFileSync(this.file, `${JSON.stringify({ ...shape, version: 3 }, null, 2)}\n`)
   }
 
   /** Every workspace, in the collection's order. */
@@ -146,17 +160,33 @@ export class WorkspaceService extends Service {
   }
 
   /** One workspace by path, creating the record when it does not exist yet. */
-  ensure(path: string, title?: string): WorkspaceRecord {
+  ensure(path: string, title?: string, options: { readonly origin?: 'added' | 'auto' } = {}): WorkspaceRecord {
     const canonical = canonicalPath(path)
     const shape = this.read()
     const existing = Object.values(shape.workspaces).find((record) => record.path === canonical)
-    if (existing !== undefined) return existing
+    if (existing !== undefined) {
+      /**
+       * Registering an adopted folder **promotes** it rather than duplicating it.
+       *
+       * This is what makes the ad-hoc group a staging area: a folder that was adopted because a
+       * session ran in it moves into the tree the moment a person says it is a project, and its
+       * sessions come with it because membership was always by path.
+       */
+      if (options.origin === 'added' && existing.origin !== 'added') {
+        const promoted: WorkspaceRecord = { ...existing, origin: 'added', updatedAt: new Date().toISOString() }
+        shape.workspaces[existing.id] = promoted
+        this.write(shape)
+        return promoted
+      }
+      return existing
+    }
 
     const now = new Date().toISOString()
     const record: WorkspaceRecord = {
       id: randomUUID(),
       path: canonical,
       title: title ?? canonical.split('/').filter(Boolean).pop() ?? canonical,
+      origin: options.origin ?? 'added',
       createdAt: now,
       updatedAt: now,
     }
@@ -169,8 +199,44 @@ export class WorkspaceService extends Service {
   /** Register a target folder, reporting whether this call is what created the record. */
   add(path: string, title?: string): WorkspaceAddition {
     const before = this.find(path)
-    const record = this.ensure(path, title)
+    const record = this.ensure(path, title, { origin: 'added' })
     return { record, created: before === undefined }
+  }
+
+  /**
+   * Unregister a root, and say what happened to the sessions that were under it.
+   *
+   * Removing a root is not the same as forgetting one: `bootstrap` attaches every session to the
+   * nearest root above its folder and **creates a root where there is none**, so a root removed while
+   * sessions still live under it comes back on the next run. A button that reports success and is
+   * undone a minute later is worse than one that refuses, so the rule is:
+   *
+   * - nothing under it → removed;
+   * - sessions under it, and another root above it → removed, and its sessions are adopted by that
+   *   root, which is durable because `owner()` resolves to the ancestor afterwards;
+   * - sessions under it, and nothing above it → refused, unless `force`, which removes it and leaves
+   *   those sessions to be re-registered by the next run.
+   */
+  remove(
+    idOrPath: string,
+    options: { readonly all?: readonly SessionMeta[]; readonly force?: boolean } = {},
+  ): { readonly removed: WorkspaceRecord; readonly ownedSessions: number; readonly adoptedBy?: string } {
+    const shape = this.read()
+    const record = this.find(idOrPath)
+    if (record === undefined) throw new Error(`no workspace '${idOrPath}'`)
+
+    const owned = this.sessions(record, options.all ?? [])
+    const others = Object.values(shape.workspaces).filter((entry) => entry.id !== record.id)
+    const parent = this.owner(dirname(record.path), others)
+    if (owned.length > 0 && parent === undefined && options.force !== true) {
+      throw new Error(
+        `workspace '${record.title}' still holds ${owned.length} session(s) and no root above it, so removing it would only be undone on the next run; remove those sessions, register a root above '${record.path}', or force it`,
+      )
+    }
+
+    delete shape.workspaces[record.id]
+    this.write({ ...shape, workspaceIds: shape.workspaceIds.filter((id) => id !== record.id) })
+    return { removed: record, ownedSessions: owned.length, ...(parent !== undefined ? { adoptedBy: parent.title } : {}) }
   }
 
   /** One workspace by id or by path. */
@@ -218,7 +284,7 @@ export class WorkspaceService extends Service {
    */
   ensureOwner(path: string): WorkspaceRecord {
     const canonical = canonicalPath(path)
-    return this.owner(canonical) ?? this.ensure(canonical)
+    return this.owner(canonical) ?? this.ensure(canonical, undefined, { origin: 'auto' })
   }
 
   /**
@@ -233,7 +299,7 @@ export class WorkspaceService extends Service {
     for (const meta of all) {
       const canonical = canonicalPath(meta.cwd)
       if (this.owner(canonical) === undefined) {
-        this.ensure(canonical)
+        this.ensure(canonical, undefined, { origin: 'auto' })
         created += 1
       }
       attached += 1
