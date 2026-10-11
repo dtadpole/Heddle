@@ -25,6 +25,24 @@ import { browserAvailable, openBrowser } from '../../_tools_/check-helpers/brows
 const CAPABILITY = 'a token that protects the Web UI and its event stream'
 
 /**
+ * The index in the page's session list of a session whose transcript holds reasoning, or `null`.
+ *
+ * Read through the gate the page itself uses, so the check picks a target by what the API serves rather than
+ * by a title that changes with every run.
+ */
+async function pickSessionWithReasoning(browser) {
+  const found = await browser.evaluate(`(async () => {
+    const sessions = await (await fetch('/api/sessions')).json()
+    for (let index = 0; index < Math.min(sessions.length, 20); index += 1) {
+      const body = await (await fetch('/api/sessions/' + encodeURIComponent(sessions[index].id))).json()
+      if ((body.turns ?? []).some((turn) => turn.kind === 'reasoning')) return index
+    }
+    return null
+  })()`)
+  return typeof found === 'number' ? found : null
+}
+
+/**
  * Exchange a server's launch URL for the cookie heddle issues, the way a browser's first visit does.
  *
  * The launch token becomes a signed HttpOnly cookie on a 303; every later request carries the cookie and
@@ -385,6 +403,14 @@ test('a session\'s history is readable through the API, and a blank view is not 
       body.turns.some((entry) => entry.text.includes('remember the word loom')),
       'with the user\'s words intact',
     )
+    /**
+     * The fold must not read the completion as well as the deltas: the log records both for one turn, so a
+     * check that only asserted *some* content would pass while every answer was printed twice. Counted here
+     * rather than trusted.
+     */
+    const answers = body.turns.filter((entry) => entry.kind === 'assistant').map((entry) => entry.text)
+    const duplicated = answers.filter((text, index) => answers.indexOf(text) !== index && text.length > 20)
+    assert.equal(duplicated.length, 0, `no answer is recorded twice\nsaw: ${JSON.stringify(duplicated).slice(0, 160)}`)
 
     // A path that is not a session id must not be resolved against the store.
     const refused = await fetch(`${new URL(server.url).origin}/api/sessions/..%2F..%2Fetc%2Fpasswd`, { headers: { cookie } })
@@ -401,16 +427,20 @@ test('a session\'s history is readable through the API, and a blank view is not 
   }
 })
 
-test('selecting a session shows its transcript in a real browser', async (context) => {
+test('the page renders a session\'s history in blocks, and collapses reasoning and tools', async (context) => {
   if (!skipUnless(context, await supportsWeb(), CAPABILITY)) return
   if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
   /**
-   * The check that would have caught the blank view, and the reason it is a browser check: the fault was
-   * entirely in the page's own script — it fetched nothing to show — so no amount of API judging sees it.
-   * Measured before the fix: 32 sessions listed and `#log` with a length of 0 after a click.
+   * The check that would have caught the blank view, and three of the four bugs found while fixing it.
    *
-   * `waitFor` is used rather than a fixed sleep, because a transcript that arrives late is working and a
-   * check that says otherwise is a flaky one.
+   * It is a browser check because the fault was entirely in the page's own script, so no amount of API
+   * judging sees it. Measured before the fix: 32 sessions listed and `#log` with a length of 0 after a
+   * click. Measured during the fix, and each is a claim here: a stale identifier in one function left the
+   * log holding **one turn of nine** with nothing said, and the fold's deltas were read as well as the
+   * completions, which would print every answer twice.
+   *
+   * The page is opened through the gate when one is running, because that is how the owner uses it, and
+   * directly when it is not.
    */
   const fixture = await startServer('browser-history')
   const live = await startCli(fixture.args, fixture.env)
@@ -424,20 +454,61 @@ test('selecting a session shows its transcript in a real browser', async (contex
       body: JSON.stringify({ prompt: 'the loom question' }),
     }).then((response) => response.text())
 
-    /**
-     * The browser is given the same cookie the handshake produced, which is the state a person is in after
-     * visiting the printed URL. Setting it through `document.cookie` cannot work — heddle's cookie is
-     * HttpOnly, which is the point of it — so the check navigates with the token once, exactly as the
-     * printed URL asks a person to.
-     */
+    // The printed URL is what a person is asked to open, so it is what this opens.
     await browser.goto(live.url)
-    assert.ok(await browser.waitFor('document.querySelectorAll("#sessions li").length > 0', 20_000), 'the session list rendered')
+    assert.ok(
+      await browser.waitFor('document.querySelectorAll("#sessions li").length > 0', 20_000),
+      'the session list rendered',
+    )
 
+    /**
+     * A session is selected on first load, so the log is never an empty pane beside a full list. Without it
+     * a prompt sent from that state starts a NEW session instead of continuing the one on screen — measured,
+     * and it is why the first version of this check watched a two-message live view while the session beside
+     * it held the whole transcript.
+     */
+    assert.ok(
+      await browser.waitFor('document.querySelectorAll("#log .turn").length > 0', 20_000),
+      'a session is selected on first load, so the log is not empty',
+    )
+
+    // Selecting a session shows ITS history, not the live stream.
     await browser.evaluate('document.querySelector("#sessions li").click()')
-    const shown = await browser.waitFor('document.getElementById("log").innerText.length > 0', 20_000)
-    const text = await browser.evaluate('document.getElementById("log").innerText')
-    assert.ok(shown, `selecting a session shows its transcript\nrendered: ${JSON.stringify(text.slice(0, 120))}`)
-    assert.match(text, /loom/, "and it is that session's content")
+    assert.ok(
+      await browser.waitFor('document.getElementById("log").innerText.length > 0', 20_000),
+      'selecting a session shows its transcript',
+    )
+    const rendered = JSON.parse(
+      await browser.evaluate(`JSON.stringify({
+        turns: document.querySelectorAll('#log .turn').length,
+        denied: [...document.querySelectorAll('#log .turn.denied')].map((n) => n.innerText),
+        text: document.getElementById('log').innerText.slice(0, 120),
+      })`),
+    )
+    assert.equal(rendered.denied.length, 0, `every turn rendered\nsaw: ${JSON.stringify(rendered.denied).slice(0, 200)}`)
+    assert.ok(rendered.turns >= 2, `the transcript has more than the first line\nsaw ${rendered.turns}`)
+    assert.match(rendered.text, /loom/, "and it is that session's content")
+
+    /**
+     * The page's source carries the disclosure structure, and the served copy is read rather than the file
+     * on disk: the failure that cost the most time was a stale identifier inside the page, which a check of
+     * `src/` would have missed entirely because the build had already copied it.
+     */
+    const served = await (await fetch(`${origin}/`, { headers: { cookie } })).text()
+    assert.match(served, /createElement\('details'\)/, 'a block is a details element')
+    assert.match(served, /createElement\('summary'\)/, 'with a summary line')
+    assert.match(served, /kind === 'reasoning' \|\| kind === 'tool'/, 'reasoning and tools take the collapsible path')
+    assert.match(served, /details\.turn > summary/, 'and the styles target it')
+    /**
+     * Every function the page calls is defined in the page. This is the cheap, exact form of the mistake
+     * that broke rendering: a renamed helper left one call site behind, and the page threw on the first
+     * reasoning turn while still serving `200`.
+     */
+    for (const fn of ['add', 'addBlock', 'oneLiner', 'showSession', 'refreshSessions']) {
+      assert.match(served, new RegExp(`function ${fn}\\(`), `the page defines ${fn}()`)
+      const calls = [...served.matchAll(new RegExp(`(?<![a-zA-Z])${fn}\\(`, 'g'))].length
+      assert.ok(calls >= 2, `${fn}() is called somewhere, not only defined`)
+    }
   } finally {
     browser.close()
     live.kill()

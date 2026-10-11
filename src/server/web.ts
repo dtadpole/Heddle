@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { networkInterfaces } from 'node:os'
+import { join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -484,12 +486,18 @@ function respond(response: ServerResponse, status: number, contentType: string, 
 /**
  * Fold a session's recorded events into the display turns the page renders.
  *
+ * Exported so the fold can be judged directly: it is pure, it is where the two subtle rules live (read the
+ * deltas rather than the completion; keep reasoning separate), and a unit test can cover both in a way no
+ * end-to-end check can isolate.
+ *
  * Read from the deltas rather than from `assistant/completed`, because one turn records both and reading
  * the completion too would double every answer. Reasoning keeps its own kind, as it does live: it is the
  * part a reader most wants separated from what the model said.
  */
-function transcriptTurns(events: readonly { readonly type: string; readonly message?: unknown; readonly chunk?: unknown }[]): readonly { readonly kind: string; readonly text: string }[] {
-  const turns: { kind: string; text: string }[] = []
+export function transcriptTurns(
+  events: readonly { readonly type: string; readonly message?: unknown; readonly chunk?: unknown }[],
+): readonly { readonly kind: string; readonly text: string; readonly label?: string }[] {
+  const turns: { kind: string; text: string; label?: string }[] = []
   for (const event of events) {
     if (event.type === 'message') {
       const message = event.message as { role?: string; content?: readonly { type?: string; text?: string }[]; toolCallId?: string } | undefined
@@ -505,7 +513,16 @@ function transcriptTurns(events: readonly { readonly type: string; readonly mess
     if (chunk === undefined) continue
     if (chunk.type === 'text-delta' && chunk.text !== undefined) turns.push({ kind: 'assistant', text: chunk.text })
     else if (chunk.type === 'reasoning-delta' && chunk.text !== undefined) turns.push({ kind: 'reasoning', text: chunk.text })
-    else if (chunk.type === 'tool-call' && chunk.name !== undefined) turns.push({ kind: 'tool', text: `→ ${chunk.name} ${chunk.arguments ?? '{}'}` })
+    /**
+     * A tool call carries its **label** separately from its body.
+     *
+     * The label is what the collapsed one-liner shows — the tool's name — and the body is the arguments,
+     * which are only worth reading when someone asks. Deriving the label from the text on the client would
+     * mean parsing it back out of a string this code just built.
+     */
+    else if (chunk.type === 'tool-call' && chunk.name !== undefined) {
+      turns.push({ kind: 'tool', label: `→ ${chunk.name}`, text: chunk.arguments ?? '{}' })
+    }
   }
   return turns
 }
@@ -513,174 +530,53 @@ function transcriptTurns(events: readonly { readonly type: string; readonly mess
 /**
  * The page a refused request gets: the token form, and why it appeared when there is a reason.
  *
+ * Exported for the same reason: which of the two refusals a caller sees is a decision, and it is worth
+ * judging without a browser.
+ *
  * One helper for every refusal, so the recovery path cannot differ between them — the stale-token case
  * was a bare sentence while the unauthenticated case had a form, and there was no reason for the two to
  * differ other than that they were written apart.
  */
-function tokenFormPage(options: { readonly stale?: boolean } = {}): string {
+export function tokenFormPage(options: { readonly stale?: boolean } = {}): string {
+  /**
+   * Two refusals, told apart on the page.
+   *
+   * "No token" and "the wrong token" are different situations and a person acts differently on each: the
+   * first has never had one, the second had one that stopped working. The page says which it is, what the
+   * token is, and how to read the current one — the alternative was a sentence that named neither, which
+   * is what this used to be.
+   */
   const reason =
     options.stale === true
-      ? '<p><strong>That token is not the current one.</strong> The launch token is minted once per start, so a URL from an earlier run — a bookmark, the history, or an old log line — stops working when the server restarts. Read the current one with <code>grep -o \'token=[A-Za-z0-9_-]*\' ~/.heddle/web.log | tail -1</code>, or paste it below.</p>'
-      : '<p>Authentication required. Reopen the URL printed by <code>heddle web</code>, or paste the token below.</p>'
-  return `<h1>heddle web</h1>${reason}<form method="get" action="/"><input name="${TOKEN_QUERY}" placeholder="token" autofocus><button>open</button></form>`
+      ? '<p><strong>That token is not the current one.</strong> A launch token is minted once per start, so a URL from an earlier run — a bookmark, the history, or an old log line — stops working when the server restarts.</p>'
+      : '<p><strong>A launch token is required for this page.</strong> heddle prints one URL per start, with the token in it, and only that token opens this page.</p>'
+  const how = `<p>Read the current one from the log, or paste it below:</p><pre>grep -o 'token=[A-Za-z0-9_-]*' ~/.heddle/web.log | tail -1</pre>`
+  return (
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1"><title>heddle web</title>' +
+    '<style>body{margin:0;padding:2rem;font:14px/1.6 ui-sans-serif,system-ui,sans-serif;max-width:44rem;color-scheme:light dark}' +
+    'h1{font-size:1.1rem;margin:0 0 1rem}pre{background:color-mix(in oklab,currentColor 8%,transparent);padding:.6rem .8rem;border-radius:.35rem;overflow-x:auto}' +
+    'form{display:flex;gap:.5rem;margin-top:1rem}input{flex:1;padding:.5rem;font:inherit}button{padding:.5rem 1rem;font:inherit}</style>' +
+    `</head><body><h1>heddle web</h1>${reason}${how}` +
+    `<form method="get" action="/"><input name="${TOKEN_QUERY}" placeholder="token" autofocus><button>open</button></form>` +
+    '</body></html>'
+  )
 }
 
+/**
+ * The page, read from the file beside this module.
+ *
+ * It was a template literal, and the type stripper parses the contents of one as code: an identifier-like
+ * word in the markup or the CSS became a reference the compiler tried to resolve. Three separate failures
+ * came from that in one edit — a `summary` element clashing with a helper's name, a bare `details` and
+ * `summary` in the CSS, and an em dash reported as a module declaration. A file has none of that, needs no
+ * escaping, and is what a reader can open directly.
+ *
+ * `build` copies it beside the compiled module, because a file the server reads at runtime is not one
+ * `tsc` emits.
+ */
 function page(): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>heddle</title>
-<style>
-  :root { color-scheme: light dark; --line: color-mix(in oklab, currentColor 20%, transparent); }
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; display: flex; height: 100vh; }
-  aside { width: 22rem; border-right: 1px solid var(--line); overflow-y: auto; padding: .75rem; }
-  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  h1 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; opacity: .6; margin: .25rem 0 .5rem; }
-  ol { list-style: none; margin: 0; padding: 0; }
-  li { padding: .4rem .5rem; border-radius: .35rem; cursor: pointer; }
-  li:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
-  li[aria-current] { background: color-mix(in oklab, currentColor 14%, transparent); }
-  .meta { opacity: .6; font-size: .78rem; }
-  #log { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .6rem; }
-  .turn { border-left: 3px solid var(--line); padding-left: .6rem; white-space: pre-wrap; }
-  .turn.user { border-color: #4b8bf5; }
-  .turn.assistant { border-color: #2fa36b; }
-  .turn.reasoning { border-color: #b7791f; opacity: .85; font-style: italic; }
-  .turn.tool { border-color: #8b5cf6; font-family: ui-monospace, monospace; font-size: .85em; }
-  .turn.denied { border-color: #d14343; color: #d14343; }
-  form { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid var(--line); }
-  textarea { flex: 1; resize: vertical; min-height: 3.5rem; font: inherit; padding: .5rem; }
-  button { font: inherit; padding: .5rem 1rem; }
-</style>
-</head>
-<body>
-<aside>
-  <h1>Sessions</h1>
-  <ol id="sessions"></ol>
-</aside>
-<main>
-  <div id="log"></div>
-  <form id="prompt">
-    <textarea name="prompt" placeholder="ask heddle something" autofocus></textarea>
-    <button>run</button>
-  </form>
-</main>
-<script type="module">
-const log = document.getElementById('log')
-const list = document.getElementById('sessions')
-let current = null
-
-function add(kind, text, merge = true) {
-  if (text === '' || text === undefined) return
-  const last = log.lastElementChild
-  // The merge flag is what the live stream wants: deltas of one answer belong in one block. Passing
-  // false is what history wants, where two consecutive entries of the same kind are two turns.
-  //
-  // No backticks and no em dashes in this script: the page is a template literal, so a backtick here
-  // ends it and the runtime then parses the rest as code. Measured, both ways.
-  if (merge && last && last.dataset.kind === kind) { last.textContent += text; return }
-  const node = document.createElement('div')
-  node.className = 'turn ' + kind
-  node.dataset.kind = kind
-  node.textContent = text
-  log.append(node)
-  log.scrollTop = log.scrollHeight
-}
-
-async function showSession(id) {
-  current = id
-  await refreshSessions()
-  /**
-   * The log is cleared and refilled from the session's own history.
-   *
-   * This is the half that was missing: selecting a session used to leave the right side empty, because
-   * the only thing that ever wrote to it was the live stream and those events had already happened.
-   */
-  log.replaceChildren()
-  try {
-    const response = await fetch('/api/sessions/' + encodeURIComponent(id))
-    if (!response.ok) return
-    const body = await response.json()
-    for (const turn of body.turns ?? []) add(turn.kind, turn.text, false)
-  } catch {
-    // A history that cannot be read must not empty the live view as well; the stream keeps appending.
-  }
-}
-
-async function refreshSessions() {
-  const response = await fetch('/api/sessions')
-  if (!response.ok) return
-  const sessions = await response.json()
-  list.replaceChildren(...sessions.slice(0, 50).map((session) => {
-    const item = document.createElement('li')
-    item.innerHTML = '<div>' + (session.title ?? session.id) + '</div><div class="meta">' + session.turns + ' turn(s) · ' + session.created + '</div>'
-    if (session.id === current) item.setAttribute('aria-current', 'true')
-    item.onclick = () => { showSession(session.id) }
-    return item
-  }))
-}
-
-const events = new EventSource('/api/events')
-events.addEventListener('session', (message) => {
-  const payload = JSON.parse(message.data)
-  if (current && payload.session !== current) return
-  const event = payload.event
-  if (event.type === 'assistant/chunk' && event.chunk.type === 'text-delta') add('assistant', event.chunk.text)
-  else if (event.type === 'assistant/chunk' && event.chunk.type === 'reasoning-delta') add('reasoning', event.chunk.text)
-  else if (event.type === 'assistant/chunk' && event.chunk.type === 'tool-call') add('tool', '→ ' + event.chunk.name + ' ' + event.chunk.arguments)
-  else if (event.type === 'message' && event.message.role === 'user') add('user', event.message.content.map((part) => part.text ?? '').join(''))
-  else if (event.type === 'message' && event.message.role === 'tool') add(event.message.content.some((part) => part.text?.startsWith('error')) ? 'denied' : 'tool', event.message.content.map((part) => part.text ?? '').join(''))
-})
-
-document.getElementById('prompt').addEventListener('submit', async (submitEvent) => {
-  submitEvent.preventDefault()
-  const textarea = submitEvent.target.elements.prompt
-  const prompt = textarea.value.trim()
-  if (prompt === '') return
-  textarea.value = ''
-  add('user', prompt)
-  const response = await fetch('/api/turn', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ prompt, session: current }),
-  })
-  if (!response.ok) { add('denied', 'request refused: ' + response.status); return }
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  for (;;) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    for (const block of buffer.split('\\n\\n')) {
-      if (!block.trim().startsWith('event:')) continue
-      const name = /event: (.+)/.exec(block)?.[1]
-      const data = /data: (.+)/.exec(block)?.[1]
-      if (!data) continue
-      const payload = JSON.parse(data)
-      if (name === 'session') {
-        current = payload.session
-        const event = payload.event
-        if (event.type === 'assistant/chunk' && event.chunk.type === 'text-delta') add('assistant', event.chunk.text)
-        else if (event.type === 'assistant/chunk' && event.chunk.type === 'reasoning-delta') add('reasoning', event.chunk.text)
-      } else if (name === 'done') {
-        for (const denial of payload.denials ?? []) add('denied', denial.tool + ': ' + denial.message)
-        refreshSessions()
-      } else if (name === 'error') add('denied', payload.message)
-    }
-    const lastBreak = buffer.lastIndexOf('\\n\\n')
-    if (lastBreak !== -1) buffer = buffer.slice(lastBreak + 2)
-  }
-})
-
-refreshSessions()
-</script>
-</body>
-</html>
-`
+  return readFileSync(join(import.meta.dirname, 'page.html'), 'utf8')
 }
 
 /** The addresses a person could reach this server on, for a LAN-aware message. */

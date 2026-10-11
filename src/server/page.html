@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>heddle</title>
+<style>
+  :root { color-scheme: light dark; --line: color-mix(in oklab, currentColor 20%, transparent); }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; display: flex; height: 100vh; }
+  aside { width: 22rem; border-right: 1px solid var(--line); overflow-y: auto; padding: .75rem; }
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  h1 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; opacity: .6; margin: .25rem 0 .5rem; }
+  ol { list-style: none; margin: 0; padding: 0; }
+  li { padding: .4rem .5rem; border-radius: .35rem; cursor: pointer; }
+  li:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
+  li[aria-current] { background: color-mix(in oklab, currentColor 14%, transparent); }
+  .meta { opacity: .6; font-size: .78rem; }
+  #log { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .6rem; }
+  .turn { border-left: 3px solid var(--line); padding-left: .6rem; white-space: pre-wrap; }
+  .turn.user { border-color: #4b8bf5; }
+  .turn.assistant { border-color: #2fa36b; }
+  .turn.reasoning { border-color: #b7791f; opacity: .85; }
+  .turn.reasoning[open] [data-body] { font-style: italic; }
+  details.turn > summary { cursor: pointer; font-size: .82rem; opacity: .75; list-style: none; }
+  details.turn > summary::-webkit-details-marker { display: none; }
+  details.turn > summary::before { content: '▸ '; }
+  details.turn[open] > summary::before { content: '▾ '; }
+  details.turn > [data-body] { margin-top: .35rem; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .85em; }
+  .turn.tool { border-color: #8b5cf6; font-family: ui-monospace, monospace; font-size: .85em; }
+  .turn.denied { border-color: #d14343; color: #d14343; }
+  form { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid var(--line); }
+  textarea { flex: 1; resize: vertical; min-height: 3.5rem; font: inherit; padding: .5rem; }
+  button { font: inherit; padding: .5rem 1rem; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Sessions</h1>
+  <ol id="sessions"></ol>
+</aside>
+<main>
+  <div id="log"></div>
+  <form id="prompt">
+    <textarea name="prompt" placeholder="ask heddle something" autofocus></textarea>
+    <button>run</button>
+  </form>
+</main>
+<script type="module">
+const log = document.getElementById('log')
+const list = document.getElementById('sessions')
+let current = null
+
+function add(kind, text, merge = true, label) {
+  if (text === '' || text === undefined) return
+  const last = log.lastElementChild
+  // The merge flag is what the live stream wants: deltas of one answer belong in one block. Passing
+  // false is what history wants, where two consecutive entries of the same kind are two turns.
+  //
+  if (kind === 'assistant' && merge && last && last.tagName === 'DIV' && last.dataset.kind === 'assistant') {
+    // Only a plain assistant div is merged into. An earlier version merged on `data-kind` alone, so a
+    // reasoning block (a `details` whose data-kind is reasoning) was never the target — but the branch
+    // still looked for `[data-body]` on whatever the last child was, and a history render passes
+    // merge=false... measured, that path is what threw and left the log holding one turn of nine.
+    last.textContent += text
+    log.scrollTop = log.scrollHeight
+    return
+  }
+  if (kind === 'reasoning' || kind === 'tool') {
+    addBlock(kind, text, merge, label)
+    return
+  }
+  const node = document.createElement('div')
+  node.className = 'turn ' + kind
+  node.dataset.kind = kind
+  node.textContent = text
+  log.append(node)
+  log.scrollTop = log.scrollHeight
+}
+
+/**
+ * A reasoning or tool block: one line while it is closed, the whole thing when it is opened.
+ *
+ * A `<details>` rather than a scripted toggle, which is what DSH's client uses too: the disclosure is the
+ * browser's, so it works before hydration, keeps its keyboard behaviour, and needs no state. The block is
+ * **closed** by default, because reasoning and tool arguments are the two things a reader wants out of the
+ * way until asked for, while the answer itself is not.
+ */
+function addBlock(kind, text, merge, label) {
+  const last = log.lastElementChild
+  if (merge && last && last.dataset.kind === kind) {
+    const body = last.querySelector('[data-body]')
+    body.textContent += text
+    last.querySelector('summary').textContent = oneLiner(kind, body.textContent, label)
+    log.scrollTop = log.scrollHeight
+    return
+  }
+  const node = document.createElement('details')
+  node.className = 'turn ' + kind
+  node.dataset.kind = kind
+  // Named line, not summary: a local called summary shadows the global summary() for the type stripper,
+  // which then read the call below as a call on a string. Measured.
+  const line = document.createElement('summary')
+  line.textContent = oneLiner(kind, text, label)
+  const body = document.createElement('div')
+  body.setAttribute('data-body', '')
+  body.textContent = text
+  node.append(line, body)
+  log.append(node)
+  log.scrollTop = log.scrollHeight
+}
+
+/** The one line a closed block shows: the label when there is one, otherwise the kind and its size. */
+function oneLiner(kind, text, label) {
+  const size = text.length + ' chars'
+  if (label) return label + '  (' + size + ')'
+  return (kind === 'reasoning' ? 'reasoning' : kind) + '  (' + size + ')'
+}
+
+async function showSession(id) {
+  current = id
+  await refreshSessions()
+  /**
+   * The log is cleared and refilled from the session's own history.
+   *
+   * This is the half that was missing: selecting a session used to leave the right side empty, because
+   * the only thing that ever wrote to it was the live stream and those events had already happened.
+   */
+  log.replaceChildren()
+  try {
+    const response = await fetch('/api/sessions/' + encodeURIComponent(id))
+    if (!response.ok) return
+    const body = await response.json()
+    /**
+     * Each turn renders inside its own guard.
+     *
+     * A history that stops at the first turn it cannot draw is worse than one that skips it: measured, one
+     * bad turn left the log holding a single message out of nine, and nothing said why. A skipped turn is
+     * recorded in the DOM as a visible note so the failure is not silent.
+     */
+    for (const turn of body.turns ?? []) {
+      try {
+        add(turn.kind, turn.text, false, turn.label)
+      } catch (error) {
+        const note = document.createElement('div')
+        note.className = 'turn denied'
+        note.textContent = 'could not render a ' + turn.kind + ' turn: ' + (error && error.message)
+        log.append(note)
+      }
+    }
+  } catch (error) {
+    // A history that cannot be read must not empty the live view as well; the stream keeps appending.
+    const note = document.createElement('div')
+    note.className = 'turn denied'
+    note.textContent = 'could not read this session: ' + (error && error.message)
+    log.append(note)
+  }
+}
+
+async function refreshSessions() {
+  const response = await fetch('/api/sessions')
+  if (!response.ok) return
+  const sessions = await response.json()
+  /**
+   * The newest session is selected when nothing is yet.
+   *
+   * Without this the page starts attached to nothing: the list appears, the log stays empty even though
+   * sessions exist, and a prompt sent from that state creates a NEW session instead of continuing the one
+   * a person is looking at. Measured: asking a question produced a two-message live view while the session
+   * beside it held the whole transcript, because `current` was null and the click that followed selected
+   * the session the prompt had just created rather than the one holding history.
+   */
+  const select = current ?? sessions[0]?.id ?? null
+  if (current === null && select !== null) {
+    current = select
+    await showSession(select)
+    return
+  }
+  const rows = sessions.slice(0, 50).map((session) => {
+    const item = document.createElement('li')
+    item.innerHTML = '<div>' + (session.title ?? session.id) + '</div><div class="meta">' + session.turns + ' turn(s) · ' + session.created + '</div>'
+    if (session.id === current) item.setAttribute('aria-current', 'true')
+    item.onclick = () => { showSession(session.id) }
+    return item
+  })
+  list.replaceChildren(...rows)
+}
+
+const events = new EventSource('/api/events')
+events.addEventListener('session', (message) => {
+  const payload = JSON.parse(message.data)
+  if (current && payload.session !== current) return
+  const event = payload.event
+  if (event.type === 'assistant/chunk' && event.chunk.type === 'text-delta') add('assistant', event.chunk.text)
+  else if (event.type === 'assistant/chunk' && event.chunk.type === 'reasoning-delta') add('reasoning', event.chunk.text)
+  else if (event.type === 'assistant/chunk' && event.chunk.type === 'tool-call') add('tool', event.chunk.arguments ?? '{}', false, '→ ' + event.chunk.name)
+  else if (event.type === 'message' && event.message.role === 'user') add('user', event.message.content.map((part) => part.text ?? '').join(''))
+  else if (event.type === 'message' && event.message.role === 'tool') add(event.message.content.some((part) => part.text?.startsWith('error')) ? 'denied' : 'tool', event.message.content.map((part) => part.text ?? '').join(''))
+})
+
+document.getElementById('prompt').addEventListener('submit', async (submitEvent) => {
+  submitEvent.preventDefault()
+  const textarea = submitEvent.target.elements.prompt
+  const prompt = textarea.value.trim()
+  if (prompt === '') return
+  textarea.value = ''
+  add('user', prompt)
+  const response = await fetch('/api/turn', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt, session: current }),
+  })
+  if (!response.ok) { add('denied', 'request refused: ' + response.status); return }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    for (const block of buffer.split('\\n\\n')) {
+      if (!block.trim().startsWith('event:')) continue
+      const name = /event: (.+)/.exec(block)?.[1]
+      const data = /data: (.+)/.exec(block)?.[1]
+      if (!data) continue
+      const payload = JSON.parse(data)
+      if (name === 'session') {
+        current = payload.session
+        const event = payload.event
+        if (event.type === 'assistant/chunk' && event.chunk.type === 'text-delta') add('assistant', event.chunk.text)
+        else if (event.type === 'assistant/chunk' && event.chunk.type === 'reasoning-delta') add('reasoning', event.chunk.text)
+      } else if (name === 'done') {
+        for (const denial of payload.denials ?? []) add('denied', denial.tool + ': ' + denial.message)
+        refreshSessions()
+      } else if (name === 'error') add('denied', payload.message)
+    }
+    const lastBreak = buffer.lastIndexOf('\\n\\n')
+    if (lastBreak !== -1) buffer = buffer.slice(lastBreak + 2)
+  }
+})
+
+refreshSessions()
+</script>
+</body>
+</html>

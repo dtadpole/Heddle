@@ -38,7 +38,7 @@
     "plugin"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp src/server/page.html dist/server/page.html",
     "check": "tsc --noEmit && tsc -p tsconfig.test.json",
     "start": "node src/cli.ts",
     "test": "node --test test/*.test.ts",
