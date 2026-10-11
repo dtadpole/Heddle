@@ -138,3 +138,48 @@ test('a non-streaming provider still produces the same deltas', async (context) 
     await double.close()
   }
 })
+
+test('every turn in one session streams, not only the first', async (context) => {
+  if (!skipUnless(context, await supportsStream(), CAPABILITY)) return
+  /**
+   * A resumed session is where a buffering bug hides: the first turn can be streamed while a later one
+   * is assembled and printed at the end, and a person watching a long conversation sees the second
+   * case as the harness hanging.
+   *
+   * The check runs two turns against one session and requires **both** to report deltas before their
+   * completion, from the run's own summary — so the property is asserted per turn rather than once
+   * for the process.
+   */
+  const double = await chatDouble({ content: 'streamed content', reasoning: 'streamed reasoning', holdOpenMs: 400 })
+  const h = harness('session-turns')
+  try {
+    const config = httpConfig({ home: h.home, baseUrl: double.baseUrl })
+    const first = await runCli(['--stream', '--json', '--endpoint', 'double', '--turn', 'first question'], {
+      env: { ...h.env, HEDDLE_CONFIG: config },
+      timeoutMs: 30_000,
+    })
+    assert.equal(first.code, 0, `the first turn ran\n${first.stdout}${first.stderr}`)
+    const firstSummary = parseJson(first.stdout)
+    assert.ok((firstSummary?.stream?.textDeltas ?? 0) > 0, 'the first turn streamed content')
+    assert.ok((firstSummary?.stream?.reasoningDeltas ?? 0) > 0, 'and reasoning')
+    const session = firstSummary?.session
+    assert.ok(session, 'the first turn named its session')
+
+    const second = await runCli(['--stream', '--json', '--endpoint', 'double', '--resume', session, '--turn', 'second question'], {
+      env: { ...h.env, HEDDLE_CONFIG: config },
+      timeoutMs: 30_000,
+    })
+    assert.equal(second.code, 0, `the resumed turn ran\n${second.stdout}${second.stderr}`)
+    const secondSummary = parseJson(second.stdout)
+    assert.ok(
+      (secondSummary?.stream?.textDeltas ?? 0) > 0,
+      `the resumed turn streamed its content too\n${second.stdout}`,
+    )
+    assert.ok((secondSummary?.stream?.reasoningDeltas ?? 0) > 0, 'and its reasoning')
+    assert.equal(secondSummary?.session, session, 'and it was the same session')
+  } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+    await double.close()
+  }
+})
