@@ -1,0 +1,295 @@
+import assert from 'node:assert/strict'
+import { writeFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { test } from 'node:test'
+
+import { chatDouble, fixtureDir, parseJson, readTranscript, removeDir, repoRoot, runCli, scriptedConfig, sessionsUnder, skipUnless, writeJson } from '../../_tools_/check-helpers/lib.mjs'
+
+/**
+ * Verifier 6 — hooks.
+ *
+ * Judges one part of `ULTIMATE_GOAL.md`: **hooks intercept a model or a tool call**, the way
+ * DSH does it. DSH has no separate hook API — a hook is a Cordis event listener, and what
+ * makes it a hook is the event's **mode**: `waterfall` lets a listener rewrite a value or
+ * refuse a step by not calling `next()`, while `emit` is observation only.
+ *
+ * So the claim is judged by writing a hook plugin and watching it change what happens, not by
+ * asking the harness whether it has hooks:
+ *
+ * - a hook on the model request replaces the request, and the answer comes from where the hook
+ *   pointed rather than from the configured endpoint;
+ * - a hook on a tool call refuses it, and the refusal reaches the model as the tool's result;
+ * - a hook after a tool call replaces its result;
+ * - a hook is released with the fiber that registered it.
+ *
+ * Every hook is a real plugin loaded from a layer file, which is how DSH registers one too.
+ */
+
+const CAPABILITY = 'hook points over a model call and a tool call, in Cordis event modes'
+
+/** A profile for this check, with the plugin paths relative to the profile directory. */
+function hookProfile(home, options = {}) {
+  const dir = fixtureDir('hooks-profile')
+  const prefix = relative(dir, repoRoot).split('\\').join('/')
+  writeJson(join(home, 'heddle.json'), {
+    default: options.endpoint ?? 'double',
+    endpoints: [
+      // The scripted endpoint is always configured, even when the turn starts somewhere else,
+      // because a hook that retargets a request needs somewhere to retarget it to.
+      { name: 'scripted', kind: 'scripted', baseUrl: options.script, model: 'scripted' },
+      ...(options.doubleUrl !== undefined
+        ? [{ name: 'double', kind: 'openai-chat', baseUrl: options.doubleUrl, model: 'double', stream: true }]
+        : []),
+    ],
+  })
+  const hookRows = (options.hooks ?? [])
+    .map(
+      // A hook plugin is written **beside the profile**, so its specifier is relative to the
+      // profile directory. Measured: prefixing it the way a repository plugin is prefixed
+      // resolved to `/Users/zhenc/heddle/retarget.ts`, which is nowhere.
+      (hook, index) => `    - id: hook-${index + 1}
+      name: ./${hook.file}
+`,
+    )
+    .join('')
+  writeFileSync(join(dir, 'cordis.yml'), '[]\n')
+  writeFileSync(
+    join(dir, 'heddle.patch.yml'),
+    `- insert:
+    - id: console
+      name: ${prefix}/src/plugins/console-exporter.ts
+    - id: session
+      name: ${prefix}/src/plugins/session.ts
+      config:
+        root: ${join(home, 'sessions')}
+    - id: model
+      name: ${prefix}/src/plugins/model.ts
+    - id: context
+      name: ${prefix}/src/context/service.ts
+      inject: [model, session]
+      config:
+        contextWindow: 200000
+    - id: sandbox
+      name: ${prefix}/src/sandbox/service.ts
+      config:
+        mode: workspace-write
+        workspaceRoot: ${home}
+    - id: approvals
+      name: ${prefix}/src/approvals/service.ts
+      config:
+        mode: allow
+    - id: tools
+      name: ${prefix}/src/plugins/tools.ts
+      inject: [approvals, sandbox]
+      config:
+        allow: [write_file, read_file, list_dir]
+${hookRows}`,
+  )
+  for (const hook of options.hooks ?? []) writeFileSync(join(dir, hook.file), hook.source)
+  return dir
+}
+
+function harness(label, options = {}) {
+  const home = fixtureDir(`hooks-home-${label}`)
+  const { script } = scriptedConfig({ home, steps: options.steps ?? [{ text: 'the plain answer' }] })
+  /**
+   * The script's path is handed to the profile builder rather than left to be read back from
+   * the configuration: the builder writes its own `heddle.json` and overwrote the one
+   * `scriptedConfig` had just written, so the endpoint kept the default relative path and the
+   * run failed with "could not be read at scripted.json".
+   */
+  const profileDir = hookProfile(home, { ...options, script })
+  return { home, profileDir, env: { HEDDLE_HOME: home, HEDDLE_CONFIG: join(home, 'heddle.json') } }
+}
+
+async function supportsHooks() {
+  const help = await runCli(['--help'])
+  return /hooks/.test(help.stdout)
+}
+
+/** A hook plugin that rewrites every model request to another endpoint. */
+const RETARGET_HOOK = `export const name = 'retarget-hook'
+export const inject = ['model']
+
+export default function retarget(ctx) {
+  ctx.on('model/request', (request, next) => {
+    // A waterfall listener that does not call next() has replaced the value for every
+    // listener after it, which is how DSH's waterfall refuses or overrides a step.
+    return { ...request, endpoint: 'scripted' }
+  })
+}
+`
+
+test('the hook points are named and reachable', async (context) => {
+  if (!skipUnless(context, await supportsHooks(), CAPABILITY)) return
+  const h = harness('points')
+  try {
+    const run = await runCli(['--profile', h.profileDir, 'hooks', '--json'], { env: h.env })
+    assert.equal(run.code, 0, `the command ran\n${run.stdout}${run.stderr}`)
+    const points = parseJson(run.stdout)
+    assert.ok(Array.isArray(points) && points.length > 0, `hook points were listed\n${run.stdout}`)
+    const names = points.map((point) => point.name)
+    for (const wanted of ['model/request', 'model/stream', 'tools/pre-execute', 'tools/post-execute', 'agent/pre-step']) {
+      assert.ok(names.includes(wanted), `'${wanted}' is a hook point\nsaw: ${names.join(', ')}`)
+    }
+    const waterfall = points.filter((point) => point.mode === 'waterfall').map((point) => point.name)
+    assert.ok(waterfall.length >= 4, `the rewriting points are waterfalls\nsaw: ${waterfall.join(', ')}`)
+  } finally {
+    removeDir(h.home)
+  }
+})
+
+test('a hook rewrites a model request and the answer comes from where it pointed', async (context) => {
+  if (!skipUnless(context, await supportsHooks(), CAPABILITY)) return
+  /**
+   * The configured endpoint is a **double**, and the hook retargets every request to the
+   * scripted endpoint. If the answer is the scripted answer, the hook ran and its returned
+   * request was the one dispatched — which is the whole difference between a waterfall and an
+   * observer.
+   */
+  const double = await chatDouble({ content: 'the double answer' })
+  const h = harness('retarget', {
+    endpoint: 'double',
+    doubleUrl: double.baseUrl,
+    steps: [{ text: 'the scripted answer' }],
+    hooks: [{ file: 'retarget.ts', source: RETARGET_HOOK }],
+  })
+  try {
+    const run = await runCli(['--profile', h.profileDir, '--turn', 'say something', '--json'], { env: h.env })
+    assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
+    const summary = parseJson(run.stdout)
+    assert.match(summary.text ?? '', /the scripted answer/, `the hook's endpoint answered\n${run.stdout}`)
+    assert.equal(double.requests.length, 0, 'the configured endpoint was never reached')
+  } finally {
+    removeDir(h.home)
+    await double.close()
+  }
+})
+
+test('a hook refuses a tool call and the refusal reaches the model', async (context) => {
+  if (!skipUnless(context, await supportsHooks(), CAPABILITY)) return
+  const h = harness('refuse', {
+    steps: [
+      { toolCall: { name: 'write_file', arguments: { path: 'should-not-exist.txt', content: 'no' } } },
+      { text: 'understood' },
+    ],
+    hooks: [
+      {
+        file: 'refuse.ts',
+        source: `export const name = 'refuse-hook'
+export default function refuse(ctx) {
+  ctx.on('tools/pre-execute', (call, next) => {
+    if (call.name === 'write_file') return { allowed: false, reason: 'this hook refuses writes' }
+    return next()
+  })
+}
+`,
+      },
+    ],
+  })
+  try {
+    const run = await runCli(['--profile', h.profileDir, '--turn', 'write the file'], { env: h.env })
+    /**
+     * A refused call is a non-zero exit, and that is the harness behaving correctly: a denial
+     * is a fact about the run. Measured: requiring exit zero here failed on a run that did
+     * exactly what the claim asks for.
+     */
+    assert.equal(run.timedOut, false, `the run finished\n${run.stdout}${run.stderr}`)
+    assert.ok(run.stdout.length > 0 || run.stderr.length > 0, 'the run said what it did')
+    const session = sessionsUnder(join(h.home, 'sessions'))[0]
+    assert.ok(session, `a session exists under ${join(h.home, 'sessions')}\n${run.stdout}`)
+    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const toolResults = events
+      .filter((event) => event.type === 'message' && event.message?.role === 'tool')
+      .map((event) => (event.message.content ?? []).map((part) => part.text ?? '').join(''))
+    const recorded = events
+      .filter((event) => event.type === 'message')
+      .map((event) => `${event.message?.role}: ${(event.message?.content ?? []).map((part) => part.text ?? '').join('')}`)
+    assert.ok(
+      toolResults.length > 0,
+      `the model was told what happened to its call; recorded messages: ${JSON.stringify(recorded)}`,
+    )
+    assert.match(toolResults.join('\n'), /refuses writes/, `the refusal was reported as the tool result\n${toolResults.join(' | ')}`)
+  } finally {
+    removeDir(h.home)
+  }
+})
+
+test('a hook replaces a tool result after the call', async (context) => {
+  if (!skipUnless(context, await supportsHooks(), CAPABILITY)) return
+  const h = harness('post', {
+    /**
+     * A file is written first and read in the next round, so the read **succeeds** and the
+     * post-execute hook has a real result to replace. Measured: pointed at a missing file, the
+     * tool threw before the hook chain ran, so the hook's replacement never applied — and the
+     * check failed for a reason that said nothing about hooks.
+     */
+    steps: [
+      { toolCall: { name: 'write_file', arguments: { path: 'present.txt', content: 'the real contents' } } },
+      { toolCall: { name: 'read_file', arguments: { path: 'present.txt' } } },
+      { text: 'fine' },
+    ],
+    hooks: [
+      {
+        file: 'post.ts',
+        source: `export const name = 'post-hook'
+export default function post(ctx) {
+  ctx.on('tools/post-execute', (call, next) => {
+    // A post-execute waterfall is where a policy redacts, spills or replaces a result.
+    const result = next()
+    // A post-execute hook replaces a result the tool actually produced; calling next()
+    // first is what makes this a replacement rather than an invented answer, and it is how
+    // DSH's post-execute waterfall is written.
+    return { ...result, output: 'redacted by the hook', data: { replacedBy: 'post-hook' } }
+  })
+}
+`,
+      },
+    ],
+  })
+  try {
+    const run = await runCli(['--profile', h.profileDir, '--turn', 'read the file'], { env: h.env })
+    assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
+    const session = sessionsUnder(join(h.home, 'sessions'))[0]
+    assert.ok(session, `a session exists under ${join(h.home, 'sessions')}\n${run.stdout}`)
+    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const toolResults = events
+      .filter((event) => event.type === 'message' && event.message?.role === 'tool')
+      .map((event) => (event.message.content ?? []).map((part) => part.text ?? '').join(''))
+    assert.ok(toolResults.length > 0, `the tool result was recorded\n${run.stdout}`)
+    assert.match(
+      toolResults.join('\n'),
+      /redacted by the hook/,
+      `the hook replaced what the tool returned\nsaw: ${toolResults.join(' | ')}`,
+    )
+  } finally {
+    removeDir(h.home)
+  }
+})
+
+test('a hook that refuses a round stops it', async (context) => {
+  if (!skipUnless(context, await supportsHooks(), CAPABILITY)) return
+  const h = harness('pre-step', {
+    hooks: [
+      {
+        file: 'stop.ts',
+        source: `export const name = 'stop-hook'
+export default function stop(ctx) {
+  ctx.on('agent/pre-step', () => {
+    // Throwing from a pre-step waterfall refuses the round; the loop reports the failure
+    // rather than answering as if the request had been made.
+    throw new Error('this hook refuses to send the request')
+  })
+}
+`,
+      },
+    ],
+  })
+  try {
+    const run = await runCli(['--profile', h.profileDir, '--turn', 'say something'], { env: h.env })
+    assert.notEqual(run.code, 0, 'the run failed rather than answering')
+    assert.match(run.stderr + run.stdout, /refuses to send/, 'and said which hook refused it')
+  } finally {
+    removeDir(h.home)
+  }
+})

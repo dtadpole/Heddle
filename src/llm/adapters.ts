@@ -396,13 +396,24 @@ export function scriptedAdapter(
     }
     if (signal?.aborted) throw new ModelError('aborted', { endpoint: endpoint.name, code: 'ABORTED' })
 
-    for (const step of script.steps ?? []) {
-      const value = step as {
-        text?: string
-        reasoning?: string
-        toolCall?: { name: string; arguments: unknown }
-        finishReason?: string
-      }
+    /**
+     * Steps are handed out by round, one call each.
+     *
+     * The first version replayed the whole list on every call, so a script whose first step
+     * was a tool call that got refused refused it again on the next round — an endless loop
+     * that only the round limit stopped, and one that made a one-step script unusable. A round
+     * index makes the script a sequence rather than a repeat.
+     */
+    const roundIndex = typeof (request as { round?: unknown }).round === 'number' ? (request as { round: number }).round : 0
+    const steps = script.steps ?? []
+    const step = steps[roundIndex]
+    const value = (step ?? {}) as {
+      text?: string
+      reasoning?: string
+      toolCall?: { name: string; arguments: unknown }
+      finishReason?: string
+    }
+    {
       if (value.reasoning) yield { type: 'reasoning-delta', text: value.reasoning }
       if (value.text) yield { type: 'text-delta', text: value.text }
       if (value.toolCall) {

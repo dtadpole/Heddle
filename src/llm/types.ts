@@ -55,6 +55,13 @@ export interface GenerateRequest {
   readonly stream?: boolean
   /** Opaque identity carried through the waterfall for logging and retries. */
   readonly sessionId?: string
+  /**
+   * Which round of a turn this request is.
+   *
+   * A transport ignores it. The scripted adapter uses it to hand out one step per round, so a
+   * script is a sequence rather than a list it replays forever.
+   */
+  readonly round?: number
 }
 
 /** One piece of a streamed answer. */

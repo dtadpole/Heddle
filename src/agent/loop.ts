@@ -152,6 +152,7 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
       ...(maximumTokens !== undefined ? { maxOutputTokens: maximumTokens } : {}),
       ...(prepared.tools.length > 0 ? { tools: prepared.tools } : {}),
       sessionId: options.session.id,
+      round,
     }
 
     const calls: { id: string; name: string; arguments: string }[] = []
