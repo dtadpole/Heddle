@@ -158,16 +158,49 @@ async function supportsWeb() {
 test('the documented default port is 3082', async (context) => {
   if (!skipUnless(context, await supportsWeb(), CAPABILITY)) return
   /**
-   * The default is a promise to a person, so it is asserted twice: as the number the server
-   * module exports, and as the number the documentation names. A check that only read the
-   * constant would pass while the docs said something else.
+   * The default is a promise to a person, and the promise is that `heddle web` with no arguments is
+   * reachable where the documentation says. So it is asserted three ways, and the third is the one that
+   * matters:
+   *
+   * 1. the number the server module exports;
+   * 2. the number the documentation names;
+   * 3. **that a server started with no `--port` actually binds it and answers there.**
+   *
+   * The third was missing, and asking "is the UI running on 3082?" is what exposed it: the check read a
+   * constant and a document while the only checks that started a server did so on an ephemeral port, so
+   * nothing had ever connected to 3082. A default nobody binds is a default that is only a number.
+   *
+   * This check therefore holds 3082 for a few seconds. That is deliberate — it is the port the harness
+   * promises, and a check that stepped around it would not be checking it — and it stays bounded
+   * because the server it starts is closed in the same test.
    */
   const { DEFAULT_PORT } = await import('../../dist/server/web.js')
   assert.equal(DEFAULT_PORT, 3082, 'the server exports the documented default')
   const readme = await import('node:fs').then((fs) => fs.readFileSync(new URL('../../README.md', import.meta.url), 'utf8'))
   const goal = await import('node:fs').then((fs) => fs.readFileSync(new URL('../../ULTIMATE_GOAL.md', import.meta.url), 'utf8'))
-  const mentioned = readme.includes('3082') || goal.includes('3082')
-  assert.ok(mentioned, 'the default port is written down where a person would look for it')
+  assert.ok(readme.includes('3082') || goal.includes('3082'), 'the default port is written down where a person would look for it')
+
+  const home = isolatedHome('default-port')
+  const work = fixtureDir('default-port')
+  const double = await chatDouble({ content: 'x' })
+  const config = httpConfig({ home, baseUrl: double.baseUrl, stream: true })
+  // No --port: the point is what the server chooses on its own.
+  const server = await startCli(
+    ['web', '--host', '127.0.0.1', '--endpoint', 'double', '--session-root', join(home, 'sessions')],
+    { HEDDLE_HOME: home, HOME: home, HEDDLE_CONFIG: config },
+  )
+  try {
+    assert.match(server.url, /:3082\//, `a server with no --port bound the documented default\n${server.url}`)
+    const page = await fetch(`http://127.0.0.1:3082/`)
+    assert.equal(page.status, 200, 'and it answers on that port')
+    const html = await page.text()
+    assert.match(html, /<title>heddle<\/title>/, 'with the harness page')
+  } finally {
+    server.kill()
+    await double.close()
+    removeDir(home)
+    removeDir(work)
+  }
 })
 
 test('the server serves a page on loopback and refuses a non-loopback bind', async (context) => {
