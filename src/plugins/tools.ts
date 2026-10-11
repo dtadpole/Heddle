@@ -24,6 +24,11 @@ export default class ToolsPlugin extends ToolRegistry {
     return this.allow.filter((tool) => !this.has(tool))
   }
 
+  /** The allow list this row carried, so a caller can apply it once the tree has loaded. */
+  override allowList(): readonly string[] {
+    return this.allow
+  }
+
   static readonly Config = Schema.object({
     /** Tools to enable, by name. Empty means every registered tool. */
     allow: Schema.array(Schema.string()).default([]),
@@ -42,8 +47,17 @@ export default class ToolsPlugin extends ToolRegistry {
 
     const definitions = config.includeBuiltins === false ? [] : [...builtinTools(ctx.sandbox, { ...(config.bashTimeoutMs !== undefined ? { bashTimeoutMs: config.bashTimeoutMs } : {}) })]
     const allow = config.allow ?? []
-    const selected = allow.length === 0 ? definitions : definitions.filter((tool) => allow.includes(tool.spec.name))
-    for (const definition of selected) this.register(definition)
+    /**
+     * The built-ins are registered whether or not the allow list names them, and the list is enforced
+     * as a **configuration check** afterwards rather than as a filter here.
+     *
+     * Measured, on a plugin that registers a name a built-in uses: filtering by `allow` dropped the
+     * plugin's own tool, because a plugin's name is not in the profile's list of built-ins — so a
+     * project could not replace a built-in with its own version of the same name, which is the most
+     * ordinary reason to register one. The list still decides whether a run is *valid*: a name nothing
+     * registered fails the run, and `missing()` is what reports it.
+     */
+    for (const definition of definitions) this.register(definition)
 
     /**
      * The allow list is checked **by the caller, once the tree has loaded**, not here.

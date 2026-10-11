@@ -242,3 +242,49 @@ test('an over-budget history is compacted and the log keeps the shadowed turns',
     removeDir(h.home)
   }
 })
+
+test('a compacted session keeps working and keeps the newest turn verbatim', async (context) => {
+  if (!skipUnless(context, await supportsContext(), CAPABILITY)) return
+  /**
+   * Compaction is only useful if the conversation continues afterwards. A user whose session was
+   * summarised needs the next question answered, and needs the exchange they just had to still be
+   * exact rather than summarised: the summary covers the older span, and the retained tail is the part
+   * a model needs verbatim.
+   *
+   * Measured from the record: after a compaction the next request must exist, its message count must be
+   * small — proving the summary replaced the span rather than being appended to it — and the most
+   * recent user turn must still be in the log.
+   */
+  const h = harness('compact-continues', {
+    contextWindow: 400,
+    thresholdTokens: 120,
+    steps: [{ text: 'x'.repeat(200) }, { text: 'y'.repeat(200) }],
+  })
+  try {
+    const started = await runCli(['--profile', h.profileDir, '--endpoint', 'scripted', '--turn', 'the opening question', '--json'], { env: h.env })
+    assert.equal(started.code, 0, `the first turn ran\n${started.stdout}${started.stderr}`)
+    const session = sessionsUnder(join(h.home, 'sessions'))[0]
+    for (const prompt of ['a second question', 'a third question', 'a fourth question']) {
+      const run = await runCli(['--profile', h.profileDir, '--endpoint', 'scripted', '--resume', session, '--turn', prompt], { env: h.env })
+      assert.equal(run.code, 0, `the ${prompt} ran\n${run.stdout}${run.stderr}`)
+    }
+    const after = await runCli(['--profile', h.profileDir, '--endpoint', 'scripted', '--resume', session, '--turn', 'the last question', '--json'], { env: h.env })
+    assert.equal(after.code, 0, `the turn after compaction ran\n${after.stdout}${after.stderr}`)
+    const summary = parseJson(after.stdout)
+    assert.equal(summary?.context?.compacted, true, 'the request was assembled with a compaction in effect')
+
+    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const requests = events.filter((event) => event.type === 'model/request')
+    const last = requests[requests.length - 1]
+    assert.ok(
+      (last.messages ?? 0) < 20,
+      `the compacted span is replaced rather than appended, so the newest request stays small (${last.messages} messages)`,
+    )
+    const texts = events
+      .filter((event) => event.type === 'message' && event.message?.role === 'user')
+      .flatMap((event) => (event.message.content ?? []).map((part) => part.text ?? ''))
+    assert.ok(texts.some((text) => text.includes('the last question')), 'and the newest turn is still in the record verbatim')
+  } finally {
+    removeDir(h.home)
+  }
+})

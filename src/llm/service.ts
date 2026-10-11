@@ -26,6 +26,8 @@ export class ModelService extends Service {
   static readonly provide = 'model'
 
   private readonly endpoints = new Map<string, Adapter>()
+  /** The endpoint the configuration nominated, if any. */
+  private nominated: string | undefined
 
   constructor(ctx: Context, endpoints: readonly EndpointConfig[] = []) {
     super(ctx, 'model')
@@ -50,6 +52,25 @@ export class ModelService extends Service {
   /** One endpoint's configuration, or `undefined` when it is not registered. */
   endpoint(name: string): EndpointConfig | undefined {
     return this.endpoints.get(name)?.endpoint
+  }
+
+  /**
+   * The endpoint the configuration nominates, when it names one that exists.
+   *
+   * A caller that does not name an endpoint asks the service rather than taking the first, because a
+   * `default` in a person's configuration is how they say "this one, unless I say otherwise" —
+   * measured, the CLI took the first endpoint and ignored it, so a configured default only applied to
+   * a caller that already knew to use it.
+   */
+  defaultEndpoint(nominated?: string): string | undefined {
+    const candidate = nominated ?? this.nominated
+    if (candidate !== undefined && this.endpoints.has(candidate)) return candidate
+    return this.endpoints.keys().next().value
+  }
+
+  /** Record which endpoint the configuration nominates as the default. */
+  nominateDefault(name: string): void {
+    if (this.endpoints.has(name)) this.nominated = name
   }
 
   /**

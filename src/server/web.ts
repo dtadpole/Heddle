@@ -336,7 +336,7 @@ async function handleTurn(ctx: Context, request: IncomingMessage, response: Serv
     cwd: process.cwd(),
     title: body.prompt.slice(0, 60),
   })
-  const endpoint = body.endpoint ?? state.defaultEndpoint ?? ctx.model.names()[0]
+  const endpoint = body.endpoint ?? state.defaultEndpoint ?? ctx.model.defaultEndpoint()
   if (endpoint === undefined) {
     respond(response, 400, 'text/plain', 'no endpoint is configured\n')
     return

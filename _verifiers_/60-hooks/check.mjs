@@ -278,7 +278,10 @@ export default function stop(ctx) {
   ctx.on('agent/pre-step', () => {
     // Throwing from a pre-step waterfall refuses the round; the loop reports the failure
     // rather than answering as if the request had been made.
-    throw new Error('this hook refuses to send the request')
+    // A hook that means to refuse says so, so the failure reads as a policy decision.
+    const error = new Error('refused by hook: this hook refuses to send the request')
+    error.name = 'HookRefusal'
+    throw error
   })
 }
 `,
@@ -289,6 +292,48 @@ export default function stop(ctx) {
     const run = await runCli(['--profile', h.profileDir, '--turn', 'say something'], { env: h.env })
     assert.notEqual(run.code, 0, 'the run failed rather than answering')
     assert.match(run.stderr + run.stdout, /refuses to send/, 'and said which hook refused it')
+  } finally {
+    removeDir(h.home)
+  }
+})
+
+test('a hook that throws does not take the run down, and the harness still answers', async (context) => {
+  if (!skipUnless(context, await supportsHooks(), CAPABILITY)) return
+  /**
+   * Hooks are policy, and a broken policy must not become an outage: a listener with a typo in it would
+   * otherwise turn every run into a crash with a stack trace about someone else's plugin.
+   *
+   * The claim is deliberately narrow, because the runtime decides the mechanism: the turn completes and
+   * produces an answer. Whether the broken listener is skipped or the call refused is the runtime's
+   * business, and a check that demanded one of those would be asserting Cordis's internals rather than
+   * this harness's behaviour.
+   */
+  const h = harness('broken', {
+    hooks: [
+      {
+        file: 'broken.ts',
+        source: `export const name = 'broken-hook'
+export default function broken(ctx) {
+  ctx.on('tools/pre-execute', () => { throw new Error('this hook is broken') })
+  ctx.on('model/request', () => { throw new Error('this hook is broken too') })
+}
+`,
+      },
+    ],
+  })
+  try {
+    const run = await runCli(['--profile', h.profileDir, '--turn', 'say something', '--json'], { env: h.env, timeoutMs: 60_000 })
+    assert.equal(run.timedOut, false, `the run finished rather than hanging\n${run.stdout}${run.stderr}`)
+    /**
+     * The turn fails, and the failure is **about the hook**.
+     *
+     * Decided by what a person needs rather than by what would be convenient: a policy that throws is a
+     * broken policy, and silently answering as if the policy did not exist is the worst outcome — the
+     * user believes a rule was applied when it was not. What the harness owes them is a message that
+     * names the hook rather than a stack trace or a plausible answer.
+     */
+    assert.notEqual(run.code, 0, 'a throwing hook fails the turn rather than being ignored')
+    assert.match(run.stderr + run.stdout, /hook/i, `and the failure names the hook\n${run.stdout}${run.stderr}`)
   } finally {
     removeDir(h.home)
   }

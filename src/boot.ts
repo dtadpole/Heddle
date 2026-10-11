@@ -126,6 +126,20 @@ export async function boot(options: BootOptions = {}): Promise<Boot> {
  * success while something sat pending would be reporting a tree that never finished
  * loading.
  */
+/**
+ * Entries that failed to load, by id.
+ *
+ * A plugin whose body throws is left in the loader's **failed** state with the error only in a log
+ * line, which measured as the worst kind of silence: an unnamed tool was registered by a fixture
+ * plugin, the registration refused it, and the harness exited `0` while printing four healthy tools.
+ * A row that failed is a broken configuration and the caller has to be able to see it.
+ */
+export function failedEntries(ctx: Context): readonly { readonly id: string; readonly name: string }[] {
+  return [...ctx.loader.entries()]
+    .filter((entry) => entry.fiber !== undefined && entry.fiber.state === 3)
+    .map((entry) => ({ id: entry.options.id, name: entry.options.name }))
+}
+
 export async function settle(ctx: Context, timeoutMs = 5_000): Promise<readonly string[]> {
   const deadline = Date.now() + timeoutMs
   for (;;) {

@@ -129,11 +129,24 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
       compacted: effective.compacted,
     }
 
-    const prepared = ctx.waterfall(
-      'agent/pre-step',
-      { messages: effective.messages, tools, round: round + 1 },
-      () => ({ messages: effective.messages, tools }),
-    )
+    /**
+     * The pre-step hook, with its failures named.
+     *
+     * A listener that throws takes the round down — measured, and it is the right default for a refusal
+     * — but the message must say the failure came from a hook rather than from the model, or a typo in
+     * a policy reads as a provider outage. A listener that means to refuse can say so with `HookRefusal`.
+     */
+    let prepared: { messages: readonly Message[]; tools: readonly ToolSpec[] }
+    try {
+      prepared = ctx.waterfall(
+        'agent/pre-step',
+        { messages: effective.messages, tools, round: round + 1 },
+        () => ({ messages: effective.messages, tools }),
+      )
+    } catch (error) {
+      const reason = isHookRefusal(error) ? (error as Error).message : `a hook failed at agent/pre-step — ${(error as Error).message}`
+      throw new Error(reason)
+    }
 
     ctx.session.store.modelRequest(options.session, {
       endpoint: options.endpoint,
@@ -260,4 +273,23 @@ declare module '@deepseek-ai/cordis' {
       next: () => { readonly messages: readonly Message[]; readonly tools: readonly ToolSpec[] },
     ): { readonly messages: readonly Message[]; readonly tools: readonly ToolSpec[] }
   }
+}
+
+/**
+ * Whether an error raised by a hook says it was meant as a refusal.
+ *
+ * The distinction matters to the person reading the failure: "the policy refused this" and "the policy
+ * is broken" call for different actions, and a stack trace alone does not tell them apart. A hook that
+ * means to refuse throws this; anything else is reported as a broken hook.
+ */
+export class HookRefusal extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'HookRefusal'
+  }
+}
+
+/** Whether an error came from a hook that meant to refuse. */
+export function isHookRefusal(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'HookRefusal' || error.message.startsWith('refused by hook:'))
 }

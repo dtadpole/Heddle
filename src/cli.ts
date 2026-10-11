@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { createApp } from './app.ts'
-import { boot, settle } from './boot.ts'
+import { boot, failedEntries, settle } from './boot.ts'
 import { runTurn } from './agent/loop.ts'
 import { describeEndpoint } from './endpoints.ts'
 import { defaultSessionRoot } from './session/store.ts'
@@ -416,9 +416,36 @@ async function runConfigCommand(command: string, args: Args): Promise<boolean> {
   return false
 }
 
+/**
+ * Apply the configured allow list once the tree has loaded.
+ *
+ * One helper because there are two entry points — the one-shot commands and a turn — and a filter
+ * applied on only one of them is how `heddle tools` listed four tools from a profile that allowed one.
+ * Measured, in exactly that way.
+ */
+function applyToolAllowList(ctx: { tools?: { filterTo?: (allow: readonly string[]) => void; allowList?: () => readonly string[] } }): void {
+  ctx.tools?.filterTo?.(ctx.tools.allowList?.() ?? [])
+}
+
 async function runCommand(command: string, target: string | undefined, json: boolean, args: Args): Promise<boolean> {
   const app = await bootFromArgs(args)
   try {
+    await settle(app.ctx)
+    /**
+     * A row that failed to load is reported here too.
+     *
+     * Measured: a fixture plugin's registration was refused, the row failed, and `heddle tools`
+     * printed four healthy tools and exited `0` — the same silence as before, on the path a person
+     * would use to diagnose it. The one-shot commands are where a broken tree is looked for, so this
+     * is where it has to be reported.
+     */
+    const failed = failedEntries(app.ctx)
+    if (failed.length > 0) {
+      process.stderr.write(`heddle: ${failed.length} row(s) failed to load: ${failed.map((entry) => entry.id).join(', ')}\n`)
+      process.exitCode = 1
+      return true
+    }
+    applyToolAllowList(app.ctx)
     if (command === 'models') {
       const endpoints = app.ctx.model.list().map(describeEndpoint)
       if (json) process.stdout.write(`${JSON.stringify(endpoints, null, 2)}\n`)
@@ -585,13 +612,25 @@ async function main(): Promise<void> {
   try {
     const pending = await settle(app.ctx)
     /**
+     * The allow list is applied **now**, after every plugin has had its chance to register.
+     *
+     * Measured: filtering inside the tools plugin's constructor removed a plugin's own tool before the
+     * plugin existed, so a project could not replace a built-in with its own version of the same name
+     * — the most ordinary reason to register one. Filtering here keeps the configuration's word, that
+     * the run gets the tools it named, while letting a plugin contribute one at any load order.
+     */
+    applyToolAllowList(app.ctx)
+    /**
      * The finished tree is asked whether the configuration was satisfied.
      *
      * Asked rather than listened for: `boot` emits `heddle/ready` before it returns, so a listener
      * attached here would never see it — measured, and the reason the earlier attempt at this
      * silently checked nothing.
      */
-    const configProblems = [...(app.ctx.tools?.missing?.() ?? [])]
+    const configProblems = [
+      ...failedEntries(app.ctx).map((entry) => `row '${entry.id}' (${entry.name}) failed to load`),
+      ...(app.ctx.tools?.missing?.() ?? []),
+    ]
     if (pending.length > 0) {
       process.stdout.write(`heddle: ${pending.length} entry(ies) still pending: ${pending.join(', ')}\n`)
       process.exitCode = 1
@@ -610,7 +649,7 @@ async function main(): Promise<void> {
     }
 
     const endpoints = app.ctx.model.names()
-    const endpoint = args.endpoint ?? endpoints[0]
+    const endpoint = args.endpoint ?? app.ctx.model.defaultEndpoint()
     if (endpoint === undefined) throw new Error('no endpoint is configured; write ~/.heddle/heddle.json or pass --endpoint after configuring one')
     if (!endpoints.includes(endpoint)) throw new Error(`no endpoint named '${endpoint}'; configured: ${endpoints.join(', ')}`)
 

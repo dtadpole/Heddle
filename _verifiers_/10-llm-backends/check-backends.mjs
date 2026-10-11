@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { chatDouble, httpConfig, isolatedHome, parseJson, removeDir, responsesDouble, runCli, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
+import { chatDouble, httpConfig, isolatedHome, parseJson, removeDir, responsesDouble, runCli, skipUnless, writeJson } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
  * Verifier 1 — LLM backends.
@@ -114,4 +115,53 @@ test('a real configured backend answers one short request, or is unjudged', asyn
   const summary = parseJson(run.stdout)
   assert.ok((summary?.text ?? '').length > 0, `a real endpoint answered\n${run.stdout}`)
   assert.equal(summary?.endpoint, target.name, 'and the answer came from the endpoint that was named')
+})
+
+test('the configured default endpoint is the one a turn uses when none is named', async (context) => {
+  if (!skipUnless(context, await supportsBackends(), CAPABILITY)) return
+  /**
+   * A person configures a default so they do not have to name an endpoint every time. The check sets a
+   * default that is deliberately **not** first in the list, so honouring it cannot be an accident of
+   * ordering.
+   */
+  const home = isolatedHome('backends-default')
+  try {
+    const first = await chatDouble({ content: 'the first endpoint answered' })
+    const chosen = await chatDouble({ content: 'the default endpoint answered' })
+    const config = writeJson(join(home, 'heddle.json'), {
+      default: 'chosen',
+      endpoints: [
+        { name: 'first', kind: 'openai-chat', baseUrl: first.baseUrl, model: 'double', stream: true },
+        { name: 'chosen', kind: 'openai-chat', baseUrl: chosen.baseUrl, model: 'double', stream: true },
+      ],
+    })
+    const run = await runCli(['--turn', 'say something', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
+    assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
+    assert.match(run.stdout, /the default endpoint answered/, 'the configured default answered')
+    assert.equal(first.requests.length, 0, 'and the first endpoint in the list was never reached')
+    await first.close()
+    await chosen.close()
+  } finally {
+    removeDir(home)
+  }
+})
+
+test('listing the endpoints costs nothing and reaches no provider', async (context) => {
+  if (!skipUnless(context, await supportsBackends(), CAPABILITY)) return
+  /**
+   * `heddle models` is how a person checks a configuration before trusting it, so it must not be a call:
+   * a model list that spends quota is a list nobody dares run. The check points an endpoint at a double
+   * that records every request and requires the listing to leave it empty.
+   */
+  const home = isolatedHome('backends-list-free')
+  try {
+    const double = await chatDouble({ content: 'x' })
+    const config = httpConfig({ home, name: 'double', baseUrl: double.baseUrl })
+    const run = await runCli(['models', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
+    assert.equal(run.code, 0, `the listing ran\n${run.stdout}${run.stderr}`)
+    assert.equal(double.requests.length, 0, 'listing the endpoints made no request')
+    await double.close()
+  } finally {
+    removeDir(home)
+  }
 })

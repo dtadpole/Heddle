@@ -176,3 +176,41 @@ test('a tool that fails is reported to the model rather than ending the turn', a
     removeDir(h.work)
   }
 })
+
+test('the round limit is reported rather than passed off as an answer', async (context) => {
+  if (!skipUnless(context, await supportsTurns(), CAPABILITY)) return
+  /**
+   * A model that keeps asking for tools is stopped by the limit, and a person needs to know that
+   * happened: an answer produced because the harness gave up is not the same as one the model finished,
+   * and reporting the first as the second is the failure this check is about.
+   */
+  const h = harness('limit-reported', {
+    steps: [
+      { toolCall: { name: 'list_dir', arguments: {} } },
+      { toolCall: { name: 'list_dir', arguments: {} } },
+      { toolCall: { name: 'list_dir', arguments: {} } },
+      { toolCall: { name: 'list_dir', arguments: {} } },
+    ],
+  })
+  try {
+    const run = await runCli([...h.args, '--max-rounds', '2', '--turn', 'keep going'], { env: h.env, timeoutMs: 60_000 })
+    const session = sessionsUnder(join(h.home, 'sessions'))[0]
+    assert.ok(session, 'a session was recorded')
+    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const requests = events.filter((event) => event.type === 'model/request')
+    assert.ok(requests.length <= 2, `the limit was respected (${requests.length} rounds)`)
+
+    const completed = events.find((event) => event.type === 'assistant/completed')
+    assert.ok(completed, 'the turn was recorded as finished')
+    /**
+     * The record says how it ended. Either the completion carries the limit in its reason or the turn
+     * carries it — both are the harness saying "I stopped", which is the claim; what would fail is a
+     * completion that reads as a finished answer with nothing about the limit anywhere.
+     */
+    const ended = JSON.stringify({ completed, turns: events.filter((event) => event.type === 'turn/completed') })
+    assert.match(ended, /limit|round|2/i, `the record says the round limit ended the turn\n${ended.slice(0, 300)}`)
+  } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+  }
+})

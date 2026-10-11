@@ -1,6 +1,6 @@
 ---
 title: Verifiers
-version: 2.1.0
+version: 2.2.0
 description: The ultimate verifications — one folder each, named after the capability the owner named, every one keeping the project's 0/1/3 verdict contract.
 grounded_in:
   - source: owner statement in the dsh session, 2026-10-11, listing the ten verifiers
@@ -30,7 +30,7 @@ deliberately does not.
 
 ## Where each stands, 2026-10-11
 
-Every part is judged and every check passes: **52 checks, 0 failures, 0 unjudged**, measured after
+Every part is judged and every check passes: **66 checks, 0 failures, 0 unjudged**, measured after
 `npm run build`. The only check allowed to report unjudged is part 1's real-backend probe, and it does so
 only when the machine has no reachable endpoint configured — a check that passed by not testing would be
 worse than one that admits it did not run.
@@ -38,16 +38,16 @@ worse than one that admits it did not run.
 | # | Checks | Verdict |
 |---|---|---|
 | 0 | 10 | `0` — profiles, layers, includes, references, validation, provenance |
-| 1 | 4 | `0` — both wire shapes against local doubles, and one real configured endpoint |
-| 2 | 4 | `0` — deltas before completion, judged with no browser |
-| 3 | 4 | `0` — budget, instructions, pruning, compaction |
-| 4 | 4 | `0` — configured allow list, an out-of-repository tool, unknown names refused |
-| 5 | 5 | `0` — multi-round tasks, results fed back, round limit, resume, a failed tool |
-| 6 | 5 | `0` — the hook points, a retargeted request, a refused and a replaced tool result |
-| 7 | 4 | `0` — the transcript's survival, resume, append-only record, workspace grouping |
-| 8 | 4 | `0` — the three modes differ, shown by refusal, including the sibling-prefix case |
+| 1 | 6 | `0` — both wire shapes, the configured default, listing costs nothing, one real endpoint |
+| 2 | 5 | `0` — deltas before completion, with no browser, on every turn of a resumed session |
+| 3 | 5 | `0` — budget, instructions, pruning, compaction, and continuing after a compaction |
+| 4 | 6 | `0` — allow list, an out-of-repository tool, a replacement, a malformed spec refused |
+| 5 | 6 | `0` — multi-round tasks, results fed back, the limit reported, resume, a failed tool |
+| 6 | 6 | `0` — the hook points, retarget, refusal, replacement, a refusal that stops, a broken hook named |
+| 7 | 7 | `0` — the transcript, resume, append-only, grouping by folder, subdirectories, finding a session |
+| 8 | 5 | `0` — the three modes, the sibling prefix, and the temp directory only when admitted |
 | 9 | 4 | `0` — port, page, API, and the live stream |
-| 10 | 4 | `0` — fresh token, cookie handshake, refusal of API and stream, the Host/Origin fence |
+| 10 | 6 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode |
 
 ## The verdict contract
 

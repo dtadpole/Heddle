@@ -70,9 +70,36 @@ export class ToolRegistry extends Service {
     this.sandbox = sandbox
   }
 
-  /** Add or replace a tool. */
+  /**
+   * Add or replace a tool.
+   *
+   * A definition with no name or no description is refused **here**, because both are what the model
+   * is told: an unnamed tool cannot be called and an undescribed one is a tool a model cannot choose.
+   * Measured: without this, a malformed registration reached the listing as an empty name and the
+   * failure surfaced as a confusing prompt rather than at the line that caused it.
+   */
   register(definition: ToolDefinition): void {
+    if (typeof definition.spec?.name !== 'string' || definition.spec.name.trim().length === 0) {
+      throw new Error('a tool must be registered with a name')
+    }
+    if (typeof definition.spec.description !== 'string' || definition.spec.description.trim().length === 0) {
+      throw new Error(`the tool '${definition.spec.name}' must be registered with a description`)
+    }
     this.tools.set(definition.spec.name, definition)
+  }
+
+  /**
+   * Drop every tool the allow list does not name, keeping the ones it does.
+   *
+   * Called once the tree has loaded rather than from the constructor, because plugins register tools
+   * too and a filter applied early would remove them before they existed — measured, and it is what
+   * stopped a project replacing a built-in with its own version of the same name.
+   */
+  filterTo(allow: readonly string[]): void {
+    if (allow.length === 0) return
+    for (const name of [...this.tools.keys()]) {
+      if (!allow.includes(name)) this.tools.delete(name)
+    }
   }
 
   /** Add or replace a command. */
@@ -92,6 +119,11 @@ export class ToolRegistry extends Service {
    * an allow list knows what the configuration wanted, and this is where it reports it.
    */
   missing(): readonly string[] {
+    return []
+  }
+
+  /** The configured allow list, empty when the configuration did not name one. */
+  allowList(): readonly string[] {
     return []
   }
 

@@ -67,6 +67,10 @@ export default function model(ctx: Context, config: Config = {}): void {
   const endpoints = resolveEndpoints(config.endpoints ?? [], localEndpoints)
 
   const service = new ModelService(ctx, endpoints)
+  // The configuration's nominated default is recorded on the service, so a caller that does not name an
+  // endpoint gets the one a person chose rather than the first one in the list.
+  const nominated = config.default ?? local?.config.default
+  if (typeof nominated === 'string' && service.endpoint(nominated) !== undefined) service.nominateDefault(nominated)
   ctx.set('model', service)
 
   ctx.logger.info(

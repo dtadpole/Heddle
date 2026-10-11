@@ -200,3 +200,78 @@ test('a tool is only reachable through the registry, so an unknown name is refus
     removeDir(h.home)
   }
 })
+
+test('a plugin that registers a name already taken displaces it, and the listing says which won', async (context) => {
+  if (!skipUnless(context, await supportsTools(), CAPABILITY)) return
+  /**
+   * Two plugins can legitimately want the same tool name — a project replacing a built-in with its
+   * own `read_file` is the ordinary case. What a user needs is that the outcome is **defined and
+   * visible** rather than order-dependent and silent, so the claim is: the later registration wins,
+   * exactly one tool answers to the name, and `heddle tools` shows the replacement's description.
+   */
+  const h = harness('shadow', {
+    /**
+     * The allow list names the built-in and the replacement. It is a filter over what a build
+     * registers, and a replacement is registered by a plugin — so a profile that listed only the
+     * built-in would filter the replacement out before the question of precedence arose. Measured:
+     * the first version did exactly that and asserted about a tool that had never loaded.
+     */
+    allow: ['read_file', 'shadow_read'],
+    steps: [{ text: 'done' }],
+    plugins: [
+      {
+        name: 'shadow-tool.ts',
+        source: `export const name = 'shadow-tool'
+export const inject = ['tools']
+
+export default function shadow(ctx) {
+  // The same name the built-in uses, registered from outside the project.
+  ctx.tools.register({
+    spec: { name: 'read_file', description: "the project's own read_file, which wins", parameters: { type: 'object', properties: {} } },
+    run: async () => ({ output: 'the replacement ran' }),
+  })
+}
+`,
+      },
+    ],
+  })
+  try {
+    const listing = parseJson((await runCli(['--profile', h.profileDir, 'tools', '--json'], { env: h.env })).stdout)
+    const readFile = (listing ?? []).filter((tool) => tool.name === 'read_file')
+    assert.equal(readFile.length, 1, `exactly one tool answers to the name\n${JSON.stringify(listing)}`)
+    assert.match(readFile[0].description, /wins/, 'and the listing describes the replacement rather than the built-in')
+  } finally {
+    removeDir(h.home)
+  }
+})
+
+test('a plugin that registers a tool with a malformed spec is refused at registration', async (context) => {
+  if (!skipUnless(context, await supportsTools(), CAPABILITY)) return
+  /**
+   * A tool without a name or a description is one a model cannot be told about, so it must fail where
+   * it is registered rather than appearing in a prompt as `undefined`.
+   */
+  const h = harness('bad-spec', {
+    allow: ['read_file'],
+    steps: [{ text: 'done' }],
+    plugins: [
+      {
+        name: 'bad-tool.ts',
+        source: `export const name = 'bad-tool'
+export const inject = ['tools']
+
+export default function bad(ctx) {
+  ctx.tools.register({ spec: { name: '', description: '' }, run: async () => ({ output: '' }) })
+}
+`,
+      },
+    ],
+  })
+  try {
+    const run = await runCli(['--profile', h.profileDir, 'tools', '--json'], { env: h.env })
+    assert.notEqual(run.code, 0, `registering an unnamed tool fails the run rather than listing it\n${run.stdout}${run.stderr}`)
+    assert.match(run.stderr + run.stdout, /name|description/i, 'and the failure says what was missing')
+  } finally {
+    removeDir(h.home)
+  }
+})
