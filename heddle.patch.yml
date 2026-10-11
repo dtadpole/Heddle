@@ -24,6 +24,19 @@
     - id: model
       name: ./src/plugins/model.ts
 
+    # Context assembly, the token budget and compaction. It reads the session
+    # store and calls the model, so both are declared.
+    - id: context
+      name: ./src/context/service.ts
+      inject: [model, session]
+      config:
+        contextWindow: 1048576
+
+    # Workspaces: the folder records sessions are grouped under.
+    - id: workspace
+      name: ./src/workspace/service.ts
+      inject: [session]
+
     # The sandbox: where a file effect may land.
     - id: sandbox
       name: ./src/sandbox/service.ts

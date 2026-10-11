@@ -1,7 +1,7 @@
 ---
 title: Verifiers
-version: 2.0.0
-description: The ten ultimate verifications — one folder each, named after the capability the owner named, every one keeping the project's 0/1/3 verdict contract.
+version: 2.1.0
+description: The ultimate verifications — one folder each, named after the capability the owner named, every one keeping the project's 0/1/3 verdict contract.
 grounded_in:
   - source: owner statement in the dsh session, 2026-10-11, listing the ten verifiers
   - source: ULTIMATE_GOAL.md table of parts
@@ -9,29 +9,30 @@ grounded_in:
 
 # `_verifiers_`
 
-Instance of the `_verifiers_` type. **Ten verifications, one folder each**, named after the capability
+Instance of the `_verifiers_` type. **Eleven verifications, one folder each**, named after the capability
 the owner stated rather than after the layer that happens to decide it. Each is a thin entry point over
 the check files beside it, and each check file states in its own header what it judges and what it
 deliberately does not.
 
 | # | Folder | The claim |
 |---|---|---|
+| 0 | [`05-config-system/`](05-config-system/INDEX.md) | a run composes its tree from profiles and layers, resolves environment references, and fails loudly |
 | 1 | [`10-llm-backends/`](10-llm-backends/INDEX.md) | heddle connects to backend model servers and runs agent loops over them |
-| 2 | [`20-streaming-web/`](20-streaming-web/INDEX.md) | streaming text and reasoning show up in a browser while the model is still writing |
+| 2 | [`20-streaming/`](20-streaming/INDEX.md) | streaming text and reasoning arrive as separate deltas, with no Web UI involved |
 | 3 | [`30-context-management/`](30-context-management/INDEX.md) | context and prompt are composed with retention, a budget and compaction |
 | 4 | [`40-pluggable-tools/`](40-pluggable-tools/INDEX.md) | tools are configurable and pluggable |
 | 5 | [`50-agentic-loop/`](50-agentic-loop/INDEX.md) | the agentic loop runs with tool calls |
 | 6 | [`60-hooks/`](60-hooks/INDEX.md) | hooks intercept a model or a tool call |
 | 7 | [`70-workspaces-sessions/`](70-workspaces-sessions/INDEX.md) | there are workspaces (folders) and sessions under a folder |
 | 8 | [`75-permission-sandbox/`](75-permission-sandbox/INDEX.md) | a permission sandbox distinguishes read-only, workspace write and full access |
-| 9 | [`80-web-ui/`](80-web-ui/INDEX.md) | a Web UI on localhost, on a documented default port |
-| 10 | [`90-web-ui-token/`](90-web-ui-token/INDEX.md) | the Web UI and its stream are protected by a token |
+| 9 | [`80-web-ui/`](80-web-ui/INDEX.md) | a Web UI on localhost, on a documented default port, carrying the live stream |
+| 10 | [`90-web-ui-token/`](90-web-ui-token/INDEX.md) | the Web UI and its event stream are protected by a token |
 
 ## The verdict contract
 
 Every entry point returns `0` when its claim holds, `1` when it fails, and `3` when it could not be
 judged — and a claim that cannot be judged is never reported as holding. The runner that enforces this
-is [`_tools_/runner/`](../_tools_/runner/INDEX.md), because `node --test` alone cannot: measured, a suite
+is [`_tools_/verify-runner/`](../_tools_/verify-runner/INDEX.md), because `node --test` alone cannot: measured, a suite
 where every check is skipped exits `0`, which is the one answer that must never be given for "nothing
 was judged".
 

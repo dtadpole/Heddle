@@ -28,9 +28,9 @@ never as holding.
 ## Run it
 
 ```bash
-node _tools_/runner/run.mjs _verifiers_/10-llm-backends/check-model-service.mjs
-node _tools_/runner/run.mjs <check> --list    # the check names, and why any was unjudged
-node _tools_/runner/run.mjs <check> --json    # one parseable object
+node _tools_/verify-runner/run.mjs _verifiers_/10-llm-backends/check-model-service.mjs
+node _tools_/verify-runner/run.mjs <check> --list    # the check names, and why any was unjudged
+node _tools_/verify-runner/run.mjs <check> --json    # one parseable object
 ```
 
 `--list` and `--json` return the same verdict as a plain run, because the verdict is

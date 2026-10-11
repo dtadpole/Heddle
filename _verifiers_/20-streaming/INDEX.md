@@ -1,20 +1,20 @@
 ---
-title: Verifier 2 — Streaming To A Web UI
+title: Verifier 2 — Streaming
 version: 1.0.0
 description: streaming text and reasoning appear in a browser while the model is still writing.
 grounded_in:
   - source: owner statement in the dsh session, 2026-10-11, listing the ten verifiers
 ---
 
-# `20-streaming-web`
+# `20-streaming`
 
-Instance of this project's `_verifiers_`. **The claim it decides:** streaming text and reasoning appear in a browser while the model is still writing.
+Instance of this project's `_verifiers_`. **The claim it decides:** streaming text and reasoning arrive as separate deltas while the model is still writing, judged without any Web UI.
 
-A stream that is only visible after it ends is not a stream. This part judges that a text delta and a reasoning delta reach a client through the event stream **before** the turn completes, and that the same deltas are in the session record.
+A stream that is only visible after it ends is not a stream. This part judges that main content and reasoning arrive as **distinct deltas**, that they are emitted **before** the turn completes, and that the same deltas are in the session record. It needs no browser and no server, so the streaming claim holds on its own.
 
 ## What decides it
 
-`check.mjs` opens the event stream, starts a turn against a double that emits its deltas slowly, and asserts the deltas arrive first.
+`check.mjs` drives a turn against a local double that emits its deltas with gaps, watches `heddle --stream`, and asserts that reasoning and content deltas both arrive before the completion -- first observed at the delta, not at the end.
 
 ## Running it
 
@@ -26,7 +26,7 @@ sh verify.sh --json     # one parseable object
 
 Exit `0` when the claim holds, `1` when it fails, `3` when it could not be judged. A
 claim that could not be judged is never reported as holding, which is the runner's
-whole reason for existing — see [`_tools_/runner/`](../../_tools_/runner/INDEX.md).
+whole reason for existing — see [`_tools_/verify-runner/`](../../_tools_/verify-runner/INDEX.md).
 
 ## What it deliberately does not judge
 

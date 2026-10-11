@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { fixtureDir, isolatedHome, readTranscript, removeDir, runCli, scriptedConfig, sessionsUnder, skipUnless } from '../../_tools_/checks/lib.mjs'
+import { fixtureDir, isolatedHome, readTranscript, removeDir, runCli, scriptedConfig, sessionsUnder, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
  * Verifier 2 — session.

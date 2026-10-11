@@ -19,7 +19,7 @@ backend model servers, runs an agent loop over them, records sessions as append-
 event logs, gates its tools behind a permission sandbox and an approval policy, and
 serves a local Web UI.
 
-What completes it is stated in [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) — ten parts, each
+What completes it is stated in [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) — eleven parts, each
 with its own verifier under [`_verifiers_/`](_verifiers_/INDEX.md). That file and those
 verifiers are the contract: read them before deciding what to work on next.
 
@@ -32,7 +32,7 @@ loads `AGENTS.md` and nothing else.
 | Where | What |
 |---|---|
 | [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) | what completes this project, part by part |
-| [`_verifiers_/`](_verifiers_/INDEX.md) | the ten verifications that decide those parts |
+| [`_verifiers_/`](_verifiers_/INDEX.md) | the eleven verifications that decide those parts |
 | [`_tools_/`](_tools_/INDEX.md) | the runner and the shared check helpers |
 | [`src/`](src/INDEX.md) | the harness itself |
 | [`test/`](test/INDEX.md) | the framework's own unit suite |

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { test } from 'node:test'
 
-import { PROVIDER_ENV, removeDir, runCli, sessionFingerprint, skipUnless } from '../../_tools_/checks/lib.mjs'
+import { PROVIDER_ENV, removeDir, runCli, sessionFingerprint, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
  * Verifier 3 — model service.

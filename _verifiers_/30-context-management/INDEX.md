@@ -26,7 +26,7 @@ sh verify.sh --json     # one parseable object
 
 Exit `0` when the claim holds, `1` when it fails, `3` when it could not be judged. A
 claim that could not be judged is never reported as holding, which is the runner's
-whole reason for existing — see [`_tools_/runner/`](../../_tools_/runner/INDEX.md).
+whole reason for existing — see [`_tools_/verify-runner/`](../../_tools_/verify-runner/INDEX.md).
 
 ## What it deliberately does not judge
 

@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { hasDependency, loadedCount, loadedPlugins, repoRoot, runCli, skipUnless } from '../../_tools_/checks/lib.mjs'
+import { hasDependency, loadedCount, loadedPlugins, repoRoot, runCli, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
  * Verifier 1 — configuration-driven.

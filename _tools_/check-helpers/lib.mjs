@@ -206,7 +206,9 @@ export function httpConfig(options) {
         kind: options.kind ?? 'openai-chat',
         baseUrl: options.baseUrl,
         model: options.model ?? 'double',
-        stream: true,
+        // Streaming by default, because that is what most checks want to exercise; a check
+        // about the body-only path turns it off explicitly.
+        stream: options.stream ?? true,
       },
     ],
   })
@@ -236,17 +238,38 @@ export async function chatDouble(options = {}) {
             ],
           }
         : { role: 'assistant', content: options.content ?? 'double answer' }
+      // A body-only answer, for the check that a non-streaming transport still reaches
+      // the same delta vocabulary rather than being a second code path.
+      if (options.json) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            choices: [{ message: { role: 'assistant', content: options.content ?? 'double answer' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 3, completion_tokens: 2 },
+          }),
+        )
+        return
+      }
+
       response.writeHead(200, { 'content-type': 'text/event-stream' })
+      const finish = () => {
+        response.write(
+          `data: ${JSON.stringify({ choices: [{ delta: message, finish_reason: options.toolCall ? 'tool_calls' : 'stop' }] })}\n\n`,
+        )
+        response.write('data: [DONE]\n\n')
+        response.end()
+      }
       if (options.reasoning) {
         response.write(
           `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: options.reasoning }, finish_reason: null }] })}\n\n`,
         )
+        // A gap before the terminator, so a run that buffered the answer and printed it
+        // at the end is distinguishable from one that streamed.
+        if (options.holdOpenMs) setTimeout(finish, options.holdOpenMs)
+        else finish()
+        return
       }
-      response.write(
-        `data: ${JSON.stringify({ choices: [{ delta: message, finish_reason: options.toolCall ? 'tool_calls' : 'stop' }] })}\n\n`,
-      )
-      response.write('data: [DONE]\n\n')
-      response.end()
+      finish()
     })
   })
   await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', () => resolvePromise()))
@@ -295,15 +318,28 @@ export async function responsesDouble(options = {}) {
   }
 }
 
-/** Parse the first JSON value a run printed. */
+/**
+ * Parse the JSON value a run printed.
+ *
+ * The CLI prints its JSON last and pretty-printed, so this takes the **last** line that starts
+ * a value and parses from there to the end. Measured the hard way: taking the first `{` in the
+ * output looks right until a log line contains a brace, and taking the last *line* looks right
+ * until the value spans lines, which the pretty-printed objects do.
+ */
 export function parseJson(stdout) {
-  const start = stdout.search(/[[{]/)
-  if (start === -1) return null
-  try {
-    return JSON.parse(stdout.slice(start))
-  } catch {
-    return null
+  const lines = stdout.split('\n')
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = (lines[index] ?? '').trimStart()
+    if (!line.startsWith('{') && !line.startsWith('[')) continue
+    const candidate = lines.slice(index).join('\n')
+    try {
+      return JSON.parse(candidate)
+    } catch {
+      // A log line can begin with a brace; keep looking upward.
+      continue
+    }
   }
+  return null
 }
 
 /** The temp directory a check may use for artifacts it is judging. */
@@ -326,4 +362,42 @@ export function readTranscript(path) {
     .split('\n')
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line))
+}
+
+/**
+ * Run the CLI and collect both streams **with the time each line arrived**.
+ *
+ * The timing is the point: a check that a delta was printed before the turn finished
+ * cannot be made from a buffer, because a buffer is only read at the end — which is
+ * exactly the difference between streaming and printing a finished answer.
+ */
+export function runCliTimed(args, options = {}) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(process.execPath, [join(repoRoot, 'dist', 'cli.js'), ...args], {
+      cwd: options.cwd ?? repoRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, NO_COLOR: '1', ...(options.env ?? {}) },
+    })
+    const started = Date.now()
+    const lines = []
+    const record = (stream) => (chunk) => {
+      for (const piece of chunk.toString().split('\n')) {
+        if (piece.length > 0) lines.push({ at: Date.now() - started, stream, text: piece })
+      }
+    }
+    child.stdout.on('data', record('stdout'))
+    child.stderr.on('data', record('stderr'))
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(new Error(`timed out after ${options.timeoutMs ?? 30000}ms`))
+    }, options.timeoutMs ?? 30_000)
+    child.on('error', reject)
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      // `resolvePromise`, not `resolve` from `node:path`, which this module also imports.
+      // Measured: the first version passed the path function to the executor's resolution
+      // slot, so every streaming check failed with a TypeError instead of a verdict.
+      resolvePromise({ code, lines, elapsed: Date.now() - started })
+    })
+  })
 }

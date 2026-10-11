@@ -117,7 +117,19 @@ export async function wire(request: WireRequest): Promise<WireResponse> {
     )
   }
 
-  if (!streaming) {
+  /**
+   * What the answer **is** decides how it is read, not what was asked for.
+   *
+   * Measured: a provider (or a local double standing in for one) may answer an
+   * event-stream request with one JSON body, or answer a JSON request with an event
+   * stream. Trusting the request produced "answered with a body that is not JSON —
+   * Unexpected token 'd', \"data: {\"", which is a crash where a parse was needed. The
+   * content type is the only thing that actually says.
+   */
+  const contentType = String(response.headers['content-type'] ?? '')
+  const looksStreamed = contentType.includes('text/event-stream')
+
+  if (!streaming && !looksStreamed) {
     const text = await readAll(response)
     try {
       return { json: text.length === 0 ? null : JSON.parse(text) }

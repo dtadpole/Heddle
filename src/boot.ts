@@ -1,28 +1,25 @@
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { compose, readLayer, resolveSpecifier, type EntryRow, type Layer } from './config.ts'
+import { compose, defaultLayers, expandHome, type ComposedRow, type EntryRow, type Layer } from './config/schema.ts'
 
 /**
- * A boot: the composed row list, the running context, and how to stop it.
+ * A boot: the composed rows, the running context, and how to stop it.
  *
- * `createApp` in `./app.ts` remains the way to build the framework's own
- * plugins in code, which is what the boot tests use. This is the way to build a
- * tree from data, which is what a harness needs: nothing in `src/plugins/` is
- * imported by the loader's path, so a tree can hold plugins this project has
- * never heard of.
+ * `createApp` in `./app.ts` remains the way to build the framework's own plugins in
+ * code, which is what the boot tests use. This is the way to build a tree from data,
+ * which is what a harness needs: nothing under `src/plugins/` is imported by the
+ * loader's own path, so a tree may hold a plugin this project has never heard of.
  */
 export interface Boot {
   /** The root context every entry hangs off. */
   readonly ctx: Context
-  /** The rows this boot composed, in the order the layers produced them. */
-  readonly rows: readonly EntryRow[]
+  /** The rows the layers composed, in order, with where each field came from. */
+  readonly rows: readonly ComposedRow[]
   /** Entry ids in the loader's tree, in creation order. */
   readonly ids: readonly string[]
-  /** The loader's entry ids, for a caller that wants to address one. */
+  /** The loader, for a caller that wants to address an entry. */
   readonly loader: Loader
   /** Stop every entry and release the context. */
   dispose(): Promise<void>
@@ -30,89 +27,73 @@ export interface Boot {
 
 /** Options for {@link boot}. */
 export interface BootOptions {
-  /** The base layer, normally the project's `cordis.yml`. */
+  /** A named profile under `$HEDDLE_HOME/profiles`, which is the normal case. */
+  readonly profile?: string
+  /** An explicit base layer, used when no profile is named. */
   readonly base?: string
-  /** Layers applied in order after the base; the last write wins per row. */
+  /** Layers applied after the base, in order; the last write wins per row. */
   readonly patches?: readonly string[]
-  /**
-   * Apply `heddle.patch.yml` from the configuration directory after the base.
-   *
-   * True when the base layer is the project's own profile. False when the caller
-   * named its layers, because then the caller has said exactly what the tree is.
-   */
+  /** Apply `heddle.patch.yml` beside the base. */
   readonly includeProjectPatch?: boolean
-  /** A configuration directory, used as the loader's `baseUrl`. */
+  /** The directory a project patch and relative specifiers resolve against. */
   readonly configDir?: string
-  /** Who the run is for, announced on `heddle/ready`; defaults to `heddle`. */
-  readonly target?: string
-  /**
-   * Layers applied last, in memory.
-   *
-   * This exists so a caller can override one row without writing a file, which is
-   * what a check needs and what a `--flag` needs. It is the same patch shape as a
-   * file layer, so there is no second override mechanism to keep in step.
-   */
+  /** In-memory layers applied last, which is how a flag overrides one row. */
   readonly overrides?: readonly Layer[]
+  /** Who the run is for, announced on `heddle/ready`. */
+  readonly target?: string
+  /** Environment for references; the process environment by default. */
+  readonly env?: NodeJS.ProcessEnv
 }
 
 /**
- * Boot a tree from configuration layers.
+ * Boot a tree from configuration.
  *
- * Measured against the loader's own API while writing this: `create` resolves to
- * the entry's **id**, not to an entry, and a relative specifier is resolved
- * against the loader's `baseUrl` rather than against the importing file. Both
- * were wrong in the first draft, and both failed silently — an entry that never
- * started still appeared in `loader.entries()`.
+ * The composition is done by `src/config/schema.ts` and this function only starts what
+ * it produced, so every rule about layers can be reasoned about — and checked — without
+ * starting anything.
+ *
+ * Two measured details are load-bearing here. `create` resolves to the entry's **id**,
+ * not to an entry, and a relative specifier resolves against the loader's `baseUrl`
+ * rather than against the importing file. Both were wrong in the first draft and both
+ * failed silently: an entry that never started still appeared in `loader.entries()`.
  */
 export async function boot(options: BootOptions = {}): Promise<Boot> {
-  const configDir = resolve(options.configDir ?? process.cwd())
-  /**
-   * Relative specifiers resolve against the **configuration file's own
-   * directory**, not the process's working directory.
-   *
-   * Measured while writing this: the first version used the working directory,
-   * so a fixture at `.heddle-tmp/config-1/heddle.yml` declaring `./alpha.ts`
-   * resolved to `<cwd>/alpha.ts`. The loader reported no error for the missing
-   * module — it only logged one — so the run finished successfully with an empty
-   * tree and the check read it as a configuration that loaded nothing.
-   */
-  const baseUrl =
-    options.base !== undefined
-      ? pathToFileURL(`${resolve(options.base, '..')}/`).href
-      : pathToFileURL(`${configDir}/`).href
+  const env = options.env ?? process.env
+  const layers = [
+    ...defaultLayers({
+      ...(options.profile !== undefined ? { profile: options.profile } : {}),
+      ...(options.base !== undefined ? { base: options.base } : {}),
+      ...(options.patches !== undefined ? { patches: options.patches } : {}),
+      ...(options.includeProjectPatch !== undefined ? { includeProjectPatch: options.includeProjectPatch } : {}),
+      ...(options.configDir !== undefined ? { configDir: options.configDir } : {}),
+      env,
+    }),
+  ]
+  for (const [index, override] of (options.overrides ?? []).entries()) {
+    layers.push({ layer: `override ${index + 1}`, file: '(inline)', entries: [override] })
+  }
 
-  const layers: Layer[][] = []
-  if (options.base !== undefined) {
-    layers.push([...readLayer(resolve(configDir, options.base))])
-  }
-  /**
-   * The file beside a base layer applies unless the caller named its layers.
-   *
-   * Measured while wiring the CLI: an explicit empty `patches: []` means "no
-   * extra layers" to a reader and meant the same to the first version of this
-   * function, so the default profile was never read and a bare `heddle --turn`
-   * booted an empty tree. The rule is now stated once — if a base layer came from
-   * the project, the project's patch file is the next layer.
-   */
-  for (const patch of options.patches ?? []) {
-    layers.push([...readLayer(resolve(configDir, patch))])
-  }
-  if (options.base !== undefined && options.includeProjectPatch) {
-    const projectPatch = resolve(configDir, 'heddle.patch.yml')
-    if (existsSync(projectPatch)) layers.push([...readLayer(projectPatch)])
-  }
-  for (const override of options.overrides ?? []) layers.push([override])
+  const rows = compose(layers, env)
 
-  const rows = compose(layers)
+  /**
+   * Relative specifiers resolve against the **base layer's own directory**, not the
+   * process's working directory. Measured while writing this: the first version used the
+   * working directory, so a fixture at `.heddle-tmp/config-1/heddle.yml` declaring
+   * `./alpha.ts` resolved to `<cwd>/alpha.ts`, and the loader reported no error for the
+   * missing module — it only logged one — so the run finished with an empty tree.
+   */
+  const anchor = layers[0]?.file ?? options.configDir ?? process.cwd()
+  const baseUrl = pathToFileURL(anchor.replace(/[^/]*$/, '')).href
 
   const ctx = new Context()
   await ctx.plugin(Loader, { baseUrl })
 
   const ids: string[] = []
-  for (const row of rows) {
+  for (const composed of rows) {
+    const row: EntryRow = composed.row
     const id = await ctx.loader.create({
       ...(row.id !== undefined ? { id: row.id } : {}),
-      name: resolveSpecifier(row.name, baseUrl),
+      name: row.name.startsWith('.') || row.name.startsWith('/') ? new URL(row.name, baseUrl).href : row.name,
       ...(row.config !== undefined ? { config: row.config } : {}),
       ...(row.group !== undefined ? { group: row.group } : {}),
       ...(row.disabled !== undefined ? { disabled: row.disabled } : {}),
@@ -121,13 +102,11 @@ export async function boot(options: BootOptions = {}): Promise<Boot> {
     ids.push(id)
   }
   await ctx.loader.await()
+
   /**
-   * Announce the tree, exactly as `createApp` does.
-   *
-   * Without it a configured tree had no point at which a plugin could act once
-   * everything it depends on exists: `inject` gates a plugin's body but says
-   * nothing about when the tree is finished. Measured while writing the
-   * configuration fixtures, whose consumers had nothing to listen for.
+   * Announce the tree, exactly as `createApp` does. Without it a configured tree had no
+   * point at which a plugin could act once everything it depends on exists: `inject`
+   * gates a plugin's body but says nothing about when the tree is finished.
    */
   ctx.emit('heddle/ready', options.target ?? 'heddle')
 
@@ -143,9 +122,9 @@ export async function boot(options: BootOptions = {}): Promise<Boot> {
 /**
  * Wait until no entry is still pending, or give up and report which are.
  *
- * A pending entry is the honest signal of a missing service, and a caller that
- * reported success while something sat pending would be reporting a tree that
- * never finished loading.
+ * A pending entry is the honest signal of a missing service, and a caller that reported
+ * success while something sat pending would be reporting a tree that never finished
+ * loading.
  */
 export async function settle(ctx: Context, timeoutMs = 5_000): Promise<readonly string[]> {
   const deadline = Date.now() + timeoutMs
@@ -157,3 +136,5 @@ export async function settle(ctx: Context, timeoutMs = 5_000): Promise<readonly 
     await new Promise((done) => setTimeout(done, 20))
   }
 }
+
+export { expandHome }

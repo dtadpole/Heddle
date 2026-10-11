@@ -68,8 +68,24 @@ export class ModelService extends Service {
         { endpoint: request.endpoint, code: 'NO_ENDPOINT' },
       )
     }
-    const next = () => adapter.stream(request, signal)
-    return this.ctx.waterfall('model/stream', request, next)
+    /**
+     * The request hook, modelled on DSH's `agent/request`.
+     *
+     * A waterfall over the request itself, before the adapter is reached, so a listener
+     * can rewrite which model answers or what is asked — the seam a model-selection
+     * policy attaches to. `model/stream` below is the chunk-level seam for logging,
+     * retrying or replaying a call.
+     */
+    const effective = this.ctx.waterfall('model/request', request, () => request)
+    const resolved = this.endpoints.get(effective.endpoint)
+    if (resolved === undefined) {
+      throw new ModelError(
+        `no endpoint named '${effective.endpoint}'; configured: ${this.names().join(', ') || '(none)'}`,
+        { endpoint: effective.endpoint, code: 'NO_ENDPOINT' },
+      )
+    }
+    const next = () => resolved.stream(effective, signal)
+    return this.ctx.waterfall('model/stream', effective, next)
   }
 
   /**
@@ -157,5 +173,12 @@ declare module '@deepseek-ai/cordis' {
      * @mode waterfall
      */
     'model/stream'(this: ModelService, request: GenerateRequest, next: () => AsyncIterable<Chunk>): AsyncIterable<Chunk>
+    /**
+     * Waterfall over a request before an adapter is chosen. Return a replaced request
+     * without calling `next()` to override it — how a model-selection policy works.
+     *
+     * @mode waterfall
+     */
+    'model/request'(this: ModelService, request: GenerateRequest, next: () => GenerateRequest): GenerateRequest
   }
 }

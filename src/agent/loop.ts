@@ -32,6 +32,8 @@ export interface TurnResult {
   readonly events: number
   /** Rounds of model-plus-tools this turn took. */
   readonly rounds: number
+  /** What the last context assembly was, so a caller can report the budget. */
+  readonly context?: { readonly estimatedTokens: number; readonly thresholdTokens: number; readonly pruned: number; readonly compacted: boolean }
 }
 
 export interface RunTurnOptions {
@@ -92,24 +94,50 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
   let reasoning = ''
   let finishReason = 'unknown'
   let rounds = 0
+  let lastContext: { estimatedTokens: number; thresholdTokens: number; pruned: number; compacted: boolean } | undefined
   const ended: string[] = []
 
   for (let round = 0; round < maxRounds; round += 1) {
     rounds += 1
-    const messages = ctx.session.messages(options.session)
+
+    /**
+     * The context step: assemble within the budget, and compact if the assembly is over
+     * it. Modelled on DSH's `agent/pre-step` waterfall, which is where compaction and
+     * instruction injection attach — a listener here may replace the messages or the
+     * tools, or refuse the round by throwing.
+     */
+    const assembled = ctx.context.assemble({ session: options.session, cwd: ctx.sandbox.workspaceRoot, tools })
+    const compaction = await ctx.context.compactIfNeeded({
+      session: options.session,
+      endpoint: options.endpoint,
+      ...(options.model !== undefined ? { model: options.model } : {}),
+    })
+    const effective = compaction.compacted
+      ? ctx.context.assemble({ session: options.session, cwd: ctx.sandbox.workspaceRoot, tools })
+      : assembled
+
+    const prepared = ctx.waterfall(
+      'agent/pre-step',
+      { messages: effective.messages, tools, round: round + 1 },
+      () => ({ messages: effective.messages, tools }),
+    )
+
     ctx.session.store.modelRequest(options.session, {
       endpoint: options.endpoint,
       ...(options.model !== undefined ? { model: options.model } : {}),
-      messages: messages.length,
-      tools: tools.map((tool) => tool.name),
+      messages: prepared.messages.length,
+      tools: prepared.tools.map((tool) => tool.name),
+      estimatedTokens: effective.estimatedTokens,
+      pruned: effective.pruned,
+      compacted: effective.compacted,
     })
 
     const request = {
       endpoint: options.endpoint,
-      messages: messages as readonly Message[],
+      messages: prepared.messages,
       ...(options.model !== undefined ? { model: options.model } : {}),
       ...(maximumTokens !== undefined ? { maxOutputTokens: maximumTokens } : {}),
-      ...(tools.length > 0 ? { tools } : {}),
+      ...(prepared.tools.length > 0 ? { tools: prepared.tools } : {}),
       sessionId: options.session.id,
     }
 
@@ -180,6 +208,7 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     finishReason,
     events: ctx.session.store.count(options.session) - started,
     rounds,
+    context: lastContext,
   }
 }
 
@@ -198,5 +227,23 @@ function parseArguments(raw: string): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : { value }
   } catch {
     return { __unparsed: raw }
+  }
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Waterfall before a round's request is built. Modelled on DSH's `agent/pre-step`.
+     *
+     * A listener may return different messages or tools, which is how context
+     * management, instruction injection and a compaction policy attach without the loop
+     * knowing about any of them. Throwing refuses the round.
+     *
+     * @mode waterfall
+     */
+    'agent/pre-step'(
+      step: { readonly messages: readonly Message[]; readonly tools: readonly ToolSpec[]; readonly round: number },
+      next: () => { readonly messages: readonly Message[]; readonly tools: readonly ToolSpec[] },
+    ): { readonly messages: readonly Message[]; readonly tools: readonly ToolSpec[] }
   }
 }

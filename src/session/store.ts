@@ -218,8 +218,25 @@ export class SessionStore {
     this.append(handle, { type: 'assistant/chunk', chunk })
   }
 
-  /** Record which model call produced the answer, before it is made. */
-  modelRequest(handle: SessionHandle, request: { readonly endpoint: string; readonly model?: string; readonly messages: number; readonly tools: readonly string[] }): void {
+  /**
+   * Record which model call produced the answer, before it is made.
+   *
+   * The context facts ride along — the estimate, the budget, what was pruned and
+   * whether a compaction ran — because they are the only place an assembly is visible
+   * after the fact, and a budget nobody can see is a budget nobody can check.
+   */
+  modelRequest(
+    handle: SessionHandle,
+    request: {
+      readonly endpoint: string
+      readonly model?: string
+      readonly messages: number
+      readonly tools: readonly string[]
+      readonly estimatedTokens?: number
+      readonly pruned?: number
+      readonly compacted?: boolean
+    },
+  ): void {
     this.append(handle, { type: 'model/request', ...request })
   }
 

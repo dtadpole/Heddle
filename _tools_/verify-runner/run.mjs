@@ -12,7 +12,7 @@ import process from 'node:process'
  * counts what actually happened, and exits `3` when nothing was judged or when
  * any check was skipped.
  *
- *   node _tools_/runner/run.mjs <check.mjs> [--list] [--json]
+ *   node _tools_/verify-runner/run.mjs <check.mjs> [--list] [--json]
  *
  * Exit contract:
  *   0  every check passed
@@ -20,7 +20,7 @@ import process from 'node:process'
  *   3  nothing could be judged (a skip, or no checks at all)
  */
 
-const USAGE = `usage: node _tools_/runner/run.mjs <check.mjs> [--list] [--json]
+const USAGE = `usage: node _tools_/verify-runner/run.mjs <check.mjs> [--list] [--json]
 
 Runs one verifier check file under node's test runner and exits with the
 project's verdict: 0 holds, 1 fails, 3 could not be judged.`

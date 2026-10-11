@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { PROVIDER_ENV, listFiles, removeDir, runCli, sessionRoot, skipUnless } from '../../_tools_/checks/lib.mjs'
+import { PROVIDER_ENV, listFiles, removeDir, runCli, sessionRoot, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
  * Verifier 6 — end to end.

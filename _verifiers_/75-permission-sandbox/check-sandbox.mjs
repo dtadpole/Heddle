@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { PROVIDER_ENV, removeDir, runCli, skipUnless } from '../../_tools_/checks/lib.mjs'
+import { PROVIDER_ENV, removeDir, runCli, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
  * Verifier 5 — sandbox and approval.

@@ -120,8 +120,29 @@ export class ToolRegistry extends Service {
       return { output: '', error: { code: 'DENIED', message: decision.reason ?? `the approval policy refused '${name}'` } }
     }
 
+    /**
+     * The hook point before a tool runs, modelled on DSH's `tools/pre-execute`.
+     *
+     * A waterfall, so a listener can refuse by not calling `next()` — which is the
+     * only veto mechanism that composes: each listener decides whether the chain after
+     * it runs at all. DSH's decision type is allow/deny/ask and it deliberately does
+     * **not** permit argument rewriting; this keeps that, so a hook can stop a call but
+     * cannot silently change what it does.
+     */
+    const pre = this.ctx.waterfall('tools/pre-execute', { name, args }, () => ({ allowed: true as const }))
+    if (!pre.allowed) {
+      context.log(`hooked ${name}: ${pre.reason ?? 'refused by a hook'}`)
+      return { output: '', error: { code: 'HOOKED', message: pre.reason ?? `a hook refused '${name}'` } }
+    }
+
     try {
-      return await tool.run(args, context)
+      const result = await tool.run(args, context)
+      /**
+       * The hook point after a tool runs, modelled on DSH's `tools/post-execute`: a
+       * waterfall over the result, so a listener may replace it — which is how a policy
+       * redacts a secret or spills a huge result — or block it.
+       */
+      return this.ctx.waterfall('tools/post-execute', { name, args, result }, () => result)
     } catch (error) {
       if (error instanceof SandboxDenial) {
         context.log(`denied ${name}: ${error.message}`)
@@ -157,3 +178,30 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Waterfall before a tool runs. Return `{ allowed: false, reason }` without calling
+     * `next()` to refuse; the refusal is reported as a tool error, so the model is told.
+     *
+     * @mode waterfall
+     */
+    'tools/pre-execute'(
+      this: ToolRegistry,
+      call: { readonly name: string; readonly args: Record<string, unknown> },
+      next: () => { readonly allowed: true },
+    ): { readonly allowed: boolean; readonly reason?: string }
+    /**
+     * Waterfall after a tool ran. Call `next()` for the tool's own result and return
+     * whatever should stand in its place.
+     *
+     * @mode waterfall
+     */
+    'tools/post-execute'(
+      this: ToolRegistry,
+      call: { readonly name: string; readonly args: Record<string, unknown>; readonly result: ToolResult },
+      next: () => ToolResult,
+    ): ToolResult
+  }
+}

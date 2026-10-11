@@ -1,8 +1,8 @@
 ---
 title: Heddle Ultimate Goal
 level: L2
-version: 2.0.0
-description: What completes this project — the ten capabilities the owner named, each judged by its own runnable verifier under _verifiers_.
+version: 2.1.0
+description: What completes this project — the capabilities the owner named plus the configuration system they all sit on, each judged by its own runnable verifier under _verifiers_.
 status: unverified
 grounded_in:
   - source: README.md section Roadmap and section Status
@@ -22,23 +22,24 @@ choose; runs an agentic loop in which the model calls those tools; offers hooks 
 or tool call; groups sessions under workspaces; confines file effects with a permission sandbox; and
 serves all of it on localhost behind a token.
 
-The ten parts below are the owner's, in the owner's order and largely in the owner's words. Each names
-the DSH mechanism it is modelled on, because the instruction was to follow how DSH does it rather than
-to invent a shape. The `README.md` states the same thing in the negative — *"Status: a scaffold, not a
+The parts below are the owner's, largely in the owner's words, plus one the owner asked for by name
+after them: a configuration system designed properly. Each names the DSH mechanism it is modelled on,
+because the instruction was to follow how DSH does it rather than to invent a shape. The `README.md` states the same thing in the negative — *"Status: a scaffold, not a
 harness. What exists is the frame the rest hangs on."*
 
 | # | Part | Satisfied when | Decided by |
 |---|---|---|---|
+| 0 | configuration system | a run composes its tree from named profiles and patch layers, includes another file, resolves environment references without putting values in the tree, fails loudly naming the row and field, and can show which layer supplied every value | [`_verifiers_/05-config-system/`](_verifiers_/05-config-system/INDEX.md) |
 | 1 | LLM backends | a configured endpoint answers a real request, for more than one wire shape, and the endpoint list is configuration rather than code | [`_verifiers_/10-llm-backends/`](_verifiers_/10-llm-backends/INDEX.md) |
-| 2 | streaming to a Web UI | text and reasoning appear in a browser **while the model is still generating**, chunk by chunk, with the same stream recorded in the session | [`_verifiers_/20-streaming-web/`](_verifiers_/20-streaming-web/INDEX.md) |
+| 2 | streaming | main content and reasoning arrive as **separate deltas** while the model is still generating, with the same deltas recorded in the session; judged with no Web UI involved | [`_verifiers_/20-streaming/`](_verifiers_/20-streaming/INDEX.md) |
 | 3 | context management | the messages for one call are assembled from the session in a defined order, bounded by a token budget, and compacted when the budget is exceeded | [`_verifiers_/30-context-management/`](_verifiers_/30-context-management/INDEX.md) |
 | 4 | pluggable tools | tools are registered as services and chosen by configuration, a tool can be added from outside the project, and a bad configuration fails loudly | [`_verifiers_/40-pluggable-tools/`](_verifiers_/40-pluggable-tools/INDEX.md) |
 | 5 | agentic loop | one turn completes a multi-step task that uses tools, feeds the results back, and records every step | [`_verifiers_/50-agentic-loop/`](_verifiers_/50-agentic-loop/INDEX.md) |
 | 6 | hooks | a listener can observe and rewrite a model or tool call, and refuse one, at named hook points with Cordis's own event modes | [`_verifiers_/60-hooks/`](_verifiers_/60-hooks/INDEX.md) |
 | 7 | workspaces and sessions | a workspace is a folder with a record, and its sessions live under it and are listed with it | [`_verifiers_/70-workspaces-sessions/`](_verifiers_/70-workspaces-sessions/INDEX.md) |
 | 8 | permission sandbox | read-only, workspace-write and full access are three distinct behaviours, demonstrated by refusal rather than by declaration | [`_verifiers_/75-permission-sandbox/`](_verifiers_/75-permission-sandbox/INDEX.md) |
-| 9 | Web UI | a localhost page on a documented default port shows the session and its live stream | [`_verifiers_/80-web-ui/`](_verifiers_/80-web-ui/INDEX.md) |
-| 10 | Web UI token | the page and its stream refuse a request without the token, and answer one with it | [`_verifiers_/90-web-ui-token/`](_verifiers_/90-web-ui-token/INDEX.md) |
+| 9 | Web UI | a localhost page on a documented default port, and the live main-content and reasoning deltas reach a client over its stream while the model is still writing | [`_verifiers_/80-web-ui/`](_verifiers_/80-web-ui/INDEX.md) |
+| 10 | Web UI token | the page **and its stream** refuse a request without the token, and answer one with it | [`_verifiers_/90-web-ui-token/`](_verifiers_/90-web-ui-token/INDEX.md) |
 
 ## What the target is not
 
@@ -96,4 +97,4 @@ observation, and it is the owner's to make.
 
 [`_verifiers_/INDEX.md`](_verifiers_/INDEX.md) for the ten verifiers, what each judges and what the last
 run found; [`README.md`](README.md) for what the project is today and its roadmap;
-[`_tools_/runner/INDEX.md`](_tools_/runner/INDEX.md) for the exit contract every verifier keeps.
+[`_tools_/verify-runner/INDEX.md`](_tools_/verify-runner/INDEX.md) for the exit contract every verifier keeps.
