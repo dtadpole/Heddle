@@ -169,10 +169,17 @@
    * The left column is the **folder tree**, and the row's layout is what makes it readable: a boxed
    * `+` / `−` disclosure, the kind's icon, the type's badge, the folder's name as the label, and a
    * session marker only where a session actually is.
+   *
+   * Every list inside it is a layout container, never a list. Measured in a browser, and the owner saw
+   * it before I did: the rule here once read `#tree, #tree ol`, while `loadChildren` builds a node's
+   * children as a `<ul role="group">`. The `ul` kept the browser's defaults — `list-style-type: circle`
+   * and `padding-left: 40px` — so every **nested** row carried a circle marker in a 40px gutter, which
+   * reads as a stray dot at the left of each row and pushes the level in. The top level looked right,
+   * which is what made it easy to miss.
    */
-  #tree, #tree ol { list-style: none; margin: 0; padding: 0; }
-  #tree ol { padding-left: .85rem; border-left: 1px solid var(--line); }
-  #tree li { padding: 0; }
+  #tree, #tree ul, #tree ol { list-style: none; margin: 0; padding: 0; }
+  #tree li { display: block; padding: 0; }
+  #tree ul[role='group'] { padding-left: .85rem; border-left: 1px solid var(--line); }
   #tree .row { display: flex; align-items: center; gap: .35rem; padding: .16rem .3rem; border-radius: .3rem; cursor: pointer; }
   #tree .row:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
   #tree .row[aria-current='true'] { background: color-mix(in oklab, currentColor 14%, transparent); }

@@ -28,7 +28,7 @@ rejected, in [`../../SESSION_TREE.md`](../../SESSION_TREE.md).
 |---|---|---|
 | the transcript | 5 | a session outlives its run, resumes, is readable on disk, is appended to rather than rewritten, and survives a frame torn by an interruption |
 | the association | 3 | a session is grouped under the folder it ran in, a subdirectory is a member of the root above it, and one folder's prompts continue one session |
-| the tree | 14 | containment, the segment-wise trap, the nearest root, `--new` and history, one level at a time, type and instance classification, badges, recursion, plain containers, plumbing and generated folders, **the boundary that only an instance carries a session**, the folder name as the session name, an empty type folder, a folder outside every root, and **a folder that opens and closes with the same control — in a browser** |
+| the tree | 14 | containment, the segment-wise trap, the nearest root, `--new` and history, one level at a time, type and instance classification, badges, recursion, plain containers, plumbing and generated folders, **the boundary that only an instance carries a session**, the folder name as the session name, an empty type folder, a folder outside every root, and **in a browser: a folder that opens and closes with the same control, and a tree whose lists draw no markers** |
 
 ## Where it stands, 2026-10-11
 
@@ -37,10 +37,13 @@ because the owner asked for the checks first; both then landed in one session, a
 unjudged to passing without being bent: the two assertions that had to change are the ones whose rule the
 owner reversed, and each says so in its own comment.
 
-One check is a **browser** check, added after the owner hit a defect no API check could see: a leaf folder
-could be opened and then had no control left to close it with, because the disclosure was disabled once
-the folder turned out to be empty. It was confirmed to catch that defect by putting the old behaviour back
-and watching it fail with `expected '−', actual '·'`.
+One check is a **browser** check, added after the owner hit two defects that no API check could see. A
+leaf folder could be opened and then had no control left to close it, because the disclosure was disabled
+once the folder turned out to be empty. And every nested row carried a stray circle marker in a 40px
+gutter, because the element a node's children are built into is a `<ul role="group">` while the style rule
+named `ol`, so the browser's own list defaults drew the dot and pushed the level in. Both were confirmed
+to be caught by putting the old behaviour back and watching the check fail — `expected '−', actual '·'`
+for the first, `no list in the tree draws a marker` for the second.
 
 ## Running it
 

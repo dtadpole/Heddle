@@ -129,6 +129,13 @@ and `role="group"` on the children. The whole row toggles; indentation is `depth
 is persisted in `localStorage` under `heddle.tree.expanded.v1`, keyed by absolute path, pruned when a
 path disappears.
 
+**The tree draws no list markers.** Every list inside it is a layout container: a node's children are
+built into a `<ul role="group">`, and a style rule that named only `ol` left the browser's own defaults
+on the nested level — `list-style-type: circle` and a 40px gutter — so each nested row carried a stray
+dot at its left and the whole level was pushed in. Indentation is the tree's rule and nothing else's;
+the browser check asserts that no list under `#tree` draws a marker, and that a nested row's offset is
+the tree's own.
+
 **A folder that turns out to be empty still opens and closes.** The first version disabled the control
 and turned it into `·` once a folder had no children, and the owner hit it immediately: a leaf could be
 opened and then had no control left to close it. Whether a folder is empty is only known *after*

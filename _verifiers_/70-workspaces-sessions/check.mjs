@@ -848,6 +848,35 @@ test('a folder opens and closes with the same control, including a leaf with not
     const toolsOpen = JSON.parse(await browser.evaluate(disclosure('_tools_')))
     assert.equal(toolsOpen.text, '−', 'a folder with children opens the same way')
     assert.equal(toolsOpen.children, 1, 'and its one instance is drawn')
+
+    /**
+     * No list in the tree draws a marker, and a nested row is indented by the tree's own rule.
+     *
+     * The owner's second report, and the second defect only a browser could see: `loadChildren` builds
+     * a node's children as a `<ul role="group">` while the style rule named `ol`, so every nested level
+     * kept `list-style-type: circle` and a 40px gutter — a stray dot at the left of each row, with the
+     * level pushed in. Measured under the defect: `styles` was `['none', 'circle']` and the offset was
+     * 40px; the assertions below are the two halves of what a person actually sees.
+     */
+    const layout = JSON.parse(
+      await browser.evaluate(`JSON.stringify((() => {
+        const lists = [...document.querySelectorAll('#tree ul, #tree ol')]
+        const find = (label) => [...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === label)
+        return {
+          styles: lists.map((list) => getComputedStyle(list).listStyleType),
+          indent: Math.round(find('some-tool').getBoundingClientRect().left - find('_tools_').getBoundingClientRect().left),
+        }
+      })())`),
+    )
+    assert.ok(
+      layout.styles.length > 1 && layout.styles.every((value) => value === 'none'),
+      `no list in the tree draws a marker\nsaw: ${layout.styles.join(', ')}`,
+    )
+    assert.ok(
+      layout.indent > 0 && layout.indent < 30,
+      `a nested row is indented by the tree's own rule rather than by a browser marker gutter (${layout.indent}px)`,
+    )
+
     await browser.evaluate(
       `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').querySelector('.twisty').click()`,
     )
