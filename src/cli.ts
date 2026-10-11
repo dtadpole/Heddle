@@ -197,11 +197,15 @@ function parseArgs(argv: readonly string[]): Args {
       case 'profiles':
       case 'config':
         args.command = arg
-        // Only `transcript` takes a positional argument. Consuming the next token for
-        // every command is what made `heddle web --port 3099` fail with "unknown
-        // argument: 3099": the command ate the flag that followed it. Measured while
-        // first wiring the Web UI.
-        if (arg === 'transcript') args.target = next() ?? undefined
+        /**
+         * `transcript` and `context` take one positional session id.
+         *
+         * Consuming the next token for every command is what made `heddle web --port 3099` fail with
+         * "unknown argument: 3099": the command ate the flag that followed it. Measured while first
+         * wiring the Web UI, and the reason this is a list rather than a rule. `context` joins it
+         * because asking what a session would send is a question about *that* session.
+         */
+        if (arg === 'transcript' || arg === 'context') args.target = next() ?? undefined
         break
       default:
         throw new Error(`unknown argument: ${arg}`)
@@ -580,13 +584,38 @@ async function runCommand(command: string, target: string | undefined, json: boo
         target !== undefined && target.length > 0
           ? app.ctx.session.start({ resume: target })
           : app.ctx.session.start({ cwd: process.cwd() })
-      const report = app.ctx.context.assemble({ session: handle, cwd: process.cwd(), tools: app.ctx.tools.describe() })
+      const report = app.ctx.context.assemble(handle, {
+        /**
+         * The directory the run resolved its instructions from, not the shell's.
+         *
+         * Asking a resumed session what it would send and getting a different answer than the run
+         * would produce is the whole failure this avoids: the workspace root is what the sandbox
+         * names, and it is the directory a session's `AGENTS.md` was read from.
+         */
+        cwd: app.ctx.sandbox.workspaceRoot,
+        tools: app.ctx.tools.describe(),
+        ...(args.endpoint !== undefined ? { endpoint: args.endpoint } : {}),
+      })
+      /**
+       * What the model would read, not only how much of it.
+       *
+       * A budget is checkable from numbers, but "the summary is in there once, where the span was"
+       * and "the instructions on the surface are the current ones" are claims about the messages
+       * themselves. Both a person and a check want to see them, so the derived surface is part of
+       * this command's answer rather than something only a debugger can reach.
+       */
+      const messages = report.messages.map((message) => ({
+        role: message.role,
+        ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
+        text: message.content.map((part) => (part.type === 'tool-call' ? `→ ${part.name} ${part.arguments}` : part.text)).join(''),
+      }))
       if (json) {
         process.stdout.write(
           `${JSON.stringify(
             {
               session: handle.id,
-              messages: report.messages.length,
+              messageCount: report.messages.length,
+              messages,
               estimatedTokens: report.estimatedTokens,
               thresholdTokens: report.thresholdTokens,
               contextWindow: report.contextWindow,
@@ -602,6 +631,7 @@ async function runCommand(command: string, target: string | undefined, json: boo
         process.stdout.write(`heddle: ${report.messages.length} message(s), about ${report.estimatedTokens} token(s)\n`)
         process.stdout.write(`heddle: budget ${report.thresholdTokens} of ${report.contextWindow}; pruned ${report.pruned}; compacted ${report.compacted}\n`)
         for (const path of report.instructions) process.stdout.write(`  instruction ${path}\n`)
+        for (const message of messages) process.stdout.write(`  ${message.role}: ${message.text.slice(0, 80).replace(/\n/g, ' ')}\n`)
       }
       return true
     }

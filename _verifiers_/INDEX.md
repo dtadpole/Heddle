@@ -31,7 +31,7 @@ deliberately does not.
 
 ## Where each stands, 2026-10-11
 
-Every part is judged and every check passes: **72 checks, 0 failures, 0 unjudged**, measured after
+Every part is judged and every check passes: **75 checks, 0 failures, 0 unjudged**, measured after
 `npm run build`. The only check allowed to report unjudged is part 1's real-backend probe, and it does so
 only when the machine has no reachable endpoint configured — a check that passed by not testing would be
 worse than one that admits it did not run.
@@ -41,14 +41,14 @@ worse than one that admits it did not run.
 | 0 | 10 | `0` — profiles, layers, includes, references, validation, provenance |
 | 1 | 6 | `0` — both wire shapes, the configured default, listing costs nothing, one real endpoint |
 | 2 | 5 | `0` — deltas before completion, with no browser, on every turn of a resumed session |
-| 3 | 5 | `0` — budget, instructions, pruning, compaction, and continuing after a compaction |
+| 3 | 7 | `0` — the surface and its shadowing, the endpoint's window, prune-before-summarise, a balanced cut, a refused summary, overflow recovery, and the instruction baseline |
 | 4 | 6 | `0` — allow list, an out-of-repository tool, a replacement, a malformed spec refused |
 | 5 | 6 | `0` — multi-round tasks, results fed back, the limit reported, resume, a failed tool |
 | 6 | 6 | `0` — the hook points, retarget, refusal, replacement, a refusal that stops, a broken hook named |
 | 7 | 7 | `0` — the transcript, resume, append-only, grouping by folder, subdirectories, finding a session |
 | 8 | 5 | `0` — the three modes, the sibling prefix, and the temp directory only when admitted |
 | 9 | 4 | `0` — port, page, API, and the live stream |
-| 10 | 9 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode, a stale token's recovery page, session history over the API and in a browser |
+| 10 | 10 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode, a stale token's recovery page, session history over the API and in a browser |
 | 11 | 3 | `0` — a complete definition, the port answering with the service's name, and a kill it recovers from |
 
 ## The verdict contract

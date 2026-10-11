@@ -30,6 +30,8 @@ const endpointSchema = Schema.object({
   headers: Schema.dict(Schema.string()),
   stream: Schema.boolean(),
   maxOutputTokens: Schema.number(),
+  /** The model's context window, when this route knows it; the budget resolves from it first. */
+  contextWindow: Schema.number(),
   capabilities: Schema.array(Schema.string()),
   timeoutMs: Schema.number(),
 })

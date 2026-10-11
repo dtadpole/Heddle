@@ -405,13 +405,35 @@ export function scriptedAdapter(
      * index makes the script a sequence rather than a repeat.
      */
     const roundIndex = typeof (request as { round?: unknown }).round === 'number' ? (request as { round: number }).round : 0
-    const steps = script.steps ?? []
+    /**
+     * Steps are also separable by **purpose**.
+     *
+     * A summarising call and a turn reach the same endpoint, so a script that could not tell them
+     * apart could not describe a compaction at all: the summary step and the turn's step would be
+     * the same step. A step's `purpose` defaults to `'turn'`, so every script written before this
+     * existed keeps its meaning.
+     */
+    const purpose = (request as { purpose?: unknown }).purpose
+    const wanted = typeof purpose === 'string' ? purpose : 'turn'
+    const steps = (script.steps ?? []).filter((entry) => {
+      const declared = (entry ?? {}) as { purpose?: unknown }
+      return (typeof declared.purpose === 'string' ? declared.purpose : 'turn') === wanted
+    })
     const step = steps[roundIndex]
     const value = (step ?? {}) as {
       text?: string
       reasoning?: string
       toolCall?: { name: string; arguments: unknown }
       finishReason?: string
+      /** A step that fails the call rather than answering, so a check can exercise recovery. */
+      error?: { code?: string; status?: number; message?: string }
+    }
+    if (value.error !== undefined) {
+      throw new ModelError(value.error.message ?? `the script for '${endpoint.name}' failed at round ${roundIndex}`, {
+        endpoint: endpoint.name,
+        code: value.error.code ?? 'SCRIPT',
+        ...(value.error.status !== undefined ? { status: value.error.status } : {}),
+      })
     }
     {
       if (value.reasoning) yield { type: 'reasoning-delta', text: value.reasoning }
@@ -425,7 +447,7 @@ export function scriptedAdapter(
         }
       }
     }
-    yield { type: 'done', finishReason: 'stop' }
+    yield { type: 'done', finishReason: value.finishReason ?? (value.toolCall ? 'tool_calls' : 'stop') }
   })()
 }
 

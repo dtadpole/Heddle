@@ -5,6 +5,24 @@ import type { SessionHandle } from '../session/store.ts'
 import type { ToolResult } from '../tools/service.ts'
 
 /**
+ * A model failure, read the way a seam has to read it: **by its code, not by its class**.
+ *
+ * Measured while building recovery: the CLI runs from `dist/`, while a profile's plugin tree loads
+ * from `src/`, so the error thrown by the model service and the error class this file could compare
+ * against were **two different classes with the same name** and `instanceof` was false for every
+ * failure. The code is the contract between them, which is also how DSH reads a provider failure —
+ * `failure.code === CONTEXT_WINDOW_EXCEEDED_CODE` — and it survives a plugin boundary, a bundle, or
+ * a second copy of the module.
+ */
+function modelFailure(error: unknown): { readonly code: string; readonly message: string } | undefined {
+  if (typeof error !== 'object' || error === null) return undefined
+  const code = (error as { code?: unknown }).code
+  if (typeof code !== 'string') return undefined
+  const message = (error as { message?: unknown }).message
+  return { code, message: typeof message === 'string' ? message : String(error) }
+}
+
+/**
  * The agent loop.
  *
  * One turn is: record the user's message, ask the model, run whatever tools it
@@ -17,6 +35,13 @@ import type { ToolResult } from '../tools/service.ts'
  * the sandbox permits; it asks for all three through services. That is what makes
  * the parts independently verifiable — each one's own verifier judges it without
  * the loop, and the end-to-end verifier judges the loop with all of them.
+ *
+ * Context is one of those parts, and the loop owns exactly one decision about it: when. It asks
+ * `ctx.context.prepare(...)` at the top of every round, which derives the request from the surface,
+ * prunes and summarises if the price is over the trigger, and answers with what to send. The
+ * **recovery** path is the second decision: when a provider refuses a call because the window was
+ * exceeded, the loop offers that failure on `agent/request-error` and retries only if something
+ * durable happened — a compaction landing is what makes a retry different from a repeat.
  */
 
 /** What happened in one turn, including what was refused. */
@@ -32,7 +57,7 @@ export interface TurnResult {
   readonly events: number
   /** Rounds of model-plus-tools this turn took. */
   readonly rounds: number
-  /** What the last context assembly was, so a caller can report the budget. */
+  /** What the last context preparation was, so a caller can report the budget. */
   readonly context?: { readonly estimatedTokens: number; readonly thresholdTokens: number; readonly pruned: number; readonly compacted: boolean }
 }
 
@@ -43,7 +68,7 @@ export interface RunTurnOptions {
   readonly endpoint: string
   /** The user's message for this turn. */
   readonly prompt: string
-  /** A system prompt, recorded as the first message of a new session. */
+  /** A system prompt, written to the surface as its first node when the session has none. */
   readonly system?: string
   /** The model id, overriding the endpoint's default. */
   readonly model?: string
@@ -51,6 +76,8 @@ export interface RunTurnOptions {
   readonly maxRounds?: number
   /** Cap on generated tokens per model call. */
   readonly maxOutputTokens?: number
+  /** How many times one round may be retried after the provider refused it as too long. */
+  readonly maxOverflowRetries?: number
   readonly signal?: AbortSignal
 }
 
@@ -75,16 +102,16 @@ function specsOf(tools: Context['tools']): readonly ToolSpec[] {
  *
  * `maxRounds` defaults to eight: enough for a task that reads, writes and checks,
  * and small enough that a model which keeps asking for tools is stopped with a
- * readable transcript rather than an open-ended bill.
+ * readable transcript rather than an open-ended bill. `maxOverflowRetries` defaults
+ * to one, which is DSH's default and enough for the one thing a retry can fix.
  */
 export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<TurnResult> {
   const started = ctx.session.store.count(options.session)
   const maxRounds = options.maxRounds ?? 8
+  const maxOverflowRetries = options.maxOverflowRetries ?? 1
   const maximumTokens = options.maxOutputTokens
+  const cwd = ctx.sandbox.workspaceRoot
 
-  if (options.system !== undefined && ctx.session.messages(options.session).length === 0) {
-    ctx.session.store.message(options.session, { role: 'system', content: [{ type: 'text', text: options.system }] })
-  }
   ctx.session.user(options.session, options.prompt)
 
   const tools = specsOf(ctx.tools)
@@ -101,20 +128,17 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     rounds += 1
 
     /**
-     * The context step: assemble within the budget, and compact if the assembly is over
-     * it. Modelled on DSH's `agent/pre-step` waterfall, which is where compaction and
-     * instruction injection attach — a listener here may replace the messages or the
-     * tools, or refuse the round by throwing.
+     * The context step: derive from the surface, prune, and summarise only if pruning did not
+     * clear the pressure. The order is the policy and it lives in the service, so a check can
+     * judge it without a loop.
      */
-    const assembled = ctx.context.assemble({ session: options.session, cwd: ctx.sandbox.workspaceRoot, tools })
-    const compaction = await ctx.context.compactIfNeeded({
-      session: options.session,
+    let report = await ctx.context.prepare(options.session, {
+      cwd,
       endpoint: options.endpoint,
       ...(options.model !== undefined ? { model: options.model } : {}),
+      tools,
+      ...(options.system !== undefined ? { system: options.system } : {}),
     })
-    const effective = compaction.compacted
-      ? ctx.context.assemble({ session: options.session, cwd: ctx.sandbox.workspaceRoot, tools })
-      : assembled
 
     /**
      * What this round's context was.
@@ -123,10 +147,10 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
      * is judged: a budget nobody can see is a budget nobody can check.
      */
     lastContext = {
-      estimatedTokens: effective.estimatedTokens,
-      thresholdTokens: effective.thresholdTokens,
-      pruned: effective.pruned,
-      compacted: effective.compacted,
+      estimatedTokens: report.estimatedTokens,
+      thresholdTokens: report.thresholdTokens,
+      pruned: report.pruned,
+      compacted: report.compacted,
     }
 
     /**
@@ -140,46 +164,109 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     try {
       prepared = ctx.waterfall(
         'agent/pre-step',
-        { messages: effective.messages, tools, round: round + 1 },
-        () => ({ messages: effective.messages, tools }),
+        { messages: report.messages, tools, round: round + 1 },
+        () => ({ messages: report.messages, tools }),
       )
     } catch (error) {
       const reason = isHookRefusal(error) ? (error as Error).message : `a hook failed at agent/pre-step — ${(error as Error).message}`
       throw new Error(reason)
     }
 
-    ctx.session.store.modelRequest(options.session, {
-      endpoint: options.endpoint,
-      ...(options.model !== undefined ? { model: options.model } : {}),
-      messages: prepared.messages.length,
-      tools: prepared.tools.map((tool) => tool.name),
-      estimatedTokens: effective.estimatedTokens,
-      pruned: effective.pruned,
-      compacted: effective.compacted,
-    })
-
-    const request = {
-      endpoint: options.endpoint,
-      messages: prepared.messages,
-      ...(options.model !== undefined ? { model: options.model } : {}),
-      ...(maximumTokens !== undefined ? { maxOutputTokens: maximumTokens } : {}),
-      ...(prepared.tools.length > 0 ? { tools: prepared.tools } : {}),
-      sessionId: options.session.id,
-      round,
-    }
-
     const calls: { id: string; name: string; arguments: string }[] = []
     let roundText = ''
-    for await (const chunk of ctx.model.stream(request, options.signal)) {
-      // Recorded as it arrives: the transcript of an interrupted turn should show
-      // the half of the answer that arrived.
-      ctx.session.store.assistantChunk(options.session, chunk)
-      if (chunk.type === 'text-delta') roundText += chunk.text
-      else if (chunk.type === 'reasoning-delta') reasoning += chunk.text
-      else if (chunk.type === 'tool-call') calls.push({ id: chunk.id, name: chunk.name, arguments: chunk.arguments })
-      else if (chunk.type === 'done') {
-        finishReason = chunk.finishReason
-        ended.push(`round ${round + 1}: ${chunk.finishReason}`)
+    for (let attempt = 0; ; attempt += 1) {
+      const request = {
+        endpoint: options.endpoint,
+        messages: prepared.messages,
+        ...(options.model !== undefined ? { model: options.model } : {}),
+        ...(maximumTokens !== undefined ? { maxOutputTokens: maximumTokens } : {}),
+        ...(prepared.tools.length > 0 ? { tools: prepared.tools } : {}),
+        sessionId: options.session.id,
+        round,
+      }
+
+      ctx.session.store.modelRequest(options.session, {
+        endpoint: options.endpoint,
+        ...(options.model !== undefined ? { model: options.model } : {}),
+        messages: prepared.messages.length,
+        tools: prepared.tools.map((tool) => tool.name),
+        estimatedTokens: report.estimatedTokens,
+        thresholdTokens: report.thresholdTokens,
+        pruned: report.pruned,
+        compacted: report.compacted,
+        generation: ctx.session.surface(options.session).contentGeneration,
+      })
+
+      try {
+        for await (const chunk of ctx.model.stream(request, options.signal)) {
+          // Recorded as it arrives: the transcript of an interrupted turn should show
+          // the half of the answer that arrived.
+          ctx.session.store.assistantChunk(options.session, chunk)
+          if (chunk.type === 'text-delta') roundText += chunk.text
+          else if (chunk.type === 'reasoning-delta') reasoning += chunk.text
+          else if (chunk.type === 'tool-call') calls.push({ id: chunk.id, name: chunk.name, arguments: chunk.arguments })
+          else if (chunk.type === 'done') {
+            finishReason = chunk.finishReason
+            ended.push(`round ${round + 1}: ${chunk.finishReason}`)
+          }
+        }
+        break
+      } catch (error) {
+        /**
+         * The recovery path: a provider that refused the call as too long gets one more chance,
+         * and only because something durable changed in between.
+         *
+         * The listener is where compaction attaches, mirroring DSH's `agent/request-error`. A
+         * retry is granted on the strength of a landed replacement, not on the failure itself:
+         * sending the same too-long request again would fail identically, which is why the loop
+         * re-derives the request before trying.
+         */
+        const failure = modelFailure(error)
+        if (failure === undefined || attempt >= maxOverflowRetries) throw error
+        const action = await ctx.waterfall(
+          'agent/request-error',
+          {
+            error: failure,
+            session: options.session,
+            endpoint: options.endpoint,
+            ...(options.model !== undefined ? { model: options.model } : {}),
+            cwd,
+            tools,
+          },
+          () => undefined,
+        )
+        if (action?.kind !== 'retry') throw error
+        /**
+         * The retry re-derives; it does not reduce again.
+         *
+         * The reduction was the listener's job and it has already landed — that is *why* the retry
+         * was granted. Reducing a second time here was measured while writing this: it spent a
+         * second summary call and was then refused for not shrinking, because the first reduction
+         * had left it nothing to take.
+         */
+        const generationBefore = ctx.session.surface(options.session).replaceGeneration
+        const retried = ctx.context.assemble(options.session, {
+          cwd,
+          tools,
+          ...(options.system !== undefined ? { system: options.system } : {}),
+          endpoint: options.endpoint,
+        })
+        report = retried
+        prepared = { messages: retried.messages, tools }
+        lastContext = {
+          estimatedTokens: retried.estimatedTokens,
+          thresholdTokens: retried.thresholdTokens,
+          pruned: retried.pruned,
+          compacted: ctx.session.surface(options.session).replaceGeneration > generationBefore,
+        }
+        ctx.session.store.append(options.session, {
+          type: 'turn/retry',
+          round,
+          attempt: attempt + 1,
+          code: failure.code,
+          estimatedTokens: report.estimatedTokens,
+          compacted: report.compacted,
+        })
       }
     }
     text += roundText
@@ -189,7 +276,7 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     for (const call of calls) {
       const args = parseArguments(call.arguments)
       const result = await ctx.tools.call(call.name, args, {
-        cwd: ctx.sandbox.workspaceRoot,
+        cwd,
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         log: (message) => ctx.logger.info('turn: %s', message),
       })
@@ -257,6 +344,16 @@ function parseArguments(raw: string): Record<string, unknown> {
   }
 }
 
+/** What one refused round is offered, so a listener can decide whether a retry would differ. */
+export interface RequestErrorPayload {
+  readonly error: { readonly code: string; readonly message: string }
+  readonly session: SessionHandle
+  readonly endpoint: string
+  readonly model?: string
+  readonly cwd: string
+  readonly tools: readonly ToolSpec[]
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Events {
     /**
@@ -272,6 +369,19 @@ declare module '@deepseek-ai/cordis' {
       step: { readonly messages: readonly Message[]; readonly tools: readonly ToolSpec[]; readonly round: number },
       next: () => { readonly messages: readonly Message[]; readonly tools: readonly ToolSpec[] },
     ): { readonly messages: readonly Message[]; readonly tools: readonly ToolSpec[] }
+    /**
+     * Waterfall after a model call failed. Modelled on DSH's `agent/request-error`.
+     *
+     * This is the overflow seam: a listener recognises a refusal it can do something about —
+     * a window that was exceeded — reduces the conversation durably and returns `{kind:'retry'}`,
+     * and the loop re-derives the request and sends it again. Anything else is left to throw.
+     *
+     * @mode waterfall
+     */
+    'agent/request-error'(
+      payload: RequestErrorPayload,
+      next: () => { readonly kind: 'retry' } | undefined,
+    ): { readonly kind: 'retry' } | undefined | Promise<{ readonly kind: 'retry' } | undefined>
   }
 }
 

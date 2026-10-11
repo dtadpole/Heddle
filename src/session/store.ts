@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } f
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import type { Chunk, ContentPart } from '../llm/types.ts'
+import type { Chunk, ContentPart, Message } from '../llm/types.ts'
 
 /**
  * The session store.
@@ -70,6 +70,149 @@ export function defaultSessionRoot(env: NodeJS.ProcessEnv = process.env): string
 }
 
 /**
+ * The **surface**: the positional view of a log, which is what a request is derived from.
+ *
+ * Modelled on `@deepseek-ai/dsh-session`'s surface, and the reason it exists is the one thing an
+ * append-only log cannot do by itself: let something be *replaced* without being *erased*. A
+ * compaction, a pruning and a rewritten system prompt all want the model to stop seeing an old
+ * span while a person still can, and DSH gets that by keeping the log immutable and giving the
+ * model a second, derived view of it.
+ *
+ * Two rules hold the whole thing up:
+ *
+ * - **Only message-producing events take a position.** Everything else — the rest of a streamed
+ *   run, a request record, a compaction marker — is log-only, which is what lets the log carry the
+ *   record of a rewrite without the rewrite becoming conversation.
+ * - **A replacement names positions, not a new history.** The replacement event is written later,
+ *   so its `seq` is higher than everything it shadows; it splices the positions it covers and
+ *   records which seqs it found there, so a replay is exact.
+ */
+export const SURFACE_EVENT_TYPES: ReadonlySet<string> = new Set(['message', 'assistant/chunk'])
+
+/** How an event entered the surface. An event with no marker in an older log is an append. */
+export type SurfaceOp = 'append' | { readonly op: 'replace'; readonly startSeq: number; readonly endSeq: number }
+
+/** One landed replacement, kept so a reader can see what a node shadowed. */
+export interface SurfaceReplacement {
+  readonly seq: number
+  readonly startSeq: number
+  readonly endSeq: number
+  readonly shadowedSeqs: readonly number[]
+}
+
+/** The positional view of a log: the nodes the model can see, in order. */
+export interface SurfaceState {
+  /** The `seq` of every node, in surface order — which is not seq order after a replacement. */
+  readonly nodes: readonly number[]
+  /** Bumped by an append and by a replacement: the derivation cache key. */
+  readonly contentGeneration: number
+  /** Bumped only by a replacement: "a rewrite has landed", which is what a retry waits for. */
+  readonly replaceGeneration: number
+  readonly replacements: readonly SurfaceReplacement[]
+}
+
+/** Whether an event type can take a position on the surface. */
+export function isSurfaceEligible(type: string): boolean {
+  return SURFACE_EVENT_TYPES.has(type)
+}
+
+/** Whether an operation is a replacement, narrowing its range. */
+export function isReplacementOp(
+  op: SurfaceOp | undefined,
+): op is { readonly op: 'replace'; readonly startSeq: number; readonly endSeq: number } {
+  return typeof op === 'object' && op !== null && op.op === 'replace'
+}
+
+/**
+ * Fold a log into its surface.
+ *
+ * The chunk rule is where this store's own choice meets the surface: heddle records **every**
+ * streamed chunk as it arrives, so an interrupted answer is not lost, while DSH settles a stream
+ * into one message. The fold resolves that by giving the surface one node per run — the seq of its
+ * first chunk — and deriving the run's message from the chunks that follow.
+ */
+export function foldSurface(events: readonly SessionEvent[]): SurfaceState {
+  const nodes: number[] = []
+  const replacements: SurfaceReplacement[] = []
+  let contentGeneration = 0
+  let replaceGeneration = 0
+  let openChunk: number | undefined
+
+  for (const event of events) {
+    const op = event.surfaceOp as SurfaceOp | undefined
+    if (isReplacementOp(op)) {
+      const startIdx = nodes.indexOf(op.startSeq)
+      const endIdx = nodes.indexOf(op.endSeq)
+      if (startIdx === -1 || endIdx < startIdx) {
+        throw new Error(
+          `session event ${event.seq}: a replacement names a range that is not on the surface (${op.startSeq}..${op.endSeq})`,
+        )
+      }
+      const shadowedSeqs = nodes.slice(startIdx, endIdx + 1)
+      nodes.splice(startIdx, shadowedSeqs.length, event.seq)
+      replacements.push({ seq: event.seq, startSeq: op.startSeq, endSeq: op.endSeq, shadowedSeqs })
+      contentGeneration += 1
+      replaceGeneration += 1
+      openChunk = undefined
+      continue
+    }
+    if (event.type === 'message') {
+      nodes.push(event.seq)
+      contentGeneration += 1
+      openChunk = undefined
+      continue
+    }
+    if (event.type === 'assistant/chunk') {
+      if (openChunk === undefined) {
+        nodes.push(event.seq)
+        contentGeneration += 1
+        openChunk = event.seq
+      }
+      const chunk = event.chunk as Chunk | undefined
+      if (chunk?.type === 'done') openChunk = undefined
+    }
+  }
+
+  return { nodes, contentGeneration, replaceGeneration, replacements }
+}
+
+/** The message one node derives to, or null when it produces none. */
+export function deriveMessage(bySeq: ReadonlyMap<number, SessionEvent>, seq: number): Message | null {
+  const event = bySeq.get(seq)
+  if (event === undefined) return null
+  if (event.type === 'message') {
+    const message = event.message as Message | undefined
+    if (message === undefined || message.content.length === 0) return null
+    return message
+  }
+  if (event.type !== 'assistant/chunk') return null
+  const content: ContentPart[] = []
+  for (let index = seq; ; index += 1) {
+    const next = bySeq.get(index)
+    if (next === undefined || next.type !== 'assistant/chunk') break
+    const chunk = next.chunk as Chunk | undefined
+    if (chunk === undefined) continue
+    if (chunk.type === 'text-delta') content.push({ type: 'text', text: chunk.text })
+    else if (chunk.type === 'reasoning-delta') content.push({ type: 'reasoning', text: chunk.text })
+    else if (chunk.type === 'tool-call') content.push({ type: 'tool-call', id: chunk.id, name: chunk.name, arguments: chunk.arguments })
+    else if (chunk.type === 'done') break
+  }
+  return content.length === 0 ? null : { role: 'assistant', content }
+}
+
+/** Index a log by seq, which every derivation over it wants. */
+export function indexBySeq(events: readonly SessionEvent[]): ReadonlyMap<number, SessionEvent> {
+  const bySeq = new Map<number, SessionEvent>()
+  for (const event of events) bySeq.set(event.seq, event)
+  return bySeq
+}
+
+/** The message one surface node derives to, or null when it produces none. */
+export function deriveNodeMessage(events: readonly SessionEvent[], seq: number): Message | null {
+  return deriveMessage(indexBySeq(events), seq)
+}
+
+/**
  * Where the transcript can be read.
  *
  * A session records under the directory its process ran in, and the record names
@@ -84,6 +227,14 @@ export function defaultSessionRoot(env: NodeJS.ProcessEnv = process.env): string
 export class SessionStore {
   readonly root: string
   private readonly onEvent: ((handle: SessionHandle, event: SessionEvent) => void) | undefined
+  /**
+   * Folded surfaces, keyed by session and the log length they were folded at.
+   *
+   * A log only ever grows, so its event count is a sound cache key — and a turn asks for the
+   * surface once per round, which is exactly where re-folding a long log on every call would show.
+   * Reading is still the truth: a cache miss falls back to folding the file.
+   */
+  private readonly surfaceCache = new Map<string, { readonly count: number; readonly state: SurfaceState }>()
 
   constructor(
     root: string = defaultSessionRoot(),
@@ -164,15 +315,93 @@ export class SessionStore {
    * describes happens, or an interruption loses precisely the event that says
    * what the run was doing. This is the same reasoning as "write at the event,
    * not at the end of it" in the runtime ledger.
+   *
+   * `options.surfaceOp` is how an event enters the surface: leave it out (or pass `'append'`) for
+   * the ordinary case, and pass a `replace` range to shadow a span. A replacement is **validated
+   * here**, before anything is written, because a log that carries a rewrite the surface cannot
+   * fold is a log nothing can read afterwards: the range must be a real span of current positions,
+   * a tool result may be rewritten only by a tool result for the same call, and a system prompt
+   * sitting at the surface head may be rewritten only by a system message over exactly that node.
    */
-  append(handle: SessionHandle, event: Omit<SessionEvent, 'seq' | 'at'> & { readonly type: string }): SessionEvent {
+  append(
+    handle: SessionHandle,
+    event: Omit<SessionEvent, 'seq' | 'at'> & { readonly type: string },
+    options: { readonly surfaceOp?: SurfaceOp; readonly sourceEventSeqs?: readonly number[] } = {},
+  ): SessionEvent {
+    if (isReplacementOp(options.surfaceOp)) this.assertReplacement(handle, event, options.surfaceOp)
     const seq = this.count(handle)
-    const record: SessionEvent = { seq, at: new Date().toISOString(), ...event }
+    const record: SessionEvent = {
+      seq,
+      at: new Date().toISOString(),
+      ...event,
+      ...(options.surfaceOp !== undefined ? { surfaceOp: options.surfaceOp } : {}),
+      ...(options.sourceEventSeqs !== undefined ? { sourceEventSeqs: options.sourceEventSeqs } : {}),
+    }
     appendFileSync(handle.transcript, `${JSON.stringify(record)}\n`)
     // After the write, never before: a listener that saw an event the file does not
     // have would be a second truth, which is the failure this ordering prevents.
     this.onEvent?.(handle, record)
     return record
+  }
+
+  /**
+   * Reject a replacement the surface could not fold or that would erase something it must not.
+   *
+   * Every rule here is one DSH enforces on its own session, and each exists because the failure it
+   * prevents is silent: a range that is not a span would shadow a hole, a tool result rewritten by
+   * something else would leave the model a tool answer for no call, and a rewritten system head
+   * would replace the prompt with a user's sentence.
+   */
+  private assertReplacement(
+    handle: SessionHandle,
+    event: Omit<SessionEvent, 'seq' | 'at'> & { readonly type: string },
+    op: { readonly op: 'replace'; readonly startSeq: number; readonly endSeq: number },
+  ): void {
+    if (!isSurfaceEligible(event.type)) {
+      throw new Error(`session ${handle.id}: "${event.type}" is not surface-eligible and cannot replace a range`)
+    }
+    const state = this.surface(handle)
+    const startIdx = state.nodes.indexOf(op.startSeq)
+    const endIdx = state.nodes.indexOf(op.endSeq)
+    if (startIdx === -1 || endIdx < startIdx) {
+      throw new Error(`session ${handle.id}: replacement range ${op.startSeq}..${op.endSeq} is not a span of the surface`)
+    }
+    const shadowedSeqs = state.nodes.slice(startIdx, endIdx + 1)
+    if (shadowedSeqs.some((seq) => seq < op.startSeq || seq > op.endSeq)) {
+      throw new Error(
+        `session ${handle.id}: replacement range ${op.startSeq}..${op.endSeq} would leave a node inside the span on the surface`,
+      )
+    }
+    const events = this.read(handle)
+    const replacement = event.type === 'message' ? (event.message as Message | undefined) : undefined
+    const head = shadowedSeqs[0]
+    const headMessage = head === undefined ? null : deriveNodeMessage(events, head)
+    if (startIdx === 0 && headMessage?.role === 'system') {
+      if (replacement?.role !== 'system' || shadowedSeqs.length !== 1) {
+        throw new Error(
+          `session ${handle.id}: the surface head holds the system prompt and may be rewritten only by a system message over exactly that node`,
+        )
+      }
+    }
+    for (const seq of shadowedSeqs) {
+      const original = deriveNodeMessage(events, seq)
+      if (original?.role !== 'tool') continue
+      /**
+       * A tool result may only be rewritten by a tool result for the same call — and only over
+       * exactly that node.
+       *
+       * The rule is one-directional, as DSH's is: what it forbids is a *tool* replacement that
+       * lands on anything but the one result it answers. A compaction may still shadow a span that
+       * contains tool results, because that replacement is a user message and shadows a whole
+       * balanced region rather than pretending to be the call's answer.
+       */
+      if (replacement?.role !== 'tool') continue
+      if (shadowedSeqs.length !== 1 || replacement.toolCallId !== original.toolCallId) {
+        throw new Error(
+          `session ${handle.id}: a tool result may be rewritten only by a tool result for the same call, over exactly that node`,
+        )
+      }
+    }
   }
 
   /** How many events a session holds, which is also the next event's `seq`. */
@@ -197,6 +426,38 @@ export class SessionStore {
       }
     }
     return events
+  }
+
+  /** The surface, folded from the log and cached until the log grows. */
+  surface(handle: SessionHandle): SurfaceState {
+    const count = this.count(handle)
+    const cached = this.surfaceCache.get(handle.id)
+    if (cached !== undefined && cached.count === count) return cached.state
+    const state = foldSurface(this.read(handle))
+    this.surfaceCache.set(handle.id, { count, state })
+    return state
+  }
+
+  /** One node's message, or null when the node produces none. */
+  deriveNode(handle: SessionHandle, seq: number): Message | null {
+    return deriveNodeMessage(this.read(handle), seq)
+  }
+
+  /**
+   * The messages a request carries: every surface node, derived in order.
+   *
+   * This is the whole point of the surface, seen from a caller's seat — a compaction or a pruning
+   * shows up here and nowhere else, while `read()` still returns everything that ever happened.
+   */
+  deriveMessages(handle: SessionHandle): readonly RecordedMessage[] {
+    const events = this.read(handle)
+    const bySeq = indexBySeq(events)
+    const messages: RecordedMessage[] = []
+    for (const seq of this.surface(handle).nodes) {
+      const message = deriveMessage(bySeq, seq)
+      if (message !== null) messages.push(message)
+    }
+    return messages
   }
 
   /** Record a message and keep the metadata's turn count honest. */
@@ -233,41 +494,30 @@ export class SessionStore {
       readonly messages: number
       readonly tools: readonly string[]
       readonly estimatedTokens?: number
+      readonly thresholdTokens?: number
       readonly pruned?: number
       readonly compacted?: boolean
+      /**
+       * The surface generation this request was built at.
+       *
+       * It is what makes a provider's reported usage reusable: a usage number describes one
+       * envelope, so it may only anchor a measurement of that same envelope. A later append or
+       * replacement moves the generation, and the number stops applying.
+       */
+      readonly generation?: number
     },
   ): void {
     this.append(handle, { type: 'model/request', ...request })
   }
 
-  /** Everything a resumed session needs to rebuild the request. */
+  /**
+   * The messages a resumed session would send.
+   *
+   * Derived from the surface rather than filtered from the log, so a compaction or a pruning is
+   * reflected here: this is the model's view, and `read()` remains the human's.
+   */
   messages(handle: SessionHandle): readonly RecordedMessage[] {
-    const messages: RecordedMessage[] = []
-    for (const event of this.read(handle)) {
-      if (event.type === 'message') {
-        const message = event.message as RecordedMessage | undefined
-        if (message) messages.push(message)
-      } else if (event.type === 'assistant/chunk') {
-        const chunk = event.chunk as Chunk | undefined
-        if (chunk?.type === 'text-delta') {
-          const last = messages[messages.length - 1]
-          if (last?.role === 'assistant') {
-            messages[messages.length - 1] = {
-              role: 'assistant',
-              content: [...last.content, { type: 'text', text: chunk.text }],
-            }
-          } else {
-            messages.push({ role: 'assistant', content: [{ type: 'text', text: chunk.text }] })
-          }
-        } else if (chunk?.type === 'tool-call') {
-          messages.push({
-            role: 'assistant',
-            content: [{ type: 'tool-call', id: chunk.id, name: chunk.name, arguments: chunk.arguments }],
-          })
-        }
-      }
-    }
-    return messages
+    return this.deriveMessages(handle)
   }
 
   /** The plain text of a session's last assistant answer. */

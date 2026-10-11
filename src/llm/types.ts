@@ -62,6 +62,14 @@ export interface GenerateRequest {
    * script is a sequence rather than a list it replays forever.
    */
   readonly round?: number
+  /**
+   * What the call is for, when it is not a turn.
+   *
+   * DSH tags its summarising call `purpose: 'compaction'`, and the tag earns its keep here: a
+   * scripted endpoint can hand a summary step to the summary call and a turn step to the turn,
+   * which is what makes compaction checkable without a second provider.
+   */
+  readonly purpose?: string
 }
 
 /** One piece of a streamed answer. */
@@ -101,6 +109,15 @@ export interface EndpointConfig {
   readonly stream?: boolean
   /** Default cap on generated tokens for this endpoint. */
   readonly maxOutputTokens?: number
+  /**
+   * The model's context window, in tokens, when this endpoint knows it.
+   *
+   * It belongs to the route rather than to the harness: the same gateway can serve models with
+   * different windows, and a budget resolved from a number somebody typed into the harness is a
+   * budget that is wrong the moment the model changes. Absent means the harness falls back to its
+   * own configured window, and the budget reports where the number came from.
+   */
+  readonly contextWindow?: number
   /** What this endpoint can do, for a caller choosing between them. */
   readonly capabilities?: readonly string[]
   /** Milliseconds before a request is abandoned. */
@@ -114,9 +131,17 @@ export interface Adapter {
   stream(request: GenerateRequest, signal?: AbortSignal): AsyncIterable<Chunk>
 }
 
+/**
+ * The code a provider's refusal is normalized to when the request did not fit the window.
+ *
+ * It is the one HTTP failure the harness recovers from, so it is a named constant rather than a
+ * string compared at a call site: the loop offers it on `agent/request-error` and compaction
+ * answers with a reduction and a retry, and every other failure is left to throw.
+ */
+export const CONTEXT_WINDOW_EXCEEDED = 'CONTEXT_WINDOW_EXCEEDED'
+
 /** A failure with the endpoint and status attached, so a caller can diagnose it. */
-export class ModelError extends Error {
-  readonly endpoint: string
+export class ModelError extends Error {  readonly endpoint: string
   readonly status?: number
   readonly code: string
 

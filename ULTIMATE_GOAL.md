@@ -32,7 +32,7 @@ harness. What exists is the frame the rest hangs on."*
 | 0 | configuration system | a run composes its tree from named profiles and patch layers, includes another file, resolves environment references without putting values in the tree, fails loudly naming the row and field, and can show which layer supplied every value | [`_verifiers_/05-config-system/`](_verifiers_/05-config-system/INDEX.md) |
 | 1 | LLM backends | a configured endpoint answers a real request, for more than one wire shape, and the endpoint list is configuration rather than code | [`_verifiers_/10-llm-backends/`](_verifiers_/10-llm-backends/INDEX.md) |
 | 2 | streaming | main content and reasoning arrive as **separate deltas** while the model is still generating, with the same deltas recorded in the session; judged with no Web UI involved | [`_verifiers_/20-streaming/`](_verifiers_/20-streaming/INDEX.md) |
-| 3 | context management | the messages for one call are assembled from the session in a defined order, bounded by a token budget, and compacted when the budget is exceeded | [`_verifiers_/30-context-management/`](_verifiers_/30-context-management/INDEX.md) |
+| 3 | context management | a call's messages are **derived from a surface** over the append-only log, priced against the endpoint's own window, and reduced cheaply before they are reduced expensively | [`_verifiers_/30-context-management/`](_verifiers_/30-context-management/INDEX.md) |
 | 4 | pluggable tools | tools are registered as services and chosen by configuration, a tool can be added from outside the project, and a bad configuration fails loudly | [`_verifiers_/40-pluggable-tools/`](_verifiers_/40-pluggable-tools/INDEX.md) |
 | 5 | agentic loop | one turn completes a multi-step task that uses tools, feeds the results back, and records every step | [`_verifiers_/50-agentic-loop/`](_verifiers_/50-agentic-loop/INDEX.md) |
 | 6 | hooks | a listener can observe and rewrite a model or tool call, and refuse one, at named hook points with Cordis's own event modes | [`_verifiers_/60-hooks/`](_verifiers_/60-hooks/INDEX.md) |
@@ -72,7 +72,7 @@ wording. Correcting the statement is the owner's act; correcting the *state* is 
 evidence.
 
 **Every part is judged, and every check passes.** Measured on 2026-10-11, after `npm run build`:
-twelve parts, seventy-two checks, no failures and nothing left unjudged — except the one check that is
+twelve parts, seventy-five checks, no failures and nothing left unjudged — except the one check that is
 allowed to be, the real-backend probe in part 1, which reports unjudged when the machine has no
 reachable endpoint configured. That is the shape the set was built for, and the two counts that matter
 are kept apart: *unjudged* is a part whose mechanism is missing, and *failed* is a part that does not

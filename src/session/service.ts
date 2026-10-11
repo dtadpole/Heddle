@@ -2,7 +2,9 @@ import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 
-import { SessionStore, defaultSessionRoot, type RecordedMessage, type SessionHandle, type SessionId, type SessionMeta } from './store.ts'
+import type { Message } from '../llm/types.ts'
+
+import { SessionStore, defaultSessionRoot, type RecordedMessage, type SessionHandle, type SessionId, type SessionMeta, type SurfaceState } from './store.ts'
 
 export * from './store.ts'
 
@@ -61,6 +63,22 @@ export class SessionService extends Service {
   /** The messages a resumed session would send, which is what "carries" means. */
   messages(handle: SessionHandle): readonly RecordedMessage[] {
     return this.store.messages(handle)
+  }
+
+  /**
+   * The surface: the positional view a request is derived from.
+   *
+   * Exposed because two things outside the store need it and neither may re-implement the fold:
+   * compaction, which selects a span of positions to shadow, and a check, which judges that a
+   * rewrite landed without erasing the log.
+   */
+  surface(handle: SessionHandle): SurfaceState {
+    return this.store.surface(handle)
+  }
+
+  /** One node's derived message, or null when the node produces none. */
+  node(handle: SessionHandle, seq: number): Message | null {
+    return this.store.deriveNode(handle, seq)
   }
 
   /** What has already happened, for a caller that wants to show it. */

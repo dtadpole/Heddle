@@ -2,7 +2,31 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import type { IncomingMessage } from 'node:http'
 
-import { ModelError } from './types.ts'
+import { CONTEXT_WINDOW_EXCEEDED, ModelError } from './types.ts'
+
+/**
+ * The patterns a provider uses for "the request did not fit", checked case-insensitively.
+ *
+ * Adapters disagree about how to say it — OpenAI says `context_length_exceeded`, DeepSeek says the
+ * conversation is too long, a gateway may just echo "maximum context length" — so the matching
+ * happens once, on the body of a failed response, and everything above reads the code.
+ */
+const WINDOW_PATTERNS = [
+  /context[_ ]length[_ ]exceeded/i,
+  /maximum context length/i,
+  /context window/i,
+  /too many tokens/i,
+  /reduce the length of the messages/i,
+  /exceeds the (?:model'?s )?(?:maximum )?context/i,
+]
+
+/** The error code one failed response deserves, given its status and body. */
+export function failureCode(status: number, body: string): string {
+  if (status === 400 || status === 413 || status === 422) {
+    if (WINDOW_PATTERNS.some((pattern) => pattern.test(body))) return CONTEXT_WINDOW_EXCEEDED
+  }
+  return 'HTTP'
+}
 
 /**
  * The wire, on `node:http` rather than `fetch`.
@@ -113,7 +137,7 @@ export async function wire(request: WireRequest): Promise<WireResponse> {
     const text = await readAll(response)
     throw new ModelError(
       `'${request.endpoint}' answered ${status}${text ? ` — ${text.slice(0, 400)}` : ''}`,
-      { endpoint: request.endpoint, code: 'HTTP', status },
+      { endpoint: request.endpoint, code: failureCode(status, text), status },
     )
   }
 

@@ -1,7 +1,7 @@
 ---
 title: Session
-version: 1.0.0
-description: The session store and its service — an append-only event log per session.
+version: 1.1.0
+description: The session store and its service — an append-only event log per session, and the surface a request is derived from.
 grounded_in:
   - source: human-authored
 ---
@@ -9,6 +9,17 @@ grounded_in:
 # `session`
 
 The session store and its service — an append-only event log per session.
+
+Two things live here and they are deliberately in the same file, because the second is a property of
+the first. The **log** is append-only: every event a run produces, in order, on disk before the thing
+it describes happens. The **surface** is the positional view of that log which a model request is
+derived from — only message-producing events take a position, and a rewrite (`surfaceOp: 'replace'`)
+shadows a span of positions instead of erasing it. That is what lets a compaction or a pruning change
+what the model sees while `heddle transcript` still shows everything that happened.
+
+Everything built on top of it — the meter, the pruner, the compaction, `heddle context` — reads
+`deriveMessages()` rather than filtering the log, and [`../context/INDEX.md`](../context/INDEX.md) is
+where that happens.
 
 This is a source folder rather than a type folder: it carries code, not instances of a
 registered content type. Its entry point exists so that a reader who opens it learns
