@@ -210,11 +210,25 @@ test('the page can register a workspace with its own control', async (context) =
       'including the one just registered',
     )
 
-    // And the `×` on that row unregisters it: the row leaves the tree, which is what the control promises.
+    /**
+     * And unregistering it from that row's actions takes the row away.
+     *
+     * The control is a menu rather than a button of its own, so the check opens the menu and picks the
+     * item by its **label**: which control a person uses is a design decision that has already changed
+     * once, and an assertion on a class name would fail on the next change without anything being
+     * wrong. What is being judged is the capability.
+     */
     await browser.evaluate(`(() => {
       const row = Array.from(document.querySelectorAll('#tree .row')).find((entry) => entry.innerText.includes(${JSON.stringify(label)}))
-      row.querySelector('.untwisty').click()
+      row.querySelector('[aria-haspopup]')?.click()
     })()`)
+    await browser.waitFor(
+      `Array.from(document.querySelectorAll('#tree [role=menuitem]')).some((item) => item.textContent.trim() === 'Unregister')`,
+      10_000,
+    )
+    await browser.evaluate(
+      `Array.from(document.querySelectorAll('#tree [role=menuitem]')).find((item) => item.textContent.trim() === 'Unregister').click()`,
+    )
     const vanished = await browser.waitFor(
       `!Array.from(document.querySelectorAll('#tree .row')).some((row) => row.innerText.includes(${JSON.stringify(label)}))`,
       10_000,
