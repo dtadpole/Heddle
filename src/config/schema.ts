@@ -128,8 +128,22 @@ export function listProfiles(env: NodeJS.ProcessEnv = process.env): readonly Pro
   return profiles
 }
 
-/** Resolve a profile name to its directory, or say which names exist. */
+/**
+ * Resolve a profile name to its directory, or say which names exist.
+ *
+ * A name is normally a directory under the profiles root, but an **absolute path** is also
+ * accepted when it holds layer files. That is not a convenience: it is how a check states the
+ * profile it wants without writing into the machine's own profiles directory, and how a person
+ * runs a tree kept beside a project. Measured need — the first version of the context check
+ * failed with "no profile named '/Users/.../context-profile-2'".
+ */
 export function resolveProfile(name: string, env: NodeJS.ProcessEnv = process.env): ProfileInfo {
+  if (isAbsolute(expandHome(name))) {
+    const dir = resolve(expandHome(name))
+    const layers = ['cordis.yml', 'heddle.patch.yml'].filter((file) => existsSync(join(dir, file)))
+    if (layers.length > 0) return { name: dir, dir, layers }
+    throw new ConfigError([`${dir} holds no cordis.yml or heddle.patch.yml, so it is not a profile directory`])
+  }
   const found = listProfiles(env).find((profile) => profile.name === name)
   if (found === undefined) {
     const known = listProfiles(env).map((profile) => profile.name)

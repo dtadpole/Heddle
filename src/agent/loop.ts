@@ -116,6 +116,19 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
       ? ctx.context.assemble({ session: options.session, cwd: ctx.sandbox.workspaceRoot, tools })
       : assembled
 
+    /**
+     * What this round's context was.
+     *
+     * Kept on the result so a caller can report the budget, which is how the context claim
+     * is judged: a budget nobody can see is a budget nobody can check.
+     */
+    lastContext = {
+      estimatedTokens: effective.estimatedTokens,
+      thresholdTokens: effective.thresholdTokens,
+      pruned: effective.pruned,
+      compacted: effective.compacted,
+    }
+
     const prepared = ctx.waterfall(
       'agent/pre-step',
       { messages: effective.messages, tools, round: round + 1 },

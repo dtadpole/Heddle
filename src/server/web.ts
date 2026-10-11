@@ -41,8 +41,14 @@ import {
  *   refused before any secret is compared.
  */
 
-/** The default port, matching DSH's so a reader has one number to remember. */
-export const DEFAULT_PORT = 3080
+/**
+ * The default port.
+ *
+ * 3081 rather than the 3080 DSH uses, so the two harnesses can run side by side on one
+ * machine — which happens on this machine every day, since DSH's own Web UI is how this
+ * work is driven. The owner chose the number.
+ */
+export const DEFAULT_PORT = 3081
 /** The default host. Anything else is refused. */
 export const DEFAULT_HOST = '127.0.0.1'
 

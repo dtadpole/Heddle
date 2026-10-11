@@ -603,6 +603,10 @@ async function main(): Promise<void> {
           {
             session: handle.id,
             ...(streamed !== undefined ? { stream: streamed } : {}),
+            // What the context was: the estimate, the budget, what was pruned, whether a
+            // compaction ran. Reported because a budget nobody can see is a budget nobody can
+            // check, and the context check reads exactly this.
+            ...(result.context !== undefined ? { context: result.context } : {}),
             endpoint,
             text: result.text,
             finishReason: result.finishReason,
