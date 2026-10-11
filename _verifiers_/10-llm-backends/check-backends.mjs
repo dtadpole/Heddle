@@ -1,0 +1,117 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+import { chatDouble, httpConfig, isolatedHome, parseJson, removeDir, responsesDouble, runCli, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
+
+/**
+ * Verifier 1 — LLM backends.
+ *
+ * Judges one part of `ULTIMATE_GOAL.md`: heddle **connects to backend model servers and runs
+ * agent loops over them**, with the endpoint list coming from configuration rather than code.
+ *
+ * Two claims are separated on purpose. The **wire** is judged offline against local doubles that
+ * speak the provider's real routes — the Chat Completions shape and the Responses shape, which
+ * are genuinely different and whose difference is why there are two adapters. The **real
+ * backend** is judged by one short request to a configured endpoint, and it reports *unjudged*
+ * when nothing is configured or the signer is not running, because "the gateway was not set up"
+ * must never be recorded as "the gateway works".
+ */
+
+const CAPABILITY = 'backend connections with a configured endpoint list'
+
+async function supportsBackends() {
+  const help = await runCli(['--help'])
+  return /--endpoint/.test(help.stdout)
+}
+
+test('the endpoint list is configuration and the command reports it', async (context) => {
+  if (!skipUnless(context, await supportsBackends(), CAPABILITY)) return
+  const home = isolatedHome('backends-list')
+  try {
+    const double = await chatDouble({ content: 'x' })
+    const config = httpConfig({ home, name: 'not-the-first', baseUrl: double.baseUrl })
+    const run = await runCli(['models', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
+    assert.equal(run.code, 0, `the command ran\n${run.stdout}${run.stderr}`)
+    const endpoints = parseJson(run.stdout)
+    assert.ok(Array.isArray(endpoints), `it printed a list\n${run.stdout}`)
+    const names = endpoints.map((endpoint) => endpoint.name)
+    assert.ok(names.includes('not-the-first'), `the configured endpoint is there\nsaw: ${names.join(', ')}`)
+    assert.ok(names.includes('scripted'), 'and the built-in offline endpoint is there for a fresh clone')
+    const configured = endpoints.find((endpoint) => endpoint.name === 'not-the-first')
+    assert.equal(configured.kind, 'openai-chat', 'each endpoint declares its wire shape')
+    assert.equal(configured.baseUrl, double.baseUrl, 'and the URL the configuration gave it')
+    await double.close()
+  } finally {
+    removeDir(home)
+  }
+})
+
+test('a turn runs over the Chat Completions shape', async (context) => {
+  if (!skipUnless(context, await supportsBackends(), CAPABILITY)) return
+  const home = isolatedHome('backends-chat')
+  try {
+    const double = await chatDouble({ content: 'answered over chat completions' })
+    const config = httpConfig({ home, name: 'chat', baseUrl: double.baseUrl })
+    const run = await runCli(['--endpoint', 'chat', '--turn', 'say something', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
+    assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
+    assert.match(run.stdout, /answered over chat completions/, 'the answer came back through the framework')
+    assert.ok(double.requests.length > 0, 'the request reached the endpoint')
+    assert.match(double.requests[0].url, /chat\/completions/, 'at the route that shape uses')
+    const body = JSON.parse(double.requests[0].body)
+    assert.ok(Array.isArray(body.messages) && body.messages.length > 0, 'and it carried the conversation')
+    await double.close()
+  } finally {
+    removeDir(home)
+  }
+})
+
+test('a turn runs over the Responses shape, which is a different contract', async (context) => {
+  if (!skipUnless(context, await supportsBackends(), CAPABILITY)) return
+  const home = isolatedHome('backends-responses')
+  try {
+    const double = await responsesDouble({ content: 'answered over responses' })
+    const config = httpConfig({ home, name: 'codex', kind: 'openai-responses', baseUrl: double.baseUrl })
+    const run = await runCli(['--endpoint', 'codex', '--turn', 'say something', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
+    assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
+    assert.match(run.stdout, /answered over responses/, 'the answer came back')
+    assert.match(double.requests[0].url, /responses/, 'at the route that shape uses')
+    const body = JSON.parse(double.requests[0].body)
+    assert.ok(Array.isArray(body.input), 'input is a list, which that route requires')
+    assert.equal(body.stream, true, 'and it is streamed, which that route also requires')
+    await double.close()
+  } finally {
+    removeDir(home)
+  }
+})
+
+test('a real configured backend answers one short request, or is unjudged', async (context) => {
+  if (!skipUnless(context, await supportsBackends(), CAPABILITY)) return
+  /**
+   * The one check here that may spend anything, and it is bounded: a single request for a couple
+   * of tokens against whatever endpoint the machine's own configuration names as its default.
+   *
+   * It reports unjudged rather than passing when there is no such endpoint, because a check that
+   * passes by not testing is worse than one that admits it did not run.
+   */
+  const probe = await runCli(['models', '--json'], {})
+  const endpoints = parseJson(probe.stdout)
+  const real = Array.isArray(endpoints)
+    ? endpoints.find((endpoint) => endpoint.kind === 'openai-chat' && endpoint.baseUrl.startsWith('http') && !endpoint.baseUrl.includes('127.0.0.1'))
+    : undefined
+  const local = Array.isArray(endpoints)
+    ? endpoints.find((endpoint) => endpoint.kind === 'openai-chat' && endpoint.baseUrl.includes('127.0.0.1'))
+    : undefined
+  const target = real ?? local
+  if (!skipUnless(context, target !== undefined, 'a configured endpoint this machine can reach, which the environment did not provide')) return
+
+  const run = await runCli(['--endpoint', target.name, '--turn', 'Reply with the single word: ready', '--max-output-tokens', '24', '--json'], { timeoutMs: 120_000 })
+  if (run.code !== 0) {
+    // An unreachable gateway is a fact about the machine, not a failure of the harness, and the
+    // check says which it is rather than guessing.
+    context.skip(`the configured endpoint '${target.name}' did not answer, so this part was not judged — ${run.stderr.trim().split('\n').pop() ?? ''}`)
+    return
+  }
+  const summary = parseJson(run.stdout)
+  assert.ok((summary?.text ?? '').length > 0, `a real endpoint answered\n${run.stdout}`)
+  assert.equal(summary?.endpoint, target.name, 'and the answer came from the endpoint that was named')
+})

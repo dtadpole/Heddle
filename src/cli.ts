@@ -104,9 +104,21 @@ function parseArgs(argv: readonly string[]): Args {
       case '--config':
         args.config = next()
         break
-      case '--profile':
-        args.profile = next()
+      case '--profile': {
+        /**
+         * A profile argument is a **name** or a **directory**, and the two are told apart by the
+         * argument itself rather than by the working directory.
+         *
+         * Measured, both ways round: leaving it relative made a fixture profile resolve as the
+         * repository's working directory (`/Users/zhenc/heddle/dev`) and fail; resolving it
+         * unconditionally made `--profile dev` look for a directory called `dev` instead of the
+         * profile named `dev`. A path is recognised by starting with `.`, `/` or `~`.
+         */
+        const value = next() ?? ''
+        const looksLikePath = value.startsWith('.') || value.startsWith('/') || value.startsWith('~')
+        args.profile = looksLikePath ? resolve(value) : value
         break
+      }
       case '--patch':
         args.patch.push(next() ?? '')
         break
@@ -246,6 +258,15 @@ function printTree(ctx: RegistryView & { loader?: LoaderLike }): void {
 
 /** The base layer a run uses: the flag if given, else the profile beside the project. */
 function baseLayer(args: Args): { readonly base?: string; readonly patches: readonly string[]; readonly includeProjectPatch: boolean } {
+  /**
+   * A named profile **excludes** the project's own base layer.
+   *
+   * Measured: `heddle --profile X tools` booted the repository's `cordis.yml` instead, because
+   * this function offered a base whenever one sat in the working directory and `boot` prefers a
+   * profile only when no base is given. The profile looked applied — two endpoints loaded — and
+   * was not. Asking for a profile is asking for exactly that tree.
+   */
+  if (args.profile !== undefined) return { patches: args.patch, includeProjectPatch: false }
   const defaultBase = resolve(process.cwd(), 'cordis.yml')
   if (args.config !== undefined) return { base: args.config, patches: args.patch, includeProjectPatch: args.patch.length === 0 }
   if (existsSync(defaultBase)) return { base: defaultBase, patches: args.patch, includeProjectPatch: args.patch.length === 0 }
@@ -563,8 +584,22 @@ async function main(): Promise<void> {
   const app = await bootFromArgs(emptyArgs(args))
   try {
     const pending = await settle(app.ctx)
+    /**
+     * The finished tree is asked whether the configuration was satisfied.
+     *
+     * Asked rather than listened for: `boot` emits `heddle/ready` before it returns, so a listener
+     * attached here would never see it — measured, and the reason the earlier attempt at this
+     * silently checked nothing.
+     */
+    const configProblems = [...(app.ctx.tools?.missing?.() ?? [])]
     if (pending.length > 0) {
       process.stdout.write(`heddle: ${pending.length} entry(ies) still pending: ${pending.join(', ')}\n`)
+      process.exitCode = 1
+      return
+    }
+
+    if (configProblems.length > 0) {
+      process.stderr.write(`heddle: the configuration names ${configProblems.join(', ')}, which nothing registered\n`)
       process.exitCode = 1
       return
     }
@@ -626,7 +661,7 @@ async function main(): Promise<void> {
       process.stdout.write(`${result.text}\n`)
       for (const call of result.toolCalls) {
         process.stdout.write(
-          `heddle: tool ${call.name} ${call.result.error ? `refused (${call.result.error.code})` : 'ok'}\n`,
+          `heddle: tool ${call.name} ${call.result.error ? `refused (${call.result.error.code}) — ${call.result.error.message}` : 'ok'}\n`,
         )
       }
       for (const denial of result.denials) process.stdout.write(`heddle: denied ${denial.tool} — ${denial.message}\n`)

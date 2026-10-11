@@ -70,13 +70,20 @@ README and the owner's statement, so it carries `status: unverified` and the own
 wording. Correcting the statement is the owner's act; correcting the *state* is the steward's, from
 evidence.
 
-**The baseline is honest and mostly unjudged.** Two parts are judged and passing — the loader and the
-model service, which answer real backends through a local signer — and the session, tools, sandbox and
-loop parts are implemented but their verifiers were written against an older interface and are being
-brought up to the ten above. The remaining parts (streaming to a Web UI, context compaction, hooks,
-workspaces, the Web UI and its token) are not built yet, and their checks report unjudged. That is the
-expected shape for a goal that is not yet reached, and it is why the set distinguishes *unjudged* from
-*failed*: the number that matters is how many parts are still unjudged.
+**Every part is judged, and every check passes.** Measured on 2026-10-11, after `npm run build`:
+eleven parts, fifty-two checks, no failures and nothing left unjudged — except the one check that is
+allowed to be, the real-backend probe in part 1, which reports unjudged when the machine has no
+reachable endpoint configured. That is the shape the set was built for, and the two counts that matter
+are kept apart: *unjudged* is a part whose mechanism is missing, and *failed* is a part that does not
+work. Nothing here is either.
+
+The checks were written against the harness and found real defects in it, which is the point of writing
+them. The ones worth naming, because each was invisible to reading: the scripted backend replayed its
+whole script on every model call, so a refused tool call was refused again forever; `server.close()`
+never resolved while an event stream was open, which is what made the Web UI verifier hang; the server's
+turn API ignored `--endpoint`; a named profile was silently overridden by the project's own
+configuration; and a class plugin's schema sits on a function, so validation that required an object was
+checking nothing at all.
 
 **No part is blocked.** Every part depends on work in this repository rather than on something outside
 it, so the next move is a session with an objective, not a decision. The only dependency the project

@@ -16,8 +16,8 @@ scratch directory or a check file without any of it reaching a user.
 ## What belongs in it
 
 Instances of `_tools_`, one per tool, each named kebab-case. Today there is one:
-[`runner/`](runner/INDEX.md), which turns a check file into the project's verdict.
-[`checks/`](checks/INDEX.md) sits beside it as the shared library its checks import.
+[`verify-runner/`](verify-runner/INDEX.md), which turns a check file into the project's verdict.
+[`check-helpers/`](check-helpers/INDEX.md) sits beside it as the shared library its checks import.
 
 A tool belongs here rather than under `src/` when its subject is *this repository*
 rather than the harness. The test is the one the conventions give: if the package
@@ -26,7 +26,7 @@ harness belongs to the harness; the runner that scores it belongs to the project
 
 ## Read next
 
-[`runner/INDEX.md`](runner/INDEX.md) for the exit contract every verifier keeps,
-[`checks/INDEX.md`](checks/INDEX.md) for the shared helpers, and
+[`verify-runner/INDEX.md`](verify-runner/INDEX.md) for the exit contract every verifier keeps,
+[`check-helpers/INDEX.md`](check-helpers/INDEX.md) for the shared helpers, and
 [`_verifiers_/INDEX.md`](../_verifiers_/INDEX.md) for the ten verifications that use
 both.

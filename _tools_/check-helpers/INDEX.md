@@ -6,7 +6,7 @@ grounded_in:
   - source: human-authored
 ---
 
-# `checks`
+# `check-helpers`
 
 Holds [`lib.mjs`](lib.mjs), the library every check file imports. It exists so that
 three rules are stated once instead of ten times.
@@ -30,5 +30,5 @@ restate. A fixture used by exactly one check stays in that check's folder.
 
 ## Read next
 
-[`../runner/INDEX.md`](../runner/INDEX.md) for the verdict the helpers feed, and
+[`../verify-runner/INDEX.md`](../verify-runner/INDEX.md) for the verdict the helpers feed, and
 [`../../_verifiers_/INDEX.md`](../../_verifiers_/INDEX.md) for the ten claims.

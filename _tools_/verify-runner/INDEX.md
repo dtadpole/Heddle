@@ -6,7 +6,7 @@ grounded_in:
   - source: human-authored
 ---
 
-# `runner`
+# `verify-runner`
 
 Holds [`run.mjs`](run.mjs), the only thing that decides a verifier's verdict. It runs
 a check file under Node's test runner, reads the TAP stream, and exits with the
@@ -45,5 +45,5 @@ passed is `0`.
 ## Read next
 
 [`_verifiers_/INDEX.md`](../../_verifiers_/INDEX.md) for the ten verifications and the
-contract they keep, and [`../checks/INDEX.md`](../checks/INDEX.md) for the helpers a
+contract they keep, and [`../check-helpers/INDEX.md`](../check-helpers/INDEX.md) for the helpers a
 check file imports.

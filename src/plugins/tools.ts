@@ -16,6 +16,14 @@ export const name = 'tools'
  * dependency where Cordis reads it.
  */
 export default class ToolsPlugin extends ToolRegistry {
+  /** What the configuration named, kept so a caller can ask what never arrived. */
+  private readonly allow: readonly string[]
+
+  /** Configured tool names that nothing registered. Empty when the configuration is satisfied. */
+  override missing(): readonly string[] {
+    return this.allow.filter((tool) => !this.has(tool))
+  }
+
   static readonly Config = Schema.object({
     /** Tools to enable, by name. Empty means every registered tool. */
     allow: Schema.array(Schema.string()).default([]),
@@ -29,46 +37,39 @@ export default class ToolsPlugin extends ToolRegistry {
 
   constructor(ctx: import('@deepseek-ai/cordis').Context, config: { allow?: readonly string[]; includeBuiltins?: boolean; bashTimeoutMs?: number } = {}) {
     super(ctx, ctx.approvals, ctx.sandbox)
+    /** Tools the configuration named and nothing registered, reported once the tree is loaded. */
+    const cfgProblems: string[] = []
 
     const definitions = config.includeBuiltins === false ? [] : [...builtinTools(ctx.sandbox, { ...(config.bashTimeoutMs !== undefined ? { bashTimeoutMs: config.bashTimeoutMs } : {}) })]
     const allow = config.allow ?? []
     const selected = allow.length === 0 ? definitions : definitions.filter((tool) => allow.includes(tool.spec.name))
     for (const definition of selected) this.register(definition)
 
-    const missing = allow.filter((tool) => !this.has(tool))
-    if (missing.length > 0) {
-      throw new Error(
-        `the tools config names ${missing.join(', ')}, which this build does not register; registered: ${definitions.map((tool) => tool.spec.name).join(', ')}`,
-      )
-    }
     /**
-     * One command, so the command path is a real path rather than an empty list.
+     * The allow list is checked **by the caller, once the tree has loaded**, not here.
      *
-     * It shares the registry's two gates and its result shape with a tool, which
-     * is the claim the tools part makes: a command is the same kind of thing with
-     * a person at the other end.
+     * Measured: checking it in the constructor failed on a tool another plugin registers, because
+     * row order is not load order. Checking it on `heddle/ready` was worse — `boot` emits that
+     * event before it returns, so a listener could not be attached in time and the check silently
+     * never ran. The honest mechanism is a question the caller asks: `missing` names what the
+     * configuration asked for and nothing provided.
      */
-    this.registerCommand({
-      name: 'describe',
-      description: 'describe a tool by name — usage: describe <tool>',
-      run: async (args) => {
-        const wanted = args[0]
-        if (wanted === undefined) {
-          return { output: this.describe().map((tool) => `${tool.name}\t${tool.description}`).join('\n') }
-        }
-        const tool = this.describe().find((entry) => entry.name === wanted)
-        if (tool === undefined) {
-          return { output: '', error: { code: 'UNKNOWN_TOOL', message: `no tool named '${wanted}'` } }
-        }
-        return { output: `${tool.name}: ${tool.description}` }
-      },
-    })
+    this.allow = allow
 
-    ctx.logger.info(
-      'tools: %d registered, %d command(s) — %s',
-      this.names().length,
-      this.describeCommands().length,
-      this.names().join(', '),
-    )
+    /**
+     * The registry's own summary is deferred by one turn of the loop.
+     *
+     * Measured: printed from the constructor it said "tools: 3 registered" while a plugin loaded
+     * later registered a fourth, so the line a person reads first was wrong. A tree whose plugins
+     * register tools cannot know its own size until they have all started.
+     */
+    queueMicrotask(() => {
+      ctx.logger.info(
+        'tools: %d registered, %d command(s) — %s',
+        this.names().length,
+        this.describeCommands().length,
+        this.names().join(', '),
+      )
+    })
   }
 }

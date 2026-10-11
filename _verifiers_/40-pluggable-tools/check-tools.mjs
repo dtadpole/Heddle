@@ -1,139 +1,202 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { createServer } from 'node:http'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { writeFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
 import { test } from 'node:test'
 
-import { PROVIDER_ENV, removeDir, runCli, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
+import { fixtureDir, parseJson, readTranscript, removeDir, repoRoot, runCli, scriptedConfig, sessionsUnder, skipUnless, writeJson } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
- * Verifier 4 — tools.
+ * Verifier 4 — pluggable tools.
  *
- * Judges one part of `ULTIMATE_GOAL.md`: tools and commands are **registered as
- * services** rather than imported, are discoverable with a description, and a
- * call produces its side effect.
+ * Judges one part of `ULTIMATE_GOAL.md`: tools are **configurable and pluggable**.
  *
- * The side effect is the thing being judged, so the double asks for a tool call
- * and the check looks for the file on disk. A framework that prints a tool call
- * without running it does not pass this.
+ * The extension point is the claim, not the catalogue. So the checks are: the harness ships
+ * tools that carry a description a model can read; a configuration chooses which of them exist;
+ * a tool written **outside this repository** is loaded from a layer file and works; and a
+ * configuration naming a tool that does not exist fails where it is written rather than at first
+ * use.
+ *
+ * The out-of-repository tool is the important one. A tool that has to be added to `src/` is a
+ * hardcoded tool with extra steps.
  */
 
-const CAPABILITY = 'a tool registry (registration as a service, a description, and a call that acts)'
+const CAPABILITY = 'tools chosen by configuration and augmentable from outside the project'
 
-/** A double that answers with a write_file tool call on the first request, then stops. */
-async function startToolProvider() {
-  const requests = []
-  const server = createServer((request, response) => {
-    let body = ''
-    request.on('data', (chunk) => {
-      body += chunk
-    })
-    request.on('end', () => {
-      requests.push(body)
-      const second = requests.length > 1
-      const message = second
-        ? { role: 'assistant', content: 'ran the tool' }
-        : {
-            role: 'assistant',
-            content: null,
-            tool_calls: [
-              {
-                id: 'call-1',
-                type: 'function',
-                function: { name: 'write_file', arguments: '{"path":"proof.txt","content":"written by a tool"}' },
-              },
-            ],
-          }
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(
-        JSON.stringify({
-          id: `double-${requests.length}`,
-          object: 'chat.completion',
-          model: 'double',
-          choices: [{ index: 0, message, finish_reason: second ? 'stop' : 'tool_calls' }],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-        }),
-      )
-    })
+/** A profile whose tool row carries the allow list the check wants, plus any fixture plugins. */
+function toolProfile(home, options = {}) {
+  const dir = fixtureDir('tools-profile')
+  const prefix = relative(dir, repoRoot).split('\\').join('/')
+  writeJson(join(home, 'heddle.json'), {
+    default: 'scripted',
+    endpoints: [{ name: 'scripted', kind: 'scripted', baseUrl: options.script, model: 'scripted' }],
   })
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise))
-  const { port } = server.address()
-  return {
-    url: `http://127.0.0.1:${port}`,
-    requests,
-    close: () => new Promise((resolvePromise) => server.close(resolvePromise)),
-  }
-}
-
-function writeFixture(workDir, providerUrl) {
-  writeFileSync(
-    join(workDir, 'heddle.yml'),
-    `- tools:
-    config:
-      allow:
-        - write_file
-        - read_file
-- model:
-    config:
-      provider: openai-compatible
-      baseUrl: ${providerUrl}
-      model: double
+  for (const file of options.plugins ?? []) writeFileSync(join(dir, file.name), file.source)
+  const pluginRows = (options.plugins ?? [])
+    .map(
+      (plugin, index) => `    - id: plugin-${index + 1}
+      name: ./${plugin.name}
+      inject: [tools, sandbox]
 `,
+    )
+    .join('')
+  writeFileSync(join(dir, 'cordis.yml'), '[]\n')
+  writeFileSync(
+    join(dir, 'heddle.patch.yml'),
+    `- insert:
+    - id: console
+      name: ${prefix}/src/plugins/console-exporter.ts
+    - id: session
+      name: ${prefix}/src/plugins/session.ts
+      config:
+        root: ${join(home, 'sessions')}
+    - id: model
+      name: ${prefix}/src/plugins/model.ts
+    - id: context
+      name: ${prefix}/src/context/service.ts
+      inject: [model, session]
+      config:
+        contextWindow: 200000
+    - id: sandbox
+      name: ${prefix}/src/sandbox/service.ts
+      config:
+        mode: workspace-write
+        workspaceRoot: ${home}
+    - id: approvals
+      name: ${prefix}/src/approvals/service.ts
+      config:
+        mode: ${options.mode ?? 'allow'}
+    - id: tools
+      name: ${prefix}/src/plugins/tools.ts
+      inject: [approvals, sandbox]
+      config:
+        allow: ${JSON.stringify(options.allow ?? ['write_file', 'read_file', 'list_dir'])}
+${pluginRows}`,
   )
-  return workDir
+  return dir
 }
 
-test('the tool registry is discoverable, with descriptions', async (context) => {
-  const help = await runCli(['tools', '--list'])
-  const listable = help.code === 0 && /write_file|read_file|tool/i.test(help.stdout)
-  if (!skipUnless(context, listable, CAPABILITY)) return
-  assert.match(help.stdout, /write_file/, 'the write tool is registered under a discoverable name')
-  assert.match(help.stdout, /read_file/, 'the read tool is registered under a discoverable name')
-})
+function harness(label, options = {}) {
+  const home = fixtureDir(`tools-home-${label}`)
+  const { script } = scriptedConfig({ home, steps: options.steps ?? [{ text: 'done' }] })
+  const profileDir = toolProfile(home, { ...options, script })
+  return { home, profileDir, env: { HEDDLE_HOME: home, HEDDLE_CONFIG: join(home, 'heddle.json') } }
+}
 
-test('a command is registered rather than imported', async (context) => {
-  const commands = await runCli(['commands', '--list'])
-  if (!skipUnless(context, commands.code === 0, CAPABILITY)) return
-  assert.match(commands.stdout, /^\s*\S+\s+—/m, `each command carries a description\n${commands.stdout}`)
-})
+async function supportsTools() {
+  const help = await runCli(['--help'])
+  return /tools/.test(help.stdout)
+}
 
-test('a tool call produces its side effect on disk', async (context) => {
-  const provider = await startToolProvider()
-  const workDir = mkdtempSync(join(tmpdir(), 'heddle-tools-'))
+test('the tools the configuration allows are the tools that exist', async (context) => {
+  if (!skipUnless(context, await supportsTools(), CAPABILITY)) return
+  const h = harness('allow', { allow: ['read_file'] })
   try {
-    writeFixture(workDir, provider.url)
-    const result = await runCli(['--config', join(workDir, 'heddle.yml'), '--turn', 'write the proof file'], {
-      cwd: workDir,
-      env: { [PROVIDER_ENV]: provider.url },
-    })
-    const called = provider.requests.length > 0
-    if (!skipUnless(context, called, CAPABILITY)) return
-
-    assert.equal(result.code, 0, `the run completed\n${result.stdout}${result.stderr}`)
-    const proof = join(workDir, 'proof.txt')
-    assert.ok(existsSync(proof), `the tool wrote the file the model asked for\n${result.stdout}`)
-    assert.match(readFileSync(proof, 'utf8'), /written by a tool/, 'the tool wrote what the call carried')
+    const run = await runCli(['--profile', h.profileDir, 'tools', '--json'], { env: h.env })
+    assert.equal(run.code, 0, `the command ran\n${run.stdout}${run.stderr}`)
+    const tools = parseJson(run.stdout)
+    assert.ok(Array.isArray(tools), `it printed a list\n${run.stdout}`)
+    assert.deepEqual(
+      tools.map((tool) => tool.name),
+      ['read_file'],
+      'only the tool the configuration allowed is registered',
+    )
+    assert.ok((tools[0].description ?? '').length > 10, 'and it carries a description a model can read')
   } finally {
-    removeDir(workDir)
-    await provider.close()
+    removeDir(h.home)
   }
 })
 
-test('an unknown tool name is refused, not silently ignored', async (context) => {
-  const provider = await startToolProvider()
-  const workDir = mkdtempSync(join(tmpdir(), 'heddle-tools-unknown-'))
+test('a configuration naming a tool that does not exist fails where it is written', async (context) => {
+  if (!skipUnless(context, await supportsTools(), CAPABILITY)) return
+  const h = harness('unknown', { allow: ['read_file', 'definitely_not_a_tool'] })
   try {
-    writeFixture(workDir, provider.url)
-    const result = await runCli(['--config', join(workDir, 'heddle.yml'), '--turn', 'call a tool that does not exist'], {
-      cwd: workDir,
-      env: { [PROVIDER_ENV]: provider.url },
-    })
-    if (!skipUnless(context, provider.requests.length > 0, CAPABILITY)) return
-    assert.equal(result.timedOut, false, 'an unknown tool name does not hang the run')
-    assert.ok(result.stdout.length > 0 || result.stderr.length > 0, 'the outcome was reported')
+    const run = await runCli(['--profile', h.profileDir, '--turn', 'say something'], { env: h.env })
+    assert.notEqual(run.code, 0, 'the run fails rather than starting without it')
+    assert.match(run.stderr + run.stdout, /definitely_not_a_tool/, 'and the failure names the tool')
   } finally {
-    removeDir(workDir)
-    await provider.close()
+    removeDir(h.home)
+  }
+})
+
+test('a tool written outside this repository can be plugged in and used', async (context) => {
+  if (!skipUnless(context, await supportsTools(), CAPABILITY)) return
+  /**
+   * The fixture plugin lives beside the profile, registers a tool through the same service the
+   * built-ins use, and writes a file when called. The script asks for it by name, so the check
+   * proves three things at once: it loaded, the model was told about it, and calling it ran the
+   * code from outside the repository.
+   */
+  const h = harness('plugin', {
+    allow: ['write_file', 'read_file', 'list_dir', 'shout'],
+    steps: [{ toolCall: { name: 'shout', arguments: { text: 'from the plugin' } } }, { text: 'done' }],
+    plugins: [
+      {
+        name: 'shout-tool.ts',
+        source: `export const name = 'shout-tool'
+export const inject = ['tools', 'sandbox']
+
+export default function shout(ctx) {
+  ctx.tools.register({
+    spec: {
+      name: 'shout',
+      description: 'Write a shout file containing the text, uppercased.',
+      parameters: {
+        type: 'object',
+        properties: { text: { type: 'string' } },
+        required: ['text'],
+        additionalProperties: false,
+      },
+    },
+    run: async (args) => {
+      const { writeFileSync } = await import('node:fs')
+      const { join } = await import('node:path')
+      const target = join(ctx.sandbox.workspaceRoot, 'shout.txt')
+      ctx.sandbox.assertWritable(target)
+      writeFileSync(target, String(args.text ?? '').toUpperCase())
+      return { output: 'wrote shout.txt' }
+    },
+  })
+}
+`,
+      },
+    ],
+  })
+  try {
+    const listing = await runCli(['--profile', h.profileDir, 'tools', '--json'], { env: h.env })
+    const tools = parseJson(listing.stdout)
+    assert.ok(
+      Array.isArray(tools) && tools.some((tool) => tool.name === 'shout'),
+      `the plugin's tool is registered\n${listing.stdout}`,
+    )
+
+    const run = await runCli(['--profile', h.profileDir, '--turn', 'shout something'], { env: h.env })
+    assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
+    const session = sessionsUnder(join(h.home, 'sessions'))[0]
+    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const toolResults = events
+      .filter((event) => event.type === 'message' && event.message?.role === 'tool')
+      .map((event) => (event.message.content ?? []).map((part) => part.text ?? '').join(''))
+    assert.match(toolResults.join('\n'), /wrote shout\.txt/, 'the out-of-repository tool ran')
+  } finally {
+    removeDir(h.home)
+  }
+})
+
+test('a tool is only reachable through the registry, so an unknown name is refused', async (context) => {
+  if (!skipUnless(context, await supportsTools(), CAPABILITY)) return
+  const h = harness('unknown-call', {
+    allow: ['read_file'],
+    steps: [{ toolCall: { name: 'write_file', arguments: { path: 'x.txt', content: 'no' } } }, { text: 'understood' }],
+  })
+  try {
+    const run = await runCli(['--profile', h.profileDir, '--turn', 'write something'], { env: h.env })
+    const session = sessionsUnder(join(h.home, 'sessions'))[0]
+    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const toolResults = events
+      .filter((event) => event.type === 'message' && event.message?.role === 'tool')
+      .map((event) => (event.message.content ?? []).map((part) => part.text ?? '').join(''))
+    assert.match(toolResults.join('\n'), /UNKNOWN_TOOL|no tool named/, `an unregistered tool is refused by name\n${run.stdout}`)
+  } finally {
+    removeDir(h.home)
   }
 })

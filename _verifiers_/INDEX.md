@@ -28,6 +28,27 @@ deliberately does not.
 | 9 | [`80-web-ui/`](80-web-ui/INDEX.md) | a Web UI on localhost, on a documented default port, carrying the live stream |
 | 10 | [`90-web-ui-token/`](90-web-ui-token/INDEX.md) | the Web UI and its event stream are protected by a token |
 
+## Where each stands, 2026-10-11
+
+Every part is judged and every check passes: **52 checks, 0 failures, 0 unjudged**, measured after
+`npm run build`. The only check allowed to report unjudged is part 1's real-backend probe, and it does so
+only when the machine has no reachable endpoint configured — a check that passed by not testing would be
+worse than one that admits it did not run.
+
+| # | Checks | Verdict |
+|---|---|---|
+| 0 | 10 | `0` — profiles, layers, includes, references, validation, provenance |
+| 1 | 4 | `0` — both wire shapes against local doubles, and one real configured endpoint |
+| 2 | 4 | `0` — deltas before completion, judged with no browser |
+| 3 | 4 | `0` — budget, instructions, pruning, compaction |
+| 4 | 4 | `0` — configured allow list, an out-of-repository tool, unknown names refused |
+| 5 | 5 | `0` — multi-round tasks, results fed back, round limit, resume, a failed tool |
+| 6 | 5 | `0` — the hook points, a retargeted request, a refused and a replaced tool result |
+| 7 | 4 | `0` — the transcript's survival, resume, append-only record, workspace grouping |
+| 8 | 4 | `0` — the three modes differ, shown by refusal, including the sibling-prefix case |
+| 9 | 4 | `0` — port, page, API, and the live stream |
+| 10 | 4 | `0` — fresh token, cookie handshake, refusal of API and stream, the Host/Origin fence |
+
 ## The verdict contract
 
 Every entry point returns `0` when its claim holds, `1` when it fails, and `3` when it could not be

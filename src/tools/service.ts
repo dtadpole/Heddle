@@ -85,6 +85,16 @@ export class ToolRegistry extends Service {
     return [...this.tools.keys()]
   }
 
+  /**
+   * Configured names that nothing registered.
+   *
+   * On the base registry so the question can be asked of any implementation; the plugin that reads
+   * an allow list knows what the configuration wanted, and this is where it reports it.
+   */
+  missing(): readonly string[] {
+    return []
+  }
+
   /** Every tool's description, which is what `--list` prints. */
   describe(): readonly ToolSpec[] {
     return [...this.tools.values()].map((tool) => tool.spec)
