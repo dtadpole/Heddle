@@ -205,7 +205,7 @@ export default function refuse(ctx) {
     assert.ok(run.stdout.length > 0 || run.stderr.length > 0, 'the run said what it did')
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
     assert.ok(session, `a session exists under ${join(h.home, 'sessions')}\n${run.stdout}`)
-    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const events = readTranscript(join(h.home, 'sessions', session))
     const toolResults = events
       .filter((event) => event.type === 'message' && event.message?.role === 'tool')
       .map((event) => (event.message.content ?? []).map((part) => part.text ?? '').join(''))
@@ -259,7 +259,7 @@ export default function post(ctx) {
     assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
     assert.ok(session, `a session exists under ${join(h.home, 'sessions')}\n${run.stdout}`)
-    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const events = readTranscript(join(h.home, 'sessions', session))
     const toolResults = events
       .filter((event) => event.type === 'message' && event.message?.role === 'tool')
       .map((event) => (event.message.content ?? []).map((part) => part.text ?? '').join(''))

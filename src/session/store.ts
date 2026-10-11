@@ -1,28 +1,41 @@
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { zstdCompressSync } from 'node:zlib'
 
 import type { Chunk, ContentPart, Message } from '../llm/types.ts'
+import { decodeTranscript, encodeFrame } from './transcript.ts'
 
 /**
  * The session store.
  *
  * Modelled on `@deepseek-ai/dsh-session`: a session is an **event log**, not a
- * mutable conversation object. Each event is a line in one JSONL file, and the
- * file is opened for append, so a turn that is interrupted leaves a start with no
- * end — which is exactly what an interruption looks like and what a
+ * mutable conversation object. Each event is appended, so a turn that is interrupted leaves a start
+ * with no end — which is exactly what an interruption looks like and what a
  * rewrite-the-whole-file store cannot show.
  *
- * The shape differs from DSH's in one way, and for a measured reason. DSH keeps
- * its store under the workspace and writes through its own persistence plugins
- * because it must survive a machine and a UI layer; this one writes one directory
- * per session under `$HEDDLE_HOME/sessions`, which is what a single-process
- * harness needs and what makes the store something a person can read with `cat`.
+ * **The record is a sequence of zstd frames, one per event** (`session.v2.jsonl.zstd`), which is
+ * DSH's shape and was the owner's decision. It was taken with the cost measured rather than
+ * assumed: one frame per event compresses worse than one frame per file (2.13x against 3.49x on a
+ * real session here), because frames share no match window. What it buys is appendability — the
+ * bytes before an append are untouched, and a crash that tears the last frame costs that frame
+ * rather than the file — and what it costs is the property this store used to advertise: a
+ * transcript is no longer readable with `cat`. `heddle transcript <id>` prints the same events, and
+ * `zstd -dc` reads the file; a session born before this format keeps its plain `session.jsonl` and
+ * keeps being appended to in plain text, because this store never rewrites a record to change how
+ * it is stored.
  *
- * A session id is the directory's name; the transcript is `session.jsonl`; a
- * small `meta.json` records what the session is for, so a listing does not need
- * to parse every transcript.
+ * **A process that has opened a session reads it from memory.** The file is read and decoded once,
+ * and every later `read`, `count`, measure or derivation is served from that fold. It exists because
+ * of a measurement: one turn re-read and re-parsed the whole transcript **21 times** (five `read`
+ * calls and sixteen `count` calls, and `count` read the file too), so a turn's cost grew with the
+ * square of the session's length — and compressed storage is only affordable once decompression
+ * happens once per process rather than once per read.
+ *
+ * A session id is the directory's name; `meta.json` records what the session is for, so a listing
+ * does not need to parse any transcript; and the transcript is found by name, preferring the
+ * versioned one so a reader knows the format before it decodes.
  */
 
 /** Identifies one session; the directory name under the store root. */
@@ -67,6 +80,31 @@ export interface SessionMeta {
 export function defaultSessionRoot(env: NodeJS.ProcessEnv = process.env): string {
   const home = env.HEDDLE_HOME ?? join(homedir(), '.heddle')
   return join(home, 'sessions')
+}
+
+/**
+ * The transcript a new session writes, and the one older sessions already have.
+ *
+ * The name carries the format version because a reader has to know what it is looking at before it
+ * can decode, exactly as DSH's `session.v4.jsonl.zstd` does. A v1 transcript — plain JSONL — is
+ * still read, still appended to, and never rewritten to change how it is stored: a session keeps the
+ * format it was born with.
+ */
+export const TRANSCRIPT_NAME = 'session.v2.jsonl.zstd'
+export const LEGACY_TRANSCRIPT_NAME = 'session.jsonl'
+
+/** Whether this build can compress. Node gained zstd in 22.15; older runtimes write plain JSONL. */
+export function canCompress(): boolean {
+  return typeof zstdCompressSync === 'function'
+}
+
+/** The transcript a session directory holds, preferring the current format. */
+export function transcriptIn(dir: string): string {
+  for (const name of [TRANSCRIPT_NAME, LEGACY_TRANSCRIPT_NAME]) {
+    const path = join(dir, name)
+    if (existsSync(path)) return path
+  }
+  return join(dir, canCompress() ? TRANSCRIPT_NAME : LEGACY_TRANSCRIPT_NAME)
 }
 
 /**
@@ -237,11 +275,27 @@ export class SessionStore {
   readonly root: string
   private readonly onEvent: ((handle: SessionHandle, event: SessionEvent) => void) | undefined
   /**
+   * Parsed events per session, and whether that session's transcript is compressed.
+   *
+   * This is the **fold**: the file stays the durable record, and a process that has opened a session
+   * keeps its events in memory, advancing them on append. It exists because of a measurement — a
+   * single turn re-read and re-parsed the whole transcript **21 times** (five `read` calls and
+   * sixteen `count` calls, and `count` read the file too), so the cost of a turn grew with the
+   * square of the session's length. Loading once per process makes that linear, and it is also what
+   * makes compressed storage affordable: decompression happens once per session per process rather
+   * than once per read.
+   *
+   * The trade is stated rather than hidden: a second process appending to the same session while
+   * this one holds it open would not be seen. heddle runs one process per session, and the file is
+   * still the truth for anyone who opens it fresh.
+   */
+  private readonly loaded = new Map<string, { readonly events: SessionEvent[]; readonly framed: boolean }>()
+
+  /**
    * Folded surfaces, keyed by session and the log length they were folded at.
    *
    * A log only ever grows, so its event count is a sound cache key — and a turn asks for the
    * surface once per round, which is exactly where re-folding a long log on every call would show.
-   * Reading is still the truth: a cache miss falls back to folding the file.
    */
   private readonly surfaceCache = new Map<string, { readonly count: number; readonly state: SurfaceState }>()
 
@@ -260,7 +314,7 @@ export class SessionStore {
     const id = `session-${randomUUID()}`
     const dir = join(this.root, id)
     mkdirSync(dir, { recursive: true })
-    const handle: SessionHandle = { id, dir, transcript: join(dir, 'session.jsonl') }
+    const handle: SessionHandle = { id, dir, transcript: transcriptIn(dir) }
     writeFileSync(
       join(dir, 'meta.json'),
       `${JSON.stringify(
@@ -291,7 +345,7 @@ export class SessionStore {
       } catch {
         return null
       }
-      return { id, dir, transcript: join(dir, 'session.jsonl') }
+      return { id, dir, transcript: transcriptIn(dir) }
     }
     const newest = this.list()[0]
     return newest === undefined ? null : this.open(newest.id)
@@ -346,11 +400,55 @@ export class SessionStore {
       ...(options.surfaceOp !== undefined ? { surfaceOp: options.surfaceOp } : {}),
       ...(options.sourceEventSeqs !== undefined ? { sourceEventSeqs: options.sourceEventSeqs } : {}),
     }
-    appendFileSync(handle.transcript, `${JSON.stringify(record)}\n`)
+    /**
+     * One event, one zstd frame, appended.
+     *
+     * The frame is the unit of appendability: a compressed file cannot be added to in the middle,
+     * and a frame is the smallest thing that can be added at the end. Measured: the prefix's bytes
+     * are identical before and after an append, so an earlier event is never rewritten — and a
+     * crash that tears the last frame costs that frame alone, because the reader walks frames and
+     * stops at the first incomplete one.
+     */
+    const line = `${JSON.stringify(record)}\n`
+    appendFileSync(handle.transcript, this.load(handle).framed ? encodeFrame(line) : Buffer.from(line, 'utf8'))
+    this.load(handle).events.push(record)
     // After the write, never before: a listener that saw an event the file does not
     // have would be a second truth, which is the failure this ordering prevents.
     this.onEvent?.(handle, record)
     return record
+  }
+
+  /**
+   * The session's events, read once and kept in memory.
+   *
+   * A transcript is compressed per frame, and a process that holds a session should pay for that
+   * once: every `read`, `count`, measure and derivation after the first load is served from here.
+   * The format is decided by what the file says and what it is called, so a session born before
+   * frames existed keeps being appended to as plain JSONL rather than being rewritten.
+   */
+  private load(handle: SessionHandle): { events: SessionEvent[]; framed: boolean } {
+    const cached = this.loaded.get(handle.id)
+    if (cached !== undefined) return cached as { events: SessionEvent[]; framed: boolean }
+
+    let bytes = Buffer.alloc(0)
+    try {
+      bytes = readFileSync(handle.transcript)
+    } catch {
+      // a session whose file has not been written yet is an empty session, not an error
+    }
+    const decoded = decodeTranscript(bytes)
+    const events: SessionEvent[] = []
+    for (const [index, line] of decoded.lines.entries()) {
+      try {
+        events.push(JSON.parse(line) as SessionEvent)
+      } catch (error) {
+        throw new Error(`${handle.transcript}:${index + 1} is not valid JSON — ${(error as Error).message}`)
+      }
+    }
+    const framed = decoded.format === 'zstd-frames' || (decoded.lines.length === 0 && handle.transcript.endsWith(TRANSCRIPT_NAME))
+    const entry = { events, framed }
+    this.loaded.set(handle.id, entry)
+    return entry
   }
 
   /**
@@ -423,26 +521,31 @@ export class SessionStore {
 
   /** How many events a session holds, which is also the next event's `seq`. */
   count(handle: SessionHandle): number {
-    try {
-      return readFileSync(handle.transcript, 'utf8').split('\n').filter((line) => line.length > 0).length
-    } catch {
-      return 0
-    }
+    return this.load(handle).events.length
   }
 
-  /** Every event, parsed. A line that cannot be parsed is reported, not skipped. */
+  /**
+   * Every event, parsed, in order.
+   *
+   * Served from the fold — the array is the store's own and a caller must not mutate it — and a line
+   * that cannot be parsed fails the load naming its position rather than being skipped.
+   */
   read(handle: SessionHandle): readonly SessionEvent[] {
-    const text = readFileSync(handle.transcript, 'utf8')
-    const events: SessionEvent[] = []
-    for (const [index, line] of text.split('\n').entries()) {
-      if (line.length === 0) continue
-      try {
-        events.push(JSON.parse(line) as SessionEvent)
-      } catch (error) {
-        throw new Error(`${handle.transcript}:${index + 1} is not valid JSON — ${(error as Error).message}`)
-      }
+    return this.load(handle).events
+  }
+
+  /** Whether this session's transcript is stored as frames, for a caller that wants to say so. */
+  framed(handle: SessionHandle): boolean {
+    return this.load(handle).framed
+  }
+
+  /** A session's bytes on disk, for a caller that wants to report the size or hash a prefix. */
+  bytes(handle: SessionHandle): Buffer {
+    try {
+      return readFileSync(handle.transcript)
+    } catch {
+      return Buffer.alloc(0)
     }
-    return events
   }
 
   /** The surface, folded from the log and cached until the log grows. */

@@ -136,7 +136,7 @@ function sessionOf(home) {
 
 /** Every event of that session, as recorded — the human's view. */
 function eventsOf(home, session) {
-  return readTranscript(join(home, 'sessions', session, 'session.jsonl'))
+  return readTranscript(join(home, 'sessions', session))
 }
 
 /**

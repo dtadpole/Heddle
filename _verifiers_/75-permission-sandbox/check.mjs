@@ -103,7 +103,7 @@ async function supportsSandbox() {
 
 function resultsOf(home) {
   const session = sessionsUnder(join(home, 'sessions'))[0]
-  const events = readTranscript(join(home, 'sessions', session, 'session.jsonl'))
+  const events = readTranscript(join(home, 'sessions', session))
   return events
     .filter((event) => event.type === 'message' && event.message?.role === 'tool')
     .map((event) => (event.message.content ?? []).map((part) => part.text ?? '').join(''))

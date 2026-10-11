@@ -179,7 +179,7 @@ export default function shout(ctx) {
     const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, '--turn', 'shout something'], { env: h.env })
     assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
-    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const events = readTranscript(join(h.home, 'sessions', session))
     const toolResults = events
       .filter((event) => event.type === 'message' && event.message?.role === 'tool')
       .map((event) => (event.message.content ?? []).map((part) => part.text ?? '').join(''))
@@ -198,7 +198,7 @@ test('a tool is only reachable through the registry, so an unknown name is refus
   try {
     const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, '--turn', 'write something'], { env: h.env })
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
-    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const events = readTranscript(join(h.home, 'sessions', session))
     const toolResults = events
       .filter((event) => event.type === 'message' && event.message?.role === 'tool')
       .map((event) => (event.message.content ?? []).map((part) => part.text ?? '').join(''))

@@ -28,6 +28,23 @@ Everything built on top of it — the meter, the pruner, the compaction, `heddle
 `deriveMessages()` rather than filtering the log, and [`../context/INDEX.md`](../context/INDEX.md) is
 where that happens.
 
+Two things about how it is stored are worth knowing before reading the code.
+
+**One zstd frame per event** ([`transcript.ts`](transcript.ts)). Appending to a compressed file is
+only possible at a frame boundary, so an event *is* a frame: the bytes before an append are never
+touched, and a crash that tears the last frame loses that frame alone. Node decodes one frame and
+stops, so the reader walks the frames itself; that walk is the module's whole reason for existing.
+Plain `session.jsonl` transcripts are still read and still appended to in plain text — a session
+keeps the format it was born with.
+
+**The file is read once per process** (`SessionStore.load`). Events are kept in memory and advanced
+on append, because a single turn used to re-read and re-parse the whole transcript twenty-one times:
+five `read` calls and sixteen `count` calls, and `count` read the file too. That made a turn's cost
+grow with the square of the session's length, and it is also what made decompression affordable —
+it now happens once per session per process. The trade is stated in the code rather than hidden: a
+second process appending to the same session while this one holds it open would not be seen, and
+heddle runs one process per session.
+
 This is a source folder rather than a type folder: it carries code, not instances of a
 registered content type. Its entry point exists so that a reader who opens it learns
 what belongs here and what to read next, which is the same duty every `INDEX.md` in

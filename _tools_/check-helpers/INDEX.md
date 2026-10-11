@@ -22,6 +22,11 @@ three rules are stated once instead of ten times.
   reproducible.
 - **A check that cannot judge says so.** `skipUnless` turns a missing mechanism into a
   labelled skip, which the runner counts as unjudged rather than as a pass.
+- **A check asks for a session, not for a file format.** `transcriptFile(dir)` finds the transcript
+  a session actually has — `session.v2.jsonl.zstd` (one zstd frame per event) or the plain
+  `session.jsonl` written before it — and `readTranscript` accepts either a directory or a path and
+  decodes both. Measured while this changed: fifteen checks named `session.jsonl` directly, and
+  every one of them would have been judging a file that no longer exists.
 
 ## What belongs in it
 

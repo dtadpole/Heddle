@@ -51,7 +51,7 @@ test('a multi-step task completes its rounds and records each one', async (conte
     assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
     assert.ok(session, 'a session was recorded')
-    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const events = readTranscript(join(h.home, 'sessions', session))
 
     const requests = events.filter((event) => event.type === 'model/request')
     assert.ok(requests.length >= 3, `the loop asked the model once per round (${requests.length})`)
@@ -86,7 +86,7 @@ test('the model sees each tool result before the next round', async (context) =>
      * called again, so the check reads the second round's message count instead.
      */
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
-    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const events = readTranscript(join(h.home, 'sessions', session))
     const requests = events.filter((event) => event.type === 'model/request')
     assert.ok(requests.length >= 3, 'there were at least three rounds')
     const last = requests[requests.length - 1]
@@ -117,7 +117,7 @@ test('a model that never stops asking for tools is stopped by the round limit', 
     const run = await runCli([...h.args, '--max-rounds', '3', '--turn', 'keep going'], { env: h.env, timeoutMs: 60_000 })
     assert.equal(run.code, 0, `the turn ended rather than running forever\n${run.stdout}${run.stderr}`)
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
-    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const events = readTranscript(join(h.home, 'sessions', session))
     const requests = events.filter((event) => event.type === 'model/request')
     assert.ok(requests.length <= 3, `the round limit was respected (${requests.length} rounds)`)
   } finally {
@@ -133,11 +133,11 @@ test('a turn is resumable and the transcript grows rather than being replaced', 
     const first = await runCli([...h.args, '--turn', 'first question'], { env: h.env })
     assert.equal(first.code, 0, `the first turn ran\n${first.stdout}${first.stderr}`)
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
-    const before = readTranscript(join(h.home, 'sessions', session, 'session.jsonl')).length
+    const before = readTranscript(join(h.home, 'sessions', session)).length
 
     const second = await runCli([...h.args, '--resume', session, '--turn', 'second question'], { env: h.env })
     assert.equal(second.code, 0, `the resumed turn ran\n${second.stdout}${second.stderr}`)
-    const after = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const after = readTranscript(join(h.home, 'sessions', session))
     assert.ok(after.length > before, 'the record grew')
     const userTurns = after
       .filter((event) => event.type === 'message' && event.message?.role === 'user')
@@ -165,7 +165,7 @@ test('a tool that fails is reported to the model rather than ending the turn', a
     assert.equal(run.timedOut, false, `the turn finished\n${run.stdout}${run.stderr}`)
     assert.match(run.stdout + run.stderr, /it was missing|error/, 'the turn continued past the failure')
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
-    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const events = readTranscript(join(h.home, 'sessions', session))
     const toolResults = events
       .filter((event) => event.type === 'message' && event.message?.role === 'tool')
       .map((event) => (event.message.content ?? []).map((part) => part.text ?? '').join(''))
@@ -196,7 +196,7 @@ test('the round limit is reported rather than passed off as an answer', async (c
     const run = await runCli([...h.args, '--max-rounds', '2', '--turn', 'keep going'], { env: h.env, timeoutMs: 60_000 })
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
     assert.ok(session, 'a session was recorded')
-    const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
+    const events = readTranscript(join(h.home, 'sessions', session))
     const requests = events.filter((event) => event.type === 'model/request')
     assert.ok(requests.length <= 2, `the limit was respected (${requests.length} rounds)`)
 

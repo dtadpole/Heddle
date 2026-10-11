@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
+import { decodeTranscript } from '../../src/session/transcript.ts'
+
 /**
  * Helpers shared by the verifiers in `_verifiers_/`.
  *
@@ -356,12 +358,36 @@ export function sessionsUnder(root) {
   }
 }
 
-/** Read a transcript into parsed events. */
-export function readTranscript(path) {
-  return readFileSync(path, 'utf8')
-    .split('\n')
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line))
+/**
+ * The transcript a session directory holds.
+ *
+ * Two names exist because the storage format changed: `session.v2.jsonl.zstd` holds one zstd frame
+ * per event and `session.jsonl` is the plain JSONL written before that, still read and still
+ * appended to. A check asks the directory and gets whichever the session actually has, rather than
+ * naming a format it does not own.
+ */
+export function transcriptFile(dir) {
+  for (const name of ['session.v2.jsonl.zstd', 'session.jsonl']) {
+    const candidate = join(dir, name)
+    if (existsSync(candidate)) return candidate
+  }
+  return join(dir, 'session.v2.jsonl.zstd')
+}
+
+/**
+ * Read a transcript into parsed events, whichever format it is in.
+ *
+ * A session directory is accepted as readily as a file path, because that is what a check has: it
+ * knows which session it is judging, not how that session's events happen to be stored today.
+ *
+ * The decoder is the harness's own module, imported from `src/` rather than `dist/` for one reason:
+ * it must be **sync** (twenty call sites read a transcript in the middle of an assertion) and it
+ * must work when a check is judged without a build. The format itself is judged against the built
+ * CLI elsewhere — `heddle transcript` prints these same events — so no claim rests on this import.
+ */
+export function readTranscript(target) {
+  const path = target.endsWith('.jsonl') || target.endsWith('.zstd') ? target : transcriptFile(target)
+  return decodeTranscript(readFileSync(path)).lines.map((line) => JSON.parse(line))
 }
 
 /**
