@@ -22,6 +22,20 @@ scope as **`@dtadpole/heddle`** while the command stays `heddle`.
 service, one consumer of it, a console exporter, and tests that pin the framework's behaviour. Tools,
 sessions, models, sandboxing and the config-driven plugin tree are all still to come.
 
+## The Web UI
+
+```bash
+heddle web                 # serves http://127.0.0.1:3082/ and prints the URL, token included
+heddle web --port 0        # an ephemeral port, for a check or a second instance
+```
+
+The default port is **3082** — 3080 is DSH's, and the two run side by side on this machine.
+The server binds loopback and refuses any other host, because a harness that runs tools is
+remote code execution behind a token. The printed URL carries a per-process token; opening it
+exchanges that token for a cookie, and the page then streams the session live, reasoning and
+content as they arrive. See [`_verifiers_/80-web-ui/`](_verifiers_/80-web-ui/INDEX.md) and
+[`_verifiers_/90-web-ui-token/`](_verifiers_/90-web-ui-token/INDEX.md) for what is checked.
+
 ## Quick start
 
 ```bash

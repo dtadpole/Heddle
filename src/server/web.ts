@@ -44,11 +44,13 @@ import {
 /**
  * The default port.
  *
- * 3081 rather than the 3080 DSH uses, so the two harnesses can run side by side on one
- * machine — which happens on this machine every day, since DSH's own Web UI is how this
- * work is driven. The owner chose the number.
+ * **3082**, because on this machine 3080 is `dsh web` and 3081 is a Python relay that also
+ * serves a DeepSeek Harness page. Measured, not assumed: 3081 was the number asked for, and
+ * `lsof` showed it already held, which would have made `heddle web` fail to bind on the very
+ * machine it is developed on. 3082 is the next free port in the same range and keeps the three
+ * services one number apart, which is easier to remember than an arbitrary free one.
  */
-export const DEFAULT_PORT = 3081
+export const DEFAULT_PORT = 3082
 /** The default host. Anything else is refused. */
 export const DEFAULT_HOST = '127.0.0.1'
 
@@ -61,6 +63,15 @@ export interface WebServerOptions {
   readonly token?: string
   /** Whether to print the URL line. Off in checks, on for a person. */
   readonly quiet?: boolean
+  /**
+   * The endpoint a turn uses when the request does not name one.
+   *
+   * Without this the API fell back to the first configured endpoint, so `heddle web --endpoint
+   * double` started a server that answered from `scripted` — measured, and it made a check fail
+   * with "the script for 'scripted' could not be read" while the server's own output said
+   * `double` was configured.
+   */
+  readonly defaultEndpoint?: string
 }
 
 export interface WebServer {
@@ -95,6 +106,8 @@ export async function startWebServer(ctx: Context, options: WebServerOptions = {
 
   const clients = new Set<ServerResponse>()
   const subscribers = new Set<ServerResponse>()
+  // Tracked so shutdown can reach a connection whose handler is still awaiting a turn.
+  const sockets = new Set<import('node:net').Socket>()
 
   // Every append is pushed to whoever is listening, from the one write path.
   ctx.on('session/event', (payload) => {
@@ -105,6 +118,13 @@ export async function startWebServer(ctx: Context, options: WebServerOptions = {
   })
 
   const server: Server = createServer((request, response) => {
+    /**
+     * A request handler that throws must not take the server with it.
+     *
+     * `void` on a promise discards its rejection, so an error anywhere in a route became an
+     * unhandled rejection and killed the process — which then made the *next* check fail with
+     * "fetch failed", a message about the wrong thing entirely.
+     */
     void handle(ctx, request, response, {
       token,
       secret,
@@ -113,7 +133,22 @@ export async function startWebServer(ctx: Context, options: WebServerOptions = {
       clients,
       subscribers,
       ...(options.quiet !== undefined ? { quiet: options.quiet } : {}),
+      ...(options.defaultEndpoint !== undefined ? { defaultEndpoint: options.defaultEndpoint } : {}),
+    }).catch((error: unknown) => {
+      if (!response.writableEnded && !response.destroyed) {
+        try {
+          response.writeHead(500, { 'content-type': 'text/plain' })
+          response.end(`internal error: ${(error as Error).message}\n`)
+        } catch {
+          // the socket is already gone
+        }
+      }
     })
+  })
+
+  server.on('connection', (socket) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
   })
 
   await new Promise<void>((resolvePromise, reject) => {
@@ -130,10 +165,29 @@ export async function startWebServer(ctx: Context, options: WebServerOptions = {
     token,
     host,
     port: boundPort,
+    /**
+     * Stop the server, streams and all.
+     *
+     * `server.close()` only stops accepting and then waits for every open connection, and an
+     * event stream is open by design — so the close callback never fired while a client was
+     * subscribed. Measured: that is what made the Web UI verifier run for minutes and then
+     * leave `node --test` reporting "the event loop has already resolved" with a pending
+     * promise. Ending the subscribers first, then destroying whatever sockets remain, is the
+     * difference between closing and stopping.
+     */
     close: () =>
       new Promise<void>((resolvePromise) => {
-        for (const client of subscribers) client.end()
+        for (const client of subscribers) {
+          try {
+            client.end()
+          } catch {
+            // the client is already gone
+          }
+        }
+        subscribers.clear()
         server.close(() => resolvePromise())
+        server.closeAllConnections?.()
+        for (const socket of sockets) socket.destroy()
       }),
   }
 }
@@ -146,6 +200,7 @@ interface RequestState {
   readonly clients: Set<ServerResponse>
   readonly subscribers: Set<ServerResponse>
   readonly quiet?: boolean
+  readonly defaultEndpoint?: string
 }
 
 /** One request, routed and fenced. */
@@ -281,17 +336,37 @@ async function handleTurn(ctx: Context, request: IncomingMessage, response: Serv
     cwd: process.cwd(),
     title: body.prompt.slice(0, 60),
   })
-  const endpoint = body.endpoint ?? ctx.model.names()[0]
+  const endpoint = body.endpoint ?? state.defaultEndpoint ?? ctx.model.names()[0]
   if (endpoint === undefined) {
     respond(response, 400, 'text/plain', 'no endpoint is configured\n')
+    return
+  }
+  if (!ctx.model.names().includes(endpoint)) {
+    respond(response, 400, 'text/plain', `no endpoint named '${endpoint}'; configured: ${ctx.model.names().join(', ')}\n`)
     return
   }
 
   respondSse(response)
   state.clients.add(response)
+  /**
+   * Writing to a client that has gone away must not become an uncaught exception.
+   *
+   * Measured: when a check or a browser closed the stream mid-turn, the write raised
+   * `ERR_STREAM_WRITE_AFTER_END` inside a request the server does not await, and the process
+   * died — so the *next* request failed with "fetch failed" and the failure had nothing to do
+   * with what it named.
+   */
+  const safeWrite = (text: string) => {
+    if (response.writableEnded || response.destroyed) return
+    try {
+      response.write(text)
+    } catch {
+      // The client left; the session is recorded either way.
+    }
+  }
   const forward = (payload: { session: string; event: SessionEvent }) => {
     if (payload.session !== handle.id) return
-    response.write(`event: session\ndata: ${JSON.stringify(payload)}\n\n`)
+    safeWrite(`event: session\ndata: ${JSON.stringify(payload)}\n\n`)
   }
   // A listener registered through `ctx.on` here would need a fiber of its own, and the
   // request has none, so the turn's events are relayed by subscribing directly to the
@@ -299,15 +374,21 @@ async function handleTurn(ctx: Context, request: IncomingMessage, response: Serv
   const unsubscribe = subscribeSessionEvent(ctx, forward)
   try {
     const result = await runTurn(ctx, { session: handle, endpoint, prompt: body.prompt, ...(body.model !== undefined ? { model: body.model } : {}) })
-    response.write(
+    safeWrite(
       `event: done\ndata: ${JSON.stringify({ session: handle.id, text: result.text, finishReason: result.finishReason, rounds: result.rounds, denials: result.denials })}\n\n`,
     )
   } catch (error) {
-    response.write(`event: error\ndata: ${JSON.stringify({ message: (error as Error).message })}\n\n`)
+    /**
+     * The failure is logged as well as streamed. Measured: an error that only reached the
+     * client left the server's own output silent, so diagnosing it meant guessing from an empty
+     * stream instead of reading one line.
+     */
+    ctx.logger.warn('web: the turn failed — %s', (error as Error).message)
+    safeWrite(`event: error\ndata: ${JSON.stringify({ message: (error as Error).message })}\n\n`)
   } finally {
     unsubscribe()
     state.clients.delete(response)
-    response.end()
+    if (!response.writableEnded && !response.destroyed) response.end()
   }
 }
 

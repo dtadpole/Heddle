@@ -294,6 +294,9 @@ async function runWeb(args: Args): Promise<void> {
     const server = await startWebServer(app.ctx, {
       ...(args.port !== undefined ? { port: args.port } : { port: DEFAULT_PORT }),
       ...(args.host !== undefined ? { host: args.host } : {}),
+      // The endpoint the flag named becomes the server's default, so a turn posted without one
+      // is answered by the endpoint the operator chose rather than by whichever is first.
+      ...(args.endpoint !== undefined ? { defaultEndpoint: args.endpoint } : {}),
     })
     process.stdout.write(`heddle web: ${server.url}\n`)
     process.stdout.write(`heddle web: serving on ${server.host}:${server.port}; pass --port to change it\n`)
