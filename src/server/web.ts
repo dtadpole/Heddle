@@ -6,7 +6,10 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 
 import { runTurn } from '../agent/loop.ts'
+import { renderSource } from './code.ts'
 import { projectLedger, projectTimeline } from './ledger.ts'
+import { findDocs, readDoc } from './docs.ts'
+import { renderMarkdown } from './markdown.ts'
 import { expandHome } from '../config/schema.ts'
 import { canonicalPath } from '../paths.ts'
 import { readFileText, tree } from '../session/tree.ts'
@@ -332,6 +335,28 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
     return
   }
 
+  /**
+   * The documents a right-hand view can show: a listing, and one rendered document.
+   *
+   * A **default renderer** for markdown, which is what the owner asked for — a repository is largely `.md`, and
+   * reading one as a wall of source is the wrong default. The HTML is produced here rather than in the page,
+   * so the renderer and its escaping are judged by unit tests instead of by trusting the browser.
+   */
+  if (url.pathname === '/api/docs' && request.method === 'GET') {
+    const wanted = url.searchParams.get('path')
+    if (wanted === null) {
+      respond(response, 200, 'application/json', `${JSON.stringify({ root: process.cwd(), docs: findDocs(process.cwd()) }, null, 2)}\n`)
+      return
+    }
+    const doc = readDoc(process.cwd(), wanted)
+    if ('error' in doc) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: doc.error })}\n`)
+      return
+    }
+    respond(response, 200, 'application/json', `${JSON.stringify({ path: wanted, html: renderMarkdown(doc.text) })}\n`)
+    return
+  }
+
   if (url.pathname === '/api/sessions' && request.method === 'GET') {
     respond(response, 200, 'application/json', `${JSON.stringify(ctx.session.list(), null, 2)}\n`)
     return
@@ -393,7 +418,21 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
       return
     }
     try {
-      respond(response, 200, 'application/json', `${JSON.stringify(readFileText(wanted), null, 2)}\n`)
+      const reading = readFileText(wanted)
+      /**
+       * The reading and the **renderer's decision** travel together.
+       *
+       * The server renders because it is where the escaping lives: a file's text is somebody else's
+       * bytes, and a renderer that interpolated them into markup would be an injection with extra
+       * steps. The client is handed markup this project produced, or the plain text, and never
+       * builds either one itself.
+       */
+      respond(
+        response,
+        200,
+        'application/json',
+        `${JSON.stringify({ ...reading, ...renderSource(reading.path, reading.text) }, null, 2)}\n`,
+      )
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const status = message.includes('is not a file') ? 404 : 415
@@ -470,6 +509,67 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
     } catch (error) {
       respond(response, 409, 'application/json', `${JSON.stringify({ error: (error as Error).message })}\n`)
     }
+    return
+  }
+
+  /**
+   * Retitle a root — the `Rename` item in a row's menu.
+   *
+   * A `PATCH` on the same path the `DELETE` takes, because the record's identity is the path and only
+   * its label changes. An empty name is refused rather than saved: a nameless row in a tree is a row
+   * nobody can find again.
+   */
+  if (url.pathname.startsWith('/api/workspaces/') && request.method === 'PATCH') {
+    const workspaces = ctx.workspace
+    if (workspaces === undefined) {
+      respond(response, 503, 'application/json', `${JSON.stringify({ error: 'this profile does not load the workspace plugin' })}\n`)
+      return
+    }
+    const id = decodeURIComponent(url.pathname.slice('/api/workspaces/'.length))
+    const body = await readJson(request, response)
+    if (body === null) return
+    if (typeof body.title !== 'string') {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'a title is required' })}\n`)
+      return
+    }
+    try {
+      const record = workspaces.rename(id, body.title)
+      if (record === undefined) {
+        respond(response, 404, 'application/json', `${JSON.stringify({ error: `no workspace ${id}` })}\n`)
+        return
+      }
+      respond(response, 200, 'application/json', `${JSON.stringify(record, null, 2)}\n`)
+    } catch (error) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: (error as Error).message })}\n`)
+    }
+    return
+  }
+
+  /**
+   * Retitle a conversation — the `Rename` item in an instance row's menu.
+   *
+   * The session's own log is append-only and stays that way: this rewrites the meta record, which is
+   * what a listing and a tree row read. The title is a label rather than a fact about the run, and the
+   * empty string clears it.
+   */
+  if (url.pathname.startsWith('/api/sessions/') && url.pathname.endsWith('/title') && request.method === 'POST') {
+    const id = decodeURIComponent(url.pathname.slice('/api/sessions/'.length, -'/title'.length))
+    if (!/^session-[0-9a-f-]{36}$/i.test(id)) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'not a session id' })}\n`)
+      return
+    }
+    const body = await readJson(request, response)
+    if (body === null) return
+    if (typeof body.title !== 'string') {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'a title is required' })}\n`)
+      return
+    }
+    const meta = ctx.session.rename(id, body.title)
+    if (meta === null) {
+      respond(response, 404, 'application/json', `${JSON.stringify({ error: `no session ${id}` })}\n`)
+      return
+    }
+    respond(response, 200, 'application/json', `${JSON.stringify(meta, null, 2)}\n`)
     return
   }
 

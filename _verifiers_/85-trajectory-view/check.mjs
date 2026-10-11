@@ -184,8 +184,14 @@ test('a browser renders the ledger, its timeline, and switches back to the conve
     await browser.evaluate(`(async () => { await showSession(${JSON.stringify(id)}); return true })()`)
     assert.ok(await browser.waitFor('document.querySelectorAll("#log .turn").length > 0', 20_000), 'the session was selected and its history drawn')
 
+    /**
+     * The ring must **offer** both views. It is not asserted to hold exactly these two: `Docs` was added beside
+     * them, and a check that pinned the whole list would report every future view as a regression in this one.
+     * What this part judges is that the conversation and the ledger are both reachable.
+     */
     const tabs = JSON.parse(await browser.evaluate(`JSON.stringify([...document.querySelectorAll('#views button')].map((b) => b.textContent))`))
-    assert.deepEqual(tabs, ['Chat', 'Trajectory'], 'the view ring offers both views')
+    assert.ok(tabs.includes('Chat'), `the ring offers the conversation (${JSON.stringify(tabs)})`)
+    assert.ok(tabs.includes('Trajectory'), 'and the ledger')
 
     await browser.evaluate(`document.querySelector('#views button[data-view="trajectory"]').click()`)
     assert.ok(await browser.waitFor('document.querySelectorAll("#ledger details.record").length > 0', 20_000), 'the ledger drew records')

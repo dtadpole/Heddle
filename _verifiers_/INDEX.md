@@ -1,6 +1,6 @@
 ---
 title: Verifiers
-version: 2.5.0
+version: 2.6.0
 description: The ultimate verifications — one folder each, named after the capability the owner named, every one keeping the project's 0/1/3 verdict contract.
 grounded_in:
   - source: owner statement in the dsh session, 2026-10-11, listing the ten verifiers
@@ -29,7 +29,8 @@ deliberately does not.
 | 10 | [`90-web-ui-token/`](90-web-ui-token/INDEX.md) | the Web UI and its event stream are protected by a token |
 | 11 | [`85-trajectory-view/`](85-trajectory-view/INDEX.md) | one session read two ways: the conversation, and the ledger of what the harness did |
 | 12 | [`87-resizable-panels/`](87-resizable-panels/INDEX.md) | the sidebar's width is the reader's choice, by pointer or keyboard, and is remembered |
-| 13 | [`95-web-daemon/`](95-web-daemon/INDEX.md) | a launchd agent keeps the Web UI running at the documented port |
+| 13 | [`89-markdown-view/`](89-markdown-view/INDEX.md) | a markdown document renders as a document on the right, and cannot inject markup |
+| 14 | [`95-web-daemon/`](95-web-daemon/INDEX.md) | a launchd agent keeps the Web UI running at the documented port |
 
 ## Where each stands, 2026-10-11
 
@@ -60,7 +61,8 @@ a diff against the previous measurement.
 | 10 | 10 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode, a stale token's recovery page, session history over the API and in a browser |
 | 11 | 2 | `0` — the ledger's fields and rules over the API, and a browser drawing both views with a timeline |
 | 12 | 1 | `0` — a divider that is a control, a pointer drag, the limits, the arrow keys, and the width after a reload |
-| 13 | 3 | `0` — a complete definition, the port answering with the service's name, and a kill it recovers from |
+| 13 | 2 | `0` — the listing, the rendering and the refusals over the API, and a browser showing a document rather than its source |
+| 14 | 3 | `0` — a complete definition, the port answering with the service's name, and a kill it recovers from |
 
 ## The verdict contract
 
