@@ -222,11 +222,37 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
     return
   }
 
+  /**
+   * A liveness answer that carries no data.
+   *
+   * Before the handshake and before authentication, and empty of anything private: a supervisor, a
+   * monitor or a person needs to know that **this** service owns the port, and two facts answer that —
+   * the service's name and that nothing sensitive came back. It is what the daemon definition's liveness
+   * probe asks (see `_tools_/web-daemon/`), so the definition and the server agree on one endpoint rather
+   * than on parsing a banner.
+   *
+   * It is also the one route reachable without a token, which is why it says nothing: no sessions, no
+   * counts, no version.
+   */
+  if (url.pathname === '/healthz' && request.method === 'GET') {
+    respond(response, 200, 'application/json', `${JSON.stringify({ ok: true, service: 'heddle-web', port: state.port })}\n`)
+    return
+  }
+
   // The handshake: a valid launch token in the query becomes a cookie.
   if (url.pathname === '/' && url.searchParams.has(TOKEN_QUERY)) {
     const presented = url.searchParams.get(TOKEN_QUERY) ?? ''
     if (!safeEqual(presented, state.token)) {
-      respond(response, 401, 'text/plain', 'heddle web authentication required; reopen the URL printed by `heddle web`.\n')
+      /**
+       * A token that does not match gets the **page**, not a sentence.
+       *
+       * Measured, and it is a bug rather than a nicety: a daemon mints a fresh launch token on every
+       * start, so the URL in a browser's history, in a bookmark, or in a scrollback is stale by the next
+       * restart. The old answer was `401 text/plain` reading "reopen the URL printed by `heddle web`" —
+       * a dead end with no form to paste the current token into and no way forward except finding the
+       * log. A refusal a person cannot recover from turns a restart into an outage.
+       */
+      respond(response, 401, 'text/html; charset=utf-8', tokenFormPage({ stale: true }))
       return
     }
     response.writeHead(303, {
@@ -257,9 +283,7 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
       response,
       401,
       url.pathname.startsWith('/api') ? 'text/plain' : 'text/html; charset=utf-8',
-      url.pathname.startsWith('/api')
-        ? 'unauthorized\n'
-        : `<h1>heddle web</h1><p>Authentication required. Reopen the URL printed by <code>heddle web</code>, or paste the token below.</p><form method="get" action="/"><input name="${TOKEN_QUERY}" placeholder="token" autofocus><button>open</button></form>`,
+      url.pathname.startsWith('/api') ? 'unauthorized\n' : tokenFormPage(),
     )
     return
   }
@@ -422,6 +446,21 @@ function respond(response: ServerResponse, status: number, contentType: string, 
 }
 
 /** The page. One file, no build step, and no framework — the same choice DSH makes. */
+/**
+ * The page a refused request gets: the token form, and why it appeared when there is a reason.
+ *
+ * One helper for every refusal, so the recovery path cannot differ between them — the stale-token case
+ * was a bare sentence while the unauthenticated case had a form, and there was no reason for the two to
+ * differ other than that they were written apart.
+ */
+function tokenFormPage(options: { readonly stale?: boolean } = {}): string {
+  const reason =
+    options.stale === true
+      ? '<p><strong>That token is not the current one.</strong> The launch token is minted once per start, so a URL from an earlier run — a bookmark, the history, or an old log line — stops working when the server restarts. Read the current one with <code>grep -o \'token=[A-Za-z0-9_-]*\' ~/.heddle/web.log | tail -1</code>, or paste it below.</p>'
+      : '<p>Authentication required. Reopen the URL printed by <code>heddle web</code>, or paste the token below.</p>'
+  return `<h1>heddle web</h1>${reason}<form method="get" action="/"><input name="${TOKEN_QUERY}" placeholder="token" autofocus><button>open</button></form>`
+}
+
 function page(): string {
   return `<!doctype html>
 <html lang="en">

@@ -79,7 +79,14 @@ function harness(label, options = {}) {
   const home = fixtureDir(`tools-home-${label}`)
   const { script } = scriptedConfig({ home, steps: options.steps ?? [{ text: 'done' }] })
   const profileDir = toolProfile(home, { ...options, script })
-  return { home, profileDir, env: { HEDDLE_HOME: home, HEDDLE_CONFIG: join(home, 'heddle.json') } }
+  // The built CLI is run from the repository, so the sandbox root is named explicitly: measured, a
+  // fixture without this let a relative `write_file` land in the repository itself.
+  return {
+    home,
+    profileDir,
+    env: { HEDDLE_HOME: home, HEDDLE_CONFIG: join(home, 'heddle.json') },
+    sandboxArg: ['--sandbox-root', home],
+  }
 }
 
 async function supportsTools() {
@@ -91,7 +98,7 @@ test('the tools the configuration allows are the tools that exist', async (conte
   if (!skipUnless(context, await supportsTools(), CAPABILITY)) return
   const h = harness('allow', { allow: ['read_file'] })
   try {
-    const run = await runCli(['--profile', h.profileDir, 'tools', '--json'], { env: h.env })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, 'tools', '--json'], { env: h.env })
     assert.equal(run.code, 0, `the command ran\n${run.stdout}${run.stderr}`)
     const tools = parseJson(run.stdout)
     assert.ok(Array.isArray(tools), `it printed a list\n${run.stdout}`)
@@ -110,7 +117,7 @@ test('a configuration naming a tool that does not exist fails where it is writte
   if (!skipUnless(context, await supportsTools(), CAPABILITY)) return
   const h = harness('unknown', { allow: ['read_file', 'definitely_not_a_tool'] })
   try {
-    const run = await runCli(['--profile', h.profileDir, '--turn', 'say something'], { env: h.env })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, '--turn', 'say something'], { env: h.env })
     assert.notEqual(run.code, 0, 'the run fails rather than starting without it')
     assert.match(run.stderr + run.stdout, /definitely_not_a_tool/, 'and the failure names the tool')
   } finally {
@@ -162,14 +169,14 @@ export default function shout(ctx) {
     ],
   })
   try {
-    const listing = await runCli(['--profile', h.profileDir, 'tools', '--json'], { env: h.env })
+    const listing = await runCli(['--profile', h.profileDir, ...h.sandboxArg, 'tools', '--json'], { env: h.env })
     const tools = parseJson(listing.stdout)
     assert.ok(
       Array.isArray(tools) && tools.some((tool) => tool.name === 'shout'),
       `the plugin's tool is registered\n${listing.stdout}`,
     )
 
-    const run = await runCli(['--profile', h.profileDir, '--turn', 'shout something'], { env: h.env })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, '--turn', 'shout something'], { env: h.env })
     assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
     const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
@@ -189,7 +196,7 @@ test('a tool is only reachable through the registry, so an unknown name is refus
     steps: [{ toolCall: { name: 'write_file', arguments: { path: 'x.txt', content: 'no' } } }, { text: 'understood' }],
   })
   try {
-    const run = await runCli(['--profile', h.profileDir, '--turn', 'write something'], { env: h.env })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, '--turn', 'write something'], { env: h.env })
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
     const events = readTranscript(join(h.home, 'sessions', session, 'session.jsonl'))
     const toolResults = events
@@ -236,7 +243,7 @@ export default function shadow(ctx) {
     ],
   })
   try {
-    const listing = parseJson((await runCli(['--profile', h.profileDir, 'tools', '--json'], { env: h.env })).stdout)
+    const listing = parseJson((await runCli(['--profile', h.profileDir, ...h.sandboxArg, 'tools', '--json'], { env: h.env })).stdout)
     const readFile = (listing ?? []).filter((tool) => tool.name === 'read_file')
     assert.equal(readFile.length, 1, `exactly one tool answers to the name\n${JSON.stringify(listing)}`)
     assert.match(readFile[0].description, /wins/, 'and the listing describes the replacement rather than the built-in')
@@ -268,7 +275,7 @@ export default function bad(ctx) {
     ],
   })
   try {
-    const run = await runCli(['--profile', h.profileDir, 'tools', '--json'], { env: h.env })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, 'tools', '--json'], { env: h.env })
     assert.notEqual(run.code, 0, `registering an unnamed tool fails the run rather than listing it\n${run.stdout}${run.stderr}`)
     assert.match(run.stderr + run.stdout, /name|description/i, 'and the failure says what was missing')
   } finally {

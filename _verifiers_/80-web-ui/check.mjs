@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { chatDouble, fixtureDir, httpConfig, isolatedHome, removeDir, runCli, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
+import { chatDouble, fixtureDir, httpConfig, isolatedHome, parseJson, removeDir, runCli, runCliSource, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
  * Verifier 9 — the Web UI.
@@ -155,24 +155,16 @@ async function supportsWeb() {
   return /web/.test(help.stdout)
 }
 
-test('the documented default port is 3082', async (context) => {
+test('the server takes the documented default port when none is named', async (context) => {
   if (!skipUnless(context, await supportsWeb(), CAPABILITY)) return
   /**
-   * The default is a promise to a person, and the promise is that `heddle web` with no arguments is
-   * reachable where the documentation says. So it is asserted three ways, and the third is the one that
-   * matters:
+   * The default is a promise to a person, and this part judges **the server's side of it**: the number it
+   * chooses when no `--port` is given, and the number the documentation names. It does not bind it.
    *
-   * 1. the number the server module exports;
-   * 2. the number the documentation names;
-   * 3. **that a server started with no `--port` actually binds it and answers there.**
-   *
-   * The third was missing, and asking "is the UI running on 3082?" is what exposed it: the check read a
-   * constant and a document while the only checks that started a server did so on an ephemeral port, so
-   * nothing had ever connected to 3082. A default nobody binds is a default that is only a number.
-   *
-   * This check therefore holds 3082 for a few seconds. That is deliberate — it is the port the harness
-   * promises, and a check that stepped around it would not be checking it — and it stays bounded
-   * because the server it starts is closed in the same test.
+   * That split is deliberate and was forced by a daemon: once `95-web-daemon` keeps a real agent on 3082,
+   * a check here that tried to bind the same port failed with `EADDRINUSE` — and the failure was correct
+   * behaviour, a server refusing to pretend it owns a port someone else has. Two checks cannot both own
+   * the port; ownership is judged there, and the choice is judged here.
    */
   const { DEFAULT_PORT } = await import('../../dist/server/web.js')
   assert.equal(DEFAULT_PORT, 3082, 'the server exports the documented default')
@@ -180,23 +172,25 @@ test('the documented default port is 3082', async (context) => {
   const goal = await import('node:fs').then((fs) => fs.readFileSync(new URL('../../ULTIMATE_GOAL.md', import.meta.url), 'utf8'))
   assert.ok(readme.includes('3082') || goal.includes('3082'), 'the default port is written down where a person would look for it')
 
+  /**
+   * And the choice, read from the server's own startup line with no port named. `--json` prints the same
+   * URL the human-readable line carries, so the check reads a machine-readable field rather than parsing
+   * prose. The port is asked for but not taken: `--dry-run` stops before binding.
+   */
   const home = isolatedHome('default-port')
   const work = fixtureDir('default-port')
   const double = await chatDouble({ content: 'x' })
   const config = httpConfig({ home, baseUrl: double.baseUrl, stream: true })
-  // No --port: the point is what the server chooses on its own.
-  const server = await startCli(
-    ['web', '--host', '127.0.0.1', '--endpoint', 'double', '--session-root', join(home, 'sessions')],
-    { HEDDLE_HOME: home, HOME: home, HEDDLE_CONFIG: config },
-  )
   try {
-    assert.match(server.url, /:3082\//, `a server with no --port bound the documented default\n${server.url}`)
-    const page = await fetch(`http://127.0.0.1:3082/`)
-    assert.equal(page.status, 200, 'and it answers on that port')
-    const html = await page.text()
-    assert.match(html, /<title>heddle<\/title>/, 'with the harness page')
+    const run = await runCliSource(['web', '--host', '127.0.0.1', '--endpoint', 'double', '--dry-run', '--json'], {
+      env: { HEDDLE_HOME: home, HOME: home, HEDDLE_CONFIG: config },
+      timeoutMs: 30_000,
+    })
+    assert.equal(run.code, 0, `the server reported its plan without binding\n${run.stdout}${run.stderr}`)
+    const plan = parseJson(run.stdout)
+    assert.equal(plan?.port, 3082, `with no --port it chooses the documented default\n${run.stdout}`)
+    assert.match(String(plan?.url ?? ''), /:3082\//, 'and the URL it would print names that port')
   } finally {
-    server.kill()
     await double.close()
     removeDir(home)
     removeDir(work)

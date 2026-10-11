@@ -2,7 +2,7 @@
 title: Heddle Ultimate Goal
 level: L2
 version: 2.1.0
-description: What completes this project — the capabilities the owner named plus the configuration system they all sit on, each judged by its own runnable verifier under _verifiers_.
+description: What completes this project — the capabilities the owner named, the configuration system they all sit on, and the daemon that keeps the UI running, each judged by its own runnable verifier under _verifiers_.
 status: unverified
 grounded_in:
   - source: README.md section Roadmap and section Status
@@ -40,6 +40,7 @@ harness. What exists is the frame the rest hangs on."*
 | 8 | permission sandbox | read-only, workspace-write and full access are three distinct behaviours, demonstrated by refusal rather than by declaration | [`_verifiers_/75-permission-sandbox/`](_verifiers_/75-permission-sandbox/INDEX.md) |
 | 9 | Web UI | a localhost page on a documented default port, and the live main-content and reasoning deltas reach a client over its stream while the model is still writing | [`_verifiers_/80-web-ui/`](_verifiers_/80-web-ui/INDEX.md) |
 | 10 | Web UI token | the page **and its stream** refuse a request without the token, and answer one with it | [`_verifiers_/90-web-ui-token/`](_verifiers_/90-web-ui-token/INDEX.md) |
+| 11 | Web UI daemon | a launchd agent keeps the Web UI running at the documented port, survives a kill, and does not weaken the token | [`_verifiers_/95-web-daemon/`](_verifiers_/95-web-daemon/INDEX.md) |
 
 ## What the target is not
 
@@ -71,7 +72,7 @@ wording. Correcting the statement is the owner's act; correcting the *state* is 
 evidence.
 
 **Every part is judged, and every check passes.** Measured on 2026-10-11, after `npm run build`:
-eleven parts, sixty-six checks, no failures and nothing left unjudged — except the one check that is
+twelve parts, seventy checks, no failures and nothing left unjudged — except the one check that is
 allowed to be, the real-backend probe in part 1, which reports unjudged when the machine has no
 reachable endpoint configured. That is the shape the set was built for, and the two counts that matter
 are kept apart: *unjudged* is a part whose mechanism is missing, and *failed* is a part that does not

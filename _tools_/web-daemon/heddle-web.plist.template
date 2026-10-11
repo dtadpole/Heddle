@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The heddle Web UI as a login agent.
+
+  A **LaunchAgent** rather than a LaunchDaemon, and the convention says why: a daemon is boot-level and
+  needs root, an agent needs no privileges and starts at login — which is the layer a service that runs
+  under one person's account belongs to. `~/Library/LaunchAgents` is owned by that person, so installing,
+  inspecting and removing this needs no sudo and the file is visible to whoever it affects.
+
+  The paths below are placeholders. `install.sh` fills them in from the machine it runs on, because the
+  node binary and the checkout are not in the same place on every host — and a committed absolute path
+  that is wrong on another machine is worse than no file at all.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@LABEL@</string>
+
+  <!-- The harness's own launcher, with the arguments a run needs. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>@NODE@</string>
+    <string>@BIN@</string>
+    <string>web</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>@PORT@</string>
+  </array>
+
+  <!-- The working directory is what makes the default profile load: the tree is found beside the run. -->
+  <key>WorkingDirectory</key>
+  <string>@REPO@</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!--
+    KeepAlive is a one-shot launchd job only if this is false. It is true, so launchd restarts the server
+    when it exits — which is the supervisor half of the convention, and it is enough here because the
+    server is a single process with no children to orphan.
+  -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- A crash loop is bounded: launchd throttles restarts rather than spinning. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Logs, never /dev/null: a service that discards its output cannot be audited. -->
+  <key>StandardOutPath</key>
+  <string>@LOG@</string>
+  <key>StandardErrorPath</key>
+  <string>@LOG@</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- The session store, the secret and the local endpoint configuration all live under HEDDLE_HOME. -->
+    <key>HEDDLE_HOME</key>
+    <string>@HOME@</string>
+    <key>HOME</key>
+    <string>@HOME_DIR@</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:@NODE_DIR@</string>
+  </dict>
+</dict>
+</plist>

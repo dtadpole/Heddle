@@ -24,7 +24,13 @@ const CAPABILITY = 'a streaming path: reasoning and content deltas emitted befor
 function harness(label, options = {}) {
   const home = isolatedHome(label)
   const work = fixtureDir(label)
-  return { home, work, args: ['--session-root', `${home}/sessions`], env: { HOME: home, ...(options.env ?? {}) } }
+  return {
+    home,
+    work,
+    // The sandbox is confined to the fixture, so a check that writes a file cannot write one here.
+    args: ['--session-root', `${home}/sessions`, '--sandbox-root', work],
+    env: { HOME: home, ...(options.env ?? {}) },
+  }
 }
 
 /** Does this build expose a streaming view on the command line? */

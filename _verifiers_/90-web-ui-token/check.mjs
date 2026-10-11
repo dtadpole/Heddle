@@ -295,3 +295,37 @@ test('a cookie is bound to the server that minted it, not to the secret alone', 
     removeDir(two.work)
   }
 })
+
+test('a stale launch token gets a page a person can recover from, not a dead end', async (context) => {
+  if (!skipUnless(context, await supportsWeb(), CAPABILITY)) return
+  /**
+   * This is the bug the owner hit, and it took a **real browser** to find: a daemon mints a fresh launch
+   * token on every start, so the URL in a browser's history, in a bookmark, or in scrollback is stale
+   * after a restart. The old answer was `401 text/plain` reading "reopen the URL printed by `heddle web`"
+   * — no page, no form, and no way forward but finding the log by hand. A refusal a person cannot act on
+   * turns every restart into an outage.
+   *
+   * The claim: the stale-token refusal is a **document carrying the token form**, and it explains that the
+   * token is not the current one.
+   */
+  const fixture = await startServer('stale-token')
+  const server = await startCli(fixture.args, fixture.env)
+  try {
+    const origin = new URL(server.url).origin
+    const stale = await fetch(`${origin}/?token=not-the-current-token`, { redirect: 'manual' })
+    assert.equal(stale.status, 401, 'a stale token is refused')
+    assert.match(stale.headers.get('content-type') ?? '', /text\/html/, 'and refused with a document rather than a sentence')
+    const html = await stale.text()
+    assert.match(html, /<form[^>]*action="\/"/, 'the document carries the form, so the current token can be pasted in')
+    assert.match(html, /not the current one/i, 'and it says why the token stopped working')
+
+    // The recovery path itself still works: a current token exchanges for a cookie.
+    const fresh = await fetch(server.url, { redirect: 'manual' })
+    assert.equal(fresh.status, 303, 'a current token still exchanges for a cookie')
+  } finally {
+    server.kill()
+    await fixture.double.close()
+    removeDir(fixture.home)
+    removeDir(fixture.work)
+  }
+})

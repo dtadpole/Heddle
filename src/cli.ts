@@ -32,6 +32,8 @@ interface Args {
   maxRounds?: number
   maxOutputTokens?: number
   sessionRoot?: string
+  sandboxRoot?: string
+  dryRun: boolean
   port?: number
   host?: string
   workspace?: string
@@ -51,6 +53,8 @@ options:
   -c, --config <path>        boot from this configuration layer instead of the default profile
       --profile <name>       boot a named profile from $HEDDLE_HOME/profiles
       --patch <path>         apply an extra layer after it (repeatable)
+      --dry-run              report what a run would do and stop before doing it
+      --sandbox-root <path>  confine file effects to this directory instead of the working one
       --turn <text>          run one agent turn and print the answer
       --resume <id>          continue an existing session rather than starting one
       --endpoint <name>      which configured endpoint answers (default: the first)
@@ -87,7 +91,7 @@ credential of its own.
 `
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { quiet: false, help: false, patch: [], list: false, json: false, stream: false, validate: false, origins: false }
+  const args: Args = { quiet: false, help: false, patch: [], list: false, json: false, stream: false, validate: false, origins: false, dryRun: false }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? ''
     const next = () => argv[++index]
@@ -146,6 +150,9 @@ function parseArgs(argv: readonly string[]): Args {
       case '--session-root':
         args.sessionRoot = next()
         break
+      case '--sandbox-root':
+        args.sandboxRoot = next()
+        break
       case '--port':
         args.port = Number(next())
         break
@@ -154,6 +161,9 @@ function parseArgs(argv: readonly string[]): Args {
         break
       case '--stream':
         args.stream = true
+        break
+      case '--dry-run':
+        args.dryRun = true
         break
       case '--validate':
         args.validate = true
@@ -284,8 +294,23 @@ async function bootFromArgs(args: Args) {
     includeProjectPatch: layers.includeProjectPatch,
     // Restates the session row rather than reaching past the configuration: the
     // override is a layer, which is how every other override in this project works.
-    ...(args.sessionRoot !== undefined
-      ? { overrides: [{ patch: [{ id: 'session', config: { root: resolve(args.sessionRoot) } }] }] }
+    /**
+     * Both overrides restate a row rather than reaching past the configuration, because that is how
+     * every other override in this project works — and the sandbox root matters for a check: measured,
+     * a fixture that ran the built CLI with the repository as its working directory let a relative
+     * `write_file` land in the repository, and two of those files were committed before anyone noticed.
+     */
+    ...(args.sessionRoot !== undefined || args.sandboxRoot !== undefined
+      ? {
+          overrides: [
+            {
+              patch: [
+                ...(args.sessionRoot !== undefined ? [{ id: 'session', config: { root: resolve(args.sessionRoot) } }] : []),
+                ...(args.sandboxRoot !== undefined ? [{ id: 'sandbox', config: { workspaceRoot: resolve(args.sandboxRoot) } }] : []),
+              ],
+            },
+          ],
+        }
       : {}),
   })
 }
@@ -312,6 +337,24 @@ async function runWeb(args: Args): Promise<void> {
   try {
     const pending = await settle(app.ctx)
     if (pending.length > 0) throw new Error(`${pending.length} entr(y/ies) are still pending: ${pending.join(', ')}`)
+    /**
+     * `--dry-run` reports the plan and stops before the socket.
+     *
+     * It exists for two callers. A person checks that a daemon's arguments will work without taking the
+     * port away from the daemon that is already serving it; a check judges which port the server chooses
+     * without binding it. Measured: a check that bound the documented port failed with `EADDRINUSE` once a
+     * real agent held it, which was correct behaviour and the wrong claim to assert from there.
+     */
+    if (args.dryRun) {
+      const chosen = args.port ?? DEFAULT_PORT
+      const url = `http://${args.host ?? '127.0.0.1'}:${chosen}/?token=generated-at-start`
+      process.stdout.write(`heddle web: would serve ${url}\n`)
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify({ url, host: args.host ?? '127.0.0.1', port: chosen, dryRun: true })}\n`)
+      }
+      return
+    }
+
     const server = await startWebServer(app.ctx, {
       ...(args.port !== undefined ? { port: args.port } : { port: DEFAULT_PORT }),
       ...(args.host !== undefined ? { host: args.host } : {}),

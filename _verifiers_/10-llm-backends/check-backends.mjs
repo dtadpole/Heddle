@@ -53,7 +53,7 @@ test('a turn runs over the Chat Completions shape', async (context) => {
   try {
     const double = await chatDouble({ content: 'answered over chat completions' })
     const config = httpConfig({ home, name: 'chat', baseUrl: double.baseUrl })
-    const run = await runCli(['--endpoint', 'chat', '--turn', 'say something', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
+    const run = await runCli(['--endpoint', 'chat', '--sandbox-root', home, '--turn', 'say something', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
     assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
     assert.match(run.stdout, /answered over chat completions/, 'the answer came back through the framework')
     assert.ok(double.requests.length > 0, 'the request reached the endpoint')
@@ -72,7 +72,7 @@ test('a turn runs over the Responses shape, which is a different contract', asyn
   try {
     const double = await responsesDouble({ content: 'answered over responses' })
     const config = httpConfig({ home, name: 'codex', kind: 'openai-responses', baseUrl: double.baseUrl })
-    const run = await runCli(['--endpoint', 'codex', '--turn', 'say something', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
+    const run = await runCli(['--endpoint', 'codex', '--sandbox-root', home, '--turn', 'say something', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
     assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
     assert.match(run.stdout, /answered over responses/, 'the answer came back')
     assert.match(double.requests[0].url, /responses/, 'at the route that shape uses')
@@ -135,7 +135,7 @@ test('the configured default endpoint is the one a turn uses when none is named'
         { name: 'chosen', kind: 'openai-chat', baseUrl: chosen.baseUrl, model: 'double', stream: true },
       ],
     })
-    const run = await runCli(['--turn', 'say something', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
+    const run = await runCli(['--sandbox-root', home, '--turn', 'say something', '--json'], { env: { HOME: home, HEDDLE_CONFIG: config } })
     assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
     assert.match(run.stdout, /the default endpoint answered/, 'the configured default answered')
     assert.equal(first.requests.length, 0, 'and the first endpoint in the list was never reached')

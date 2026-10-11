@@ -99,7 +99,14 @@ function harness(label, options = {}) {
    * run failed with "could not be read at scripted.json".
    */
   const profileDir = hookProfile(home, { ...options, script })
-  return { home, profileDir, env: { HEDDLE_HOME: home, HEDDLE_CONFIG: join(home, 'heddle.json') } }
+  // The sandbox root is named explicitly: the CLI runs from the repository, and a fixture that wrote a
+  // relative path once landed inside it.
+  return {
+    home,
+    profileDir,
+    env: { HEDDLE_HOME: home, HEDDLE_CONFIG: join(home, 'heddle.json') },
+    sandboxArg: ['--sandbox-root', home],
+  }
 }
 
 async function supportsHooks() {
@@ -124,7 +131,7 @@ test('the hook points are named and reachable', async (context) => {
   if (!skipUnless(context, await supportsHooks(), CAPABILITY)) return
   const h = harness('points')
   try {
-    const run = await runCli(['--profile', h.profileDir, 'hooks', '--json'], { env: h.env })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, 'hooks', '--json'], { env: h.env })
     assert.equal(run.code, 0, `the command ran\n${run.stdout}${run.stderr}`)
     const points = parseJson(run.stdout)
     assert.ok(Array.isArray(points) && points.length > 0, `hook points were listed\n${run.stdout}`)
@@ -155,7 +162,7 @@ test('a hook rewrites a model request and the answer comes from where it pointed
     hooks: [{ file: 'retarget.ts', source: RETARGET_HOOK }],
   })
   try {
-    const run = await runCli(['--profile', h.profileDir, '--turn', 'say something', '--json'], { env: h.env })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, '--turn', 'say something', '--json'], { env: h.env })
     assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
     const summary = parseJson(run.stdout)
     assert.match(summary.text ?? '', /the scripted answer/, `the hook's endpoint answered\n${run.stdout}`)
@@ -188,7 +195,7 @@ export default function refuse(ctx) {
     ],
   })
   try {
-    const run = await runCli(['--profile', h.profileDir, '--turn', 'write the file'], { env: h.env })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, '--turn', 'write the file'], { env: h.env })
     /**
      * A refused call is a non-zero exit, and that is the harness behaving correctly: a denial
      * is a fact about the run. Measured: requiring exit zero here failed on a run that did
@@ -248,7 +255,7 @@ export default function post(ctx) {
     ],
   })
   try {
-    const run = await runCli(['--profile', h.profileDir, '--turn', 'read the file'], { env: h.env })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, '--turn', 'read the file'], { env: h.env })
     assert.equal(run.code, 0, `the turn ran\n${run.stdout}${run.stderr}`)
     const session = sessionsUnder(join(h.home, 'sessions'))[0]
     assert.ok(session, `a session exists under ${join(h.home, 'sessions')}\n${run.stdout}`)
@@ -289,7 +296,7 @@ export default function stop(ctx) {
     ],
   })
   try {
-    const run = await runCli(['--profile', h.profileDir, '--turn', 'say something'], { env: h.env })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, '--turn', 'say something'], { env: h.env })
     assert.notEqual(run.code, 0, 'the run failed rather than answering')
     assert.match(run.stderr + run.stdout, /refuses to send/, 'and said which hook refused it')
   } finally {
@@ -322,7 +329,7 @@ export default function broken(ctx) {
     ],
   })
   try {
-    const run = await runCli(['--profile', h.profileDir, '--turn', 'say something', '--json'], { env: h.env, timeoutMs: 60_000 })
+    const run = await runCli(['--profile', h.profileDir, ...h.sandboxArg, '--turn', 'say something', '--json'], { env: h.env, timeoutMs: 60_000 })
     assert.equal(run.timedOut, false, `the run finished rather than hanging\n${run.stdout}${run.stderr}`)
     /**
      * The turn fails, and the failure is **about the hook**.

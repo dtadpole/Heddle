@@ -1,6 +1,6 @@
 ---
 title: Verifiers
-version: 2.2.0
+version: 2.3.0
 description: The ultimate verifications — one folder each, named after the capability the owner named, every one keeping the project's 0/1/3 verdict contract.
 grounded_in:
   - source: owner statement in the dsh session, 2026-10-11, listing the ten verifiers
@@ -9,7 +9,7 @@ grounded_in:
 
 # `_verifiers_`
 
-Instance of the `_verifiers_` type. **Eleven verifications, one folder each**, named after the capability
+Instance of the `_verifiers_` type. **Twelve verifications, one folder each**, named after the capability
 the owner stated rather than after the layer that happens to decide it. Each is a thin entry point over
 the check files beside it, and each check file states in its own header what it judges and what it
 deliberately does not.
@@ -27,10 +27,11 @@ deliberately does not.
 | 8 | [`75-permission-sandbox/`](75-permission-sandbox/INDEX.md) | a permission sandbox distinguishes read-only, workspace write and full access |
 | 9 | [`80-web-ui/`](80-web-ui/INDEX.md) | a Web UI on localhost, on a documented default port, carrying the live stream |
 | 10 | [`90-web-ui-token/`](90-web-ui-token/INDEX.md) | the Web UI and its event stream are protected by a token |
+| 11 | [`95-web-daemon/`](95-web-daemon/INDEX.md) | a launchd agent keeps the Web UI running at the documented port |
 
 ## Where each stands, 2026-10-11
 
-Every part is judged and every check passes: **66 checks, 0 failures, 0 unjudged**, measured after
+Every part is judged and every check passes: **70 checks, 0 failures, 0 unjudged**, measured after
 `npm run build`. The only check allowed to report unjudged is part 1's real-backend probe, and it does so
 only when the machine has no reachable endpoint configured — a check that passed by not testing would be
 worse than one that admits it did not run.
@@ -47,7 +48,8 @@ worse than one that admits it did not run.
 | 7 | 7 | `0` — the transcript, resume, append-only, grouping by folder, subdirectories, finding a session |
 | 8 | 5 | `0` — the three modes, the sibling prefix, and the temp directory only when admitted |
 | 9 | 4 | `0` — port, page, API, and the live stream |
-| 10 | 6 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode |
+| 10 | 7 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode, a stale token's recovery page |
+| 11 | 3 | `0` — a complete definition, the port answering with the service's name, and a kill it recovers from |
 
 ## The verdict contract
 

@@ -27,7 +27,7 @@ function harness(label, options = {}) {
     home,
     work,
     env: { HEDDLE_HOME: home, HEDDLE_CONFIG: join(home, 'heddle.json') },
-    args: ['--session-root', join(home, 'sessions'), '--endpoint', 'scripted'],
+    args: ['--session-root', join(home, 'sessions'), '--sandbox-root', work, '--endpoint', 'scripted'],
     script,
   }
 }
