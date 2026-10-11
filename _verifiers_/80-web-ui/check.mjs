@@ -6,6 +6,24 @@ import { chatDouble, fixtureDir, httpConfig, isolatedHome, parseJson, removeDir,
 import { browserAvailable, openBrowser } from '../../_tools_/check-helpers/browser.mjs'
 
 /**
+ * The sessions a reader can click, in the left panel's "ad hoc" group.
+ *
+ * The panel became a **folder-bound tree** — a session row exists for an instance of a type folder — so the
+ * flat `#sessions` list these checks were written against is gone. What replaced it marks a session row with
+ * `data-kind="session"`. The group is opened first, because a collapsed `details` renders nothing to click.
+ */
+const SESSION_ROW = '#adhoc li[data-kind="session"]'
+
+/** Open the left panel's session group and return how many rows it holds. */
+async function openSessionGroup(browser) {
+  return browser.evaluate(`(() => {
+    const group = document.getElementById('history')
+    if (group) group.open = true
+    return document.querySelectorAll('${SESSION_ROW}').length
+  })()`)
+}
+
+/**
  * Verifier 9 — the Web UI.
  *
  * Judges one part of `ULTIMATE_GOAL.md`: a **Web UI on localhost, on a documented default

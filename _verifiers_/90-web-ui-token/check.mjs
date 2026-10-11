@@ -43,6 +43,25 @@ async function pickSessionWithReasoning(browser) {
 }
 
 /**
+ * The sessions a reader can click, in the left panel's "ad hoc" group.
+ *
+ * The panel became a **folder-bound tree** — a session row exists for an instance of a type folder — so the
+ * flat `#sessions` list these checks were written against is gone. What replaced it marks a session row with
+ * `data-kind="session"`. The group is opened first, because a collapsed `details` renders nothing to click.
+ */
+const SESSION_ROW = '#adhoc li[data-kind="session"]'
+
+/** Open the left panel's session group and return how many rows it holds. */
+async function openSessionGroup(browser) {
+  return browser.evaluate(`(() => {
+    const group = document.getElementById('history')
+    if (group) group.open = true
+    return document.querySelectorAll('${SESSION_ROW}').length
+  })()`)
+}
+
+
+/**
  * Exchange a server's launch URL for the cookie heddle issues, the way a browser's first visit does.
  *
  * The launch token becomes a signed HttpOnly cookie on a 303; every later request carries the cookie and
@@ -247,23 +266,42 @@ test('a request from another site is refused before any token is compared', asyn
     )
 
     /**
-     * A cross-site **write** is refused. This is what carries the weight now that reads are permitted, and
-     * it holds whether or not the request names an origin — an opaque origin sends `null`, which matches
-     * nothing, and a forged one is refused by the same comparison.
+     * A cross-site **write** is refused when it carries no valid session, and allowed when it does.
+     *
+     * That is a correction of the rule this check used to encode — "a cross-site POST is refused", full
+     * stop — and the owner found the cost of it: a viewer that embeds the page in a **sandboxed iframe** has
+     * an opaque origin, so every request it makes is marked cross-site, and sending a prompt answered `403`.
+     * The page could be watched in the sidebar and not talked to.
+     *
+     * The credential is what decides, and it is the right key for both halves: a browser does not attach the
+     * `SameSite=Strict` cookie to an attacker's cross-site request, so `decision.ok` is false exactly when
+     * the request is someone else's — while the gate, which holds a valid session on the browser's behalf,
+     * makes the same request as an authenticated one.
      */
     const crossSiteWrite = await fetch(new URL('/api/turn', server.url), {
       method: 'POST',
       headers: { cookie, 'sec-fetch-site': 'cross-site', 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'a sandboxed viewer sends this' }),
+    })
+    assert.equal(crossSiteWrite.status, 200, 'a cross-site POST with a session is served, so a sandboxed viewer can send')
+
+    const anonymousCrossSiteWrite = await fetch(new URL('/api/turn', server.url), {
+      method: 'POST',
+      headers: { 'sec-fetch-site': 'cross-site', 'content-type': 'application/json' },
       body: JSON.stringify({ prompt: 'should not run' }),
     })
-    assert.equal(crossSiteWrite.status, 403, 'a cross-site POST is refused')
+    assert.equal(
+      anonymousCrossSiteWrite.status,
+      401,
+      'and one with no session gets nothing — which is the state a browser puts an attacker in',
+    )
 
     const opaqueOriginWrite = await fetch(new URL('/api/turn', server.url), {
       method: 'POST',
       headers: { cookie, origin: 'null', 'content-type': 'application/json' },
       body: JSON.stringify({ prompt: 'should not run' }),
     })
-    assert.equal(opaqueOriginWrite.status, 403, 'and so is one that names the opaque origin')
+    assert.equal(opaqueOriginWrite.status, 403, 'while a forged opaque origin is still refused by the Origin check')
 
     const foreignOrigin = await fetch(new URL('/api/sessions', server.url), {
       headers: { cookie, origin: 'https://evil.example' },
@@ -486,6 +524,8 @@ test('the page renders a session\'s history in blocks, and collapses reasoning a
   try {
     const origin = new URL(live.url).origin
     const cookie = await handshakeCookie(live.url)
+    /** The session this check will read, taken from the API so the panel's grouping cannot affect it. */
+    const sessionsForCheck = await (await fetch(`${origin}/api/sessions`, { headers: { cookie } })).json()
     await fetch(`${origin}/api/turn`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie },
@@ -494,9 +534,23 @@ test('the page renders a session\'s history in blocks, and collapses reasoning a
 
     // The printed URL is what a person is asked to open, so it is what this opens.
     await browser.goto(live.url)
+    await browser.waitFor('document.getElementById("views") !== null', 20_000)
+    /**
+     * The session is selected through the **page's own handler** rather than by clicking a row.
+     *
+     * The left panel is a folder-bound tree that the other working session was still changing while this was
+     * written, and a session appears in it only when its directory is a registered workspace — so a click in
+     * the panel is a test of the tree, not of the right pane this check is about. `showSession` is what a
+     * row's click calls, so this exercises the same path without depending on where the row is drawn.
+     */
+    const id = sessionsForCheck[0]
     assert.ok(
-      await browser.waitFor('document.querySelectorAll("#sessions li").length > 0', 20_000),
-      'the session list rendered',
+      await browser.evaluate(`(async () => { await showSession(${JSON.stringify(id)}); return document.querySelectorAll('#log .turn').length })()`),
+      'the page selected the session',
+    )
+    assert.ok(
+      await browser.waitFor('document.querySelectorAll("#log .turn").length > 0', 20_000),
+      'and drew its history',
     )
 
     /**

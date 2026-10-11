@@ -9,7 +9,7 @@ import { runTurn } from '../agent/loop.ts'
 import { projectLedger, projectTimeline } from './ledger.ts'
 import { expandHome } from '../config/schema.ts'
 import { canonicalPath } from '../paths.ts'
-import { tree } from '../session/tree.ts'
+import { readFileText, tree } from '../session/tree.ts'
 import type { SessionEvent, SessionHandle } from '../session/store.ts'
 import {
   COOKIE_MAX_AGE,
@@ -365,6 +365,40 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
       generated: workspaces.generated,
     })
     respond(response, 200, 'application/json', `${JSON.stringify(node, null, 2)}\n`)
+    return
+  }
+
+  /**
+   * The content of one file, for the panel a file row opens.
+   *
+   * Refused outside every root, exactly as the tree is and for the same reason — this route is behind
+   * the token and must not be a way to read the whole machine — and the path that is checked is the
+   * **canonical** one, so a symlink that resolves outside a root is refused rather than followed. What
+   * cannot be shown is a status rather than an empty panel: `404` for a path that is not a file, and
+   * `415` for a file that is not UTF-8 text, each with the sentence the reader produced.
+   */
+  if (url.pathname === '/api/file' && request.method === 'GET') {
+    const workspaces = ctx.workspace
+    if (workspaces === undefined) {
+      respond(response, 503, 'application/json', `${JSON.stringify({ error: 'this profile does not load the workspace plugin' })}\n`)
+      return
+    }
+    const wanted = url.searchParams.get('path')
+    if (wanted === null || wanted.length === 0) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'a path is required' })}\n`)
+      return
+    }
+    if (workspaces.owner(wanted) === undefined) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: `${canonicalPath(wanted)} is not under any workspace root` })}\n`)
+      return
+    }
+    try {
+      respond(response, 200, 'application/json', `${JSON.stringify(readFileText(wanted), null, 2)}\n`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const status = message.includes('is not a file') ? 404 : 415
+      respond(response, status, 'application/json', `${JSON.stringify({ error: message })}\n`)
+    }
     return
   }
 

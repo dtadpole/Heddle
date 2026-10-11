@@ -178,7 +178,11 @@ test('a browser renders the ledger, its timeline, and switches back to the conve
     await runOneTurn(server, cookie)
 
     await browser.goto(server.url)
-    assert.ok(await browser.waitFor('document.querySelectorAll("#sessions li").length > 0', 20_000), 'the session list rendered')
+    await browser.waitFor('document.getElementById("views") !== null', 20_000)
+    /** Selected through the page's own handler: the left panel's grouping is not what this check judges. */
+    const id = (await (await fetch(`${new URL(server.url).origin}/api/sessions`, { headers: { cookie } })).json())[0].id
+    await browser.evaluate(`(async () => { await showSession(${JSON.stringify(id)}); return true })()`)
+    assert.ok(await browser.waitFor('document.querySelectorAll("#log .turn").length > 0', 20_000), 'the session was selected and its history drawn')
 
     const tabs = JSON.parse(await browser.evaluate(`JSON.stringify([...document.querySelectorAll('#views button')].map((b) => b.textContent))`))
     assert.deepEqual(tabs, ['Chat', 'Trajectory'], 'the view ring offers both views')
@@ -332,6 +336,25 @@ test('a browser renders the ledger, its timeline, and switches back to the conve
     removeDir(fixture.work)
   }
 })
+
+/**
+ * The sessions a reader can click, in the left panel's "ad hoc" group.
+ *
+ * The panel became a **folder-bound tree** — a session row exists for an instance of a type folder — so the
+ * flat `#sessions` list these checks were written against is gone. What replaced it marks a session row with
+ * `data-kind="session"`. The group is opened first, because a collapsed `details` renders nothing to click.
+ */
+const SESSION_ROW = '#adhoc li[data-kind="session"]'
+
+/** Open the left panel's session group and return how many rows it holds. */
+async function openSessionGroup(browser) {
+  return browser.evaluate(`(() => {
+    const group = document.getElementById('history')
+    if (group) group.open = true
+    return document.querySelectorAll('${SESSION_ROW}').length
+  })()`)
+}
+
 
 /** Whether this build serves a Web UI at all. */
 async function supportsWeb() {
