@@ -1,0 +1,4 @@
+# heddle profile root — an empty entry list, exactly as a DSH profile.
+# The tree is composed as patch layers: this file, then heddle.patch.yml, then
+# any --patch overlays. Nothing is loaded from this file.
+[]

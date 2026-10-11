@@ -1,0 +1,44 @@
+# The default profile: the tree a bare `heddle --turn ...` runs.
+#
+# Every row is addressed by id, so a machine's own layer or a `--patch` overlay
+# can restate one row without touching the rest. Row order carries no load
+# semantics — a consumer whose service is absent stays pending until it exists —
+# so the grouping below is for a reader, not for the loader.
+#
+# Endpoint URLs and credentials are deliberately absent. The model plugin reads
+# its endpoints from $HEDDLE_CONFIG, $HEDDLE_HOME/heddle.json or
+# ~/.heddle/heddle.json, with HEDDLE_<ENDPOINT>_* environment overrides.
+
+- insert:
+    # The terminal exporter, so a plugin's log lines are visible.
+    - id: console
+      name: ./src/plugins/console-exporter.ts
+
+    # Sessions: the event log a turn is recorded in.
+    - id: session
+      name: ./src/plugins/session.ts
+      config:
+        root: ~/.heddle/sessions
+
+    # The model service: a registry of endpoints, fed from the local file.
+    - id: model
+      name: ./src/plugins/model.ts
+
+    # The sandbox: where a file effect may land.
+    - id: sandbox
+      name: ./src/sandbox/service.ts
+      config:
+        mode: workspace-write
+
+    # The approval policy: whether an action may be taken at all.
+    - id: approvals
+      name: ./src/approvals/service.ts
+      config:
+        mode: allow
+
+    # Tools: registered as services, gated by both of the two above.
+    - id: tools
+      name: ./src/plugins/tools.ts
+      inject: [approvals, sandbox]
+      config:
+        allow: [write_file, read_file, list_dir, bash]

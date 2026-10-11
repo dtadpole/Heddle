@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
@@ -8,22 +8,47 @@ import { fileURLToPath } from 'node:url'
 /**
  * Helpers shared by the verifiers in `_verifiers_/`.
  *
- * Two rules are carried by this file, and both come from `ULTIMATE_GOAL.md`:
+ * Three rules are carried by this file, and all three come from `ULTIMATE_GOAL.md`:
  *
  * - **Nothing here spends anything.** Every check runs against this checkout,
  *   with a substituted provider where a model would otherwise be called, and
- *   never against a paid endpoint.
- * - **A check that cannot judge says so.** `skipUnless` turns "the mechanism
- *   this part is about does not exist yet" into a labelled skip, which the
- *   runner counts as unjudged (exit `3`) rather than as a pass.
+ *   never against a paid endpoint unless a check says so in its own name.
+ * - **A check that cannot judge says so.** `skipUnless` turns "the mechanism this
+ *   part is about does not exist yet" into a labelled skip, which the runner
+ *   counts as unjudged (exit `3`) rather than as a pass.
+ * - **Fixtures go under `.heddle-tmp/` inside the checkout.** Measured: the loader
+ *   imports a plugin by absolute path, so a fixture in `/tmp` cannot resolve
+ *   `@deepseek-ai/cordis` and fails to load; and Node strips TypeScript types by
+ *   extension, so a generated plugin fixture is `.ts` and never `.mjs`. A check
+ *   file itself is plain JavaScript, because Node strips no types from `.mjs`.
  */
 
 /** Repository root, derived from this file so a check can be run from anywhere. */
 export const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 
-/** Where the checks write their fixtures. Never inside the repository. */
-export function tempDir(prefix = 'heddle-verify-') {
-  return mkdtempSync(join(tmpdir(), prefix))
+/** Where generated fixtures live. Git-ignored, and skipped by every walk. */
+export const scratchRoot = join(repoRoot, '.heddle-tmp')
+
+const scratchCounter = { value: 0 }
+
+/** A fresh fixture directory under the scratch root. */
+export function fixtureDir(label) {
+  scratchCounter.value += 1
+  const dir = join(scratchRoot, `${label}-${scratchCounter.value}`)
+  rmSync(dir, { recursive: true, force: true })
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** An isolated home for one check, so its sessions and config are its own. */
+export function isolatedHome(label) {
+  return fixtureDir(`home-${label}`)
+}
+
+/** Write a JSON file and return its path. */
+export function writeJson(path, value) {
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`)
+  return path
 }
 
 /** Remove a fixture directory, ignoring the case where it never appeared. */
@@ -46,6 +71,21 @@ export function listFiles(dir) {
   return found.sort()
 }
 
+/** How many files a directory holds, and the newest modification time. */
+export function fingerprint(dir) {
+  let newestMtime = 0
+  const files = listFiles(dir)
+  for (const name of files) {
+    try {
+      const stats = statSync(join(dir, name))
+      if (stats.mtimeMs > newestMtime) newestMtime = stats.mtimeMs
+    } catch {
+      continue
+    }
+  }
+  return { files: files.length, newestMtime }
+}
+
 /**
  * Run one command and capture it whole.
  *
@@ -54,7 +94,7 @@ export function listFiles(dir) {
  * attached.
  */
 export async function run(command, args, options = {}) {
-  const child = spawn(command, args, {
+  const child = spawn(command, [...args], {
     cwd: options.cwd ?? repoRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, NO_COLOR: '1', ...(options.env ?? {}) },
@@ -71,7 +111,7 @@ export async function run(command, args, options = {}) {
     stderr += chunk
   })
 
-  const timeoutMs = options.timeoutMs ?? 20_000
+  const timeoutMs = options.timeoutMs ?? 30_000
   let timedOut = false
   const timer = setTimeout(() => {
     timedOut = true
@@ -87,31 +127,28 @@ export async function run(command, args, options = {}) {
   return { code, stdout, stderr, timedOut, failed: timedOut || code !== 0 }
 }
 
-/** Spawn a process without waiting for it, so a transcript can be read mid-run. */
-export function start(command, args, options = {}) {
-  return spawn(command, args, {
-    cwd: options.cwd ?? repoRoot,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, NO_COLOR: '1', ...(options.env ?? {}) },
-  })
+/**
+ * Run the built CLI.
+ *
+ * The built output is judged rather than `src/`, so the check measures what a
+ * user installs. The build is the caller's job — a check that built the project
+ * itself would hide a broken build behind a passing test.
+ */
+export function runCli(args, options = {}) {
+  return run(process.execPath, [join(repoRoot, 'dist', 'cli.js'), ...args], options)
 }
 
-/** Wait until `predicate` is true, or give up. Returns whether it became true. */
-export async function waitFor(predicate, { timeoutMs = 10_000, intervalMs = 100 } = {}) {
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    if (await predicate()) return true
-    if (Date.now() > deadline) return false
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs))
-  }
+/** Run the CLI from source, for a check that needs the sources rather than the build. */
+export function runCliSource(args, options = {}) {
+  return run(process.execPath, [join(repoRoot, 'src', 'cli.ts'), ...args], options)
 }
 
 /**
  * Skip a check when the mechanism it judges is not built yet.
  *
  * `context.skip(reason)` marks it unjudged, which is the honest verdict for a
- * part whose subject does not exist: it is not a pass, and it is not a failure
- * of the part either.
+ * part whose subject does not exist: it is not a pass, and it is not a failure of
+ * the part either.
  */
 export function skipUnless(context, condition, reason) {
   if (!condition) context.skip(reason)
@@ -124,19 +161,13 @@ export function hasDependency(name) {
   return Boolean(pkg.dependencies?.[name] ?? pkg.devDependencies?.[name])
 }
 
-/**
- * The plugin labels a run reported, read from the CLI's own output.
- *
- * The shape is the one `src/cli.ts` writes: a count line, then one indented line
- * per registered plugin. Reading it from the output rather than from the source
- * is deliberate — the claim is about what a *run* loaded.
- */
+/** The plugin labels a run reported, read from the CLI's own output. */
 export function loadedPlugins(stdout) {
   return stdout
     .split('\n')
     .filter((line) => /^\s{2}\S/.test(line))
-    .map((line) => line.trim().split(/\s+/)[0])
-    .filter((name) => name && name !== 'fiber(s)')
+    .map((line) => line.trim().split(/\s+/)[0] ?? '')
+    .filter((name) => name.length > 0 && name !== 'fiber(s)')
 }
 
 /** The plugin count a run reported, or `null` when it said nothing usable. */
@@ -145,62 +176,154 @@ export function loadedCount(stdout) {
   return match ? Number(match[1]) : null
 }
 
-/** Run the CLI from source and capture what it printed. */
-export function runCli(args, options = {}) {
-  return run(process.execPath, ['src/cli.ts', ...args], { cwd: repoRoot, ...options })
+/**
+ * A local configuration whose default endpoint is a **script**.
+ *
+ * This is the offline backend every turn-driven check uses: a JSON file of steps
+ * read by the `scripted` adapter, calling nothing. A check that drives a turn is
+ * therefore reproducible and free, and the one check that spends real quota says
+ * so in its own name.
+ */
+export function scriptedConfig(options) {
+  const name = options.name ?? 'scripted'
+  const script = join(options.home, 'script.json')
+  writeJson(script, { steps: options.steps })
+  const config = writeJson(join(options.home, 'heddle.json'), {
+    default: name,
+    endpoints: [{ name, kind: 'scripted', baseUrl: script, model: 'scripted' }, ...(options.extraEndpoints ?? [])],
+  })
+  return { config, script }
 }
 
-/** Where DSH keeps session buckets, one directory per working directory. */
-export const sessionRoot = join(process.env.DSH_HOME ?? join(process.env.HOME, '.dsh'), 'sessions')
+/** A local configuration whose default endpoint points at a local double. */
+export function httpConfig(options) {
+  const name = options.name ?? 'double'
+  return writeJson(join(options.home, 'heddle.json'), {
+    default: name,
+    endpoints: [
+      {
+        name,
+        kind: options.kind ?? 'openai-chat',
+        baseUrl: options.baseUrl,
+        model: options.model ?? 'double',
+        stream: true,
+      },
+    ],
+  })
+}
+
+/** A minimal OpenAI-compatible chat double, streamed in the provider's shape. */
+export async function chatDouble(options = {}) {
+  const { createServer } = await import('node:http')
+  const requests = []
+  const server = createServer((request, response) => {
+    let body = ''
+    request.on('data', (chunk) => {
+      body += chunk
+    })
+    request.on('end', () => {
+      requests.push({ url: request.url ?? '', body, headers: request.headers })
+      const message = options.toolCall
+        ? {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-1',
+                type: 'function',
+                function: { name: options.toolCall.name, arguments: JSON.stringify(options.toolCall.arguments ?? {}) },
+              },
+            ],
+          }
+        : { role: 'assistant', content: options.content ?? 'double answer' }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      if (options.reasoning) {
+        response.write(
+          `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: options.reasoning }, finish_reason: null }] })}\n\n`,
+        )
+      }
+      response.write(
+        `data: ${JSON.stringify({ choices: [{ delta: message, finish_reason: options.toolCall ? 'tool_calls' : 'stop' }] })}\n\n`,
+      )
+      response.write('data: [DONE]\n\n')
+      response.end()
+    })
+  })
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', () => resolvePromise()))
+  const address = server.address()
+  const port = typeof address === 'object' && address !== null ? address.port : 0
+  return {
+    baseUrl: `http://127.0.0.1:${port}/ds`,
+    requests,
+    close: () => new Promise((resolvePromise) => server.close(() => resolvePromise())),
+  }
+}
 
 /**
- * A cheap fingerprint of the session store, for before-and-after comparison.
+ * A Codex-shaped Responses double.
  *
- * Counting files rather than listing them keeps the walk short, and that matters
- * because the store is large. It answers "did this run record anything" without
- * claiming which record is which.
+ * Streamed and terminated by `response.completed` rather than `[DONE]`, because
+ * that is the contract the real route enforces — measured against the live
+ * gateway, and the reason the two adapters are not one.
  */
-export function sessionFingerprint(root = sessionRoot) {
-  const buckets = existsSync(root) ? readdirSync(root, { withFileTypes: true }) : []
-  let sessions = 0
-  let newestMtime = 0
-  for (const bucket of buckets) {
-    if (!bucket.isDirectory()) continue
-    for (const entry of readdirSync(join(root, bucket.name), { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
-      sessions += 1
-      const files = readdirSync(join(root, bucket.name, entry.name), { withFileTypes: true })
-      for (const file of files) {
-        if (file.isFile() && file.name.startsWith('session.')) {
-          const stats = statSyncSafe(join(root, bucket.name, entry.name, file.name))
-          if (stats && stats.mtimeMs > newestMtime) newestMtime = stats.mtimeMs
-        }
-      }
-    }
+export async function responsesDouble(options = {}) {
+  const { createServer } = await import('node:http')
+  const requests = []
+  const server = createServer((request, response) => {
+    let body = ''
+    request.on('data', (chunk) => {
+      body += chunk
+    })
+    request.on('end', () => {
+      requests.push({ url: request.url ?? '', body, headers: request.headers })
+      const content = options.content ?? 'double answer'
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.write(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: content })}\n\n`)
+      response.write(
+        `data: ${JSON.stringify({ type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 3, output_tokens: 2 } } })}\n\n`,
+      )
+      response.end()
+    })
+  })
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', () => resolvePromise()))
+  const address = server.address()
+  const port = typeof address === 'object' && address !== null ? address.port : 0
+  return {
+    baseUrl: `http://127.0.0.1:${port}/cx`,
+    requests,
+    close: () => new Promise((resolvePromise) => server.close(() => resolvePromise())),
   }
-  return { sessions, newestMtime }
 }
 
-function statSyncSafe(path) {
+/** Parse the first JSON value a run printed. */
+export function parseJson(stdout) {
+  const start = stdout.search(/[[{]/)
+  if (start === -1) return null
   try {
-    return statSync(path)
+    return JSON.parse(stdout.slice(start))
   } catch {
     return null
   }
 }
 
-/**
- * The environment variable that makes a model provider substitutable.
- *
- * The framework's contract, not this harness's convenience: a provider that
- * honours it can be pointed at a local double, which is what lets the model and
- * end-to-end parts be judged without spending the owner's credentials. Nothing
- * in `src/` reads it yet; the tests that use it are how the contract becomes
- * observable.
- */
-export const PROVIDER_ENV = 'HEDDLE_PROVIDER_BASE_URL'
+/** The temp directory a check may use for artifacts it is judging. */
+export function tempDir(prefix = 'heddle-check-') {
+  return mkdtempSync(join(tmpdir(), prefix))
+}
 
-/** Is there a tool whose registration `run` output shows as a named tool? */
-export function mentionsAny(text, needles) {
-  return needles.some((needle) => text.includes(needle))
+/** Every session directory under a store root. */
+export function sessionsUnder(root) {
+  try {
+    return readdirSync(root).filter((name) => name.startsWith('session-'))
+  } catch {
+    return []
+  }
+}
+
+/** Read a transcript into parsed events. */
+export function readTranscript(path) {
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line))
 }

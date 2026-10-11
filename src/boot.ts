@@ -34,10 +34,25 @@ export interface BootOptions {
   readonly base?: string
   /** Layers applied in order after the base; the last write wins per row. */
   readonly patches?: readonly string[]
+  /**
+   * Apply `heddle.patch.yml` from the configuration directory after the base.
+   *
+   * True when the base layer is the project's own profile. False when the caller
+   * named its layers, because then the caller has said exactly what the tree is.
+   */
+  readonly includeProjectPatch?: boolean
   /** A configuration directory, used as the loader's `baseUrl`. */
   readonly configDir?: string
   /** Who the run is for, announced on `heddle/ready`; defaults to `heddle`. */
   readonly target?: string
+  /**
+   * Layers applied last, in memory.
+   *
+   * This exists so a caller can override one row without writing a file, which is
+   * what a check needs and what a `--flag` needs. It is the same patch shape as a
+   * file layer, so there is no second override mechanism to keep in step.
+   */
+  readonly overrides?: readonly Layer[]
 }
 
 /**
@@ -70,13 +85,23 @@ export async function boot(options: BootOptions = {}): Promise<Boot> {
   if (options.base !== undefined) {
     layers.push([...readLayer(resolve(configDir, options.base))])
   }
+  /**
+   * The file beside a base layer applies unless the caller named its layers.
+   *
+   * Measured while wiring the CLI: an explicit empty `patches: []` means "no
+   * extra layers" to a reader and meant the same to the first version of this
+   * function, so the default profile was never read and a bare `heddle --turn`
+   * booted an empty tree. The rule is now stated once — if a base layer came from
+   * the project, the project's patch file is the next layer.
+   */
   for (const patch of options.patches ?? []) {
     layers.push([...readLayer(resolve(configDir, patch))])
   }
-  if (options.base !== undefined && options.patches === undefined) {
-    const userLayer = resolve(configDir, 'heddle.patch.yml')
-    if (existsSync(userLayer)) layers.push([...readLayer(userLayer)])
+  if (options.base !== undefined && options.includeProjectPatch) {
+    const projectPatch = resolve(configDir, 'heddle.patch.yml')
+    if (existsSync(projectPatch)) layers.push([...readLayer(projectPatch)])
   }
+  for (const override of options.overrides ?? []) layers.push([override])
 
   const rows = compose(layers)
 

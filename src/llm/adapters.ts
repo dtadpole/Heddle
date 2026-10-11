@@ -376,11 +376,19 @@ export function scriptedAdapter(
 ): AsyncIterable<Chunk> {
   return (async function* scripted() {
     const { readFileSync } = await import('node:fs')
+    const { homedir } = await import('node:os')
+    // `~` is expanded here because a script path is written in a config file the
+    // same way every other local path is, and a literal `~` directory does not
+    // exist. Measured: this is what "the script could not be read at
+    // ~/.heddle/scripted.json" meant the first time it ran.
+    const scriptPath = endpoint.baseUrl.startsWith('~')
+      ? `${homedir()}${endpoint.baseUrl.slice(1)}`
+      : endpoint.baseUrl
     let script: { steps?: unknown[] } = {}
     try {
-      script = JSON.parse(readFileSync(endpoint.baseUrl, 'utf8')) as { steps?: unknown[] }
+      script = JSON.parse(readFileSync(scriptPath, 'utf8')) as { steps?: unknown[] }
     } catch (error) {
-      throw new ModelError(`the script for '${endpoint.name}' could not be read at ${endpoint.baseUrl}`, {
+      throw new ModelError(`the script for '${endpoint.name}' could not be read at ${scriptPath}`, {
         endpoint: endpoint.name,
         code: 'SCRIPT',
         cause: error,
