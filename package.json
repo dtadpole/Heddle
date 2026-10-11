@@ -2,6 +2,8 @@
   "name": "heveld",
   "version": "0.0.1",
   "description": "A harness and agent framework built on Cordis, in TypeScript.",
+  "license": "MIT",
+  "author": "D.Tadpole",
   "type": "module",
   "engines": {
     "node": ">=22.18"

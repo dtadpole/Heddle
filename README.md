@@ -61,3 +61,7 @@ test/
 - [ ] tools and commands as services, registered rather than imported
 - [ ] a sandbox and approval policy
 - [ ] one real end-to-end run, recorded as a test
+
+## License
+
+MIT © D.Tadpole. See [LICENSE](LICENSE).
