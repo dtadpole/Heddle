@@ -539,7 +539,15 @@ function respond(response: ServerResponse, status: number, contentType: string, 
  * part a reader most wants separated from what the model said.
  */
 export function transcriptTurns(
-  events: readonly { readonly type: string; readonly message?: unknown; readonly chunk?: unknown }[],
+  /**
+   * Any logged event, not only the two this fold looks at.
+   *
+   * A real transcript is a log: `session/created` carries a `cwd`, `model/request` carries a message
+   * count, and the fold's job is to ignore what it does not display rather than to demand that a
+   * caller pre-filter the log into a shape this file invented. Measured while a unit test handed it
+   * the events a session actually holds: the narrower parameter rejected every one of them.
+   */
+  events: readonly { readonly type: string; readonly [key: string]: unknown }[],
 ): readonly { readonly kind: string; readonly text: string; readonly label?: string }[] {
   const turns: { kind: string; text: string; label?: string }[] = []
   for (const event of events) {

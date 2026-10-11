@@ -89,10 +89,17 @@ test('a refusal with no token and a refusal with a stale one say different thing
   assert.match(stale, /not the current one/i, 'the stale page says the token is stale')
   assert.doesNotMatch(stale, /is required for this page/i)
 
-  for (const [label, html] of [
+  /**
+   * The pairs are annotated because `noUncheckedIndexedAccess` makes a destructured element of an
+   * inferred array type `string | undefined`. That is a claim about indexed access, not about this
+   * page: `tokenFormPage` returns a `string`, and saying so here is what keeps the refusal judged
+   * for what it says rather than for how the literal was inferred.
+   */
+  const refusals: readonly (readonly [string, string])[] = [
     ['no token', fresh],
     ['stale token', stale],
-  ]) {
+  ]
+  for (const [label, html] of refusals) {
     assert.match(html, /<form method="get" action="\/"/, `${label}: carries the form`)
     assert.match(html, /name="token"/, `${label}: has somewhere to paste a token`)
     assert.match(html, /web\.log/, `${label}: says where the current token is`)
