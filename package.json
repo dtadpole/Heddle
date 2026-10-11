@@ -1,7 +1,6 @@
 {
   "name": "heveld",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.0.1",
   "description": "A harness and agent framework built on Cordis, in TypeScript.",
   "type": "module",
   "engines": {
@@ -21,11 +20,27 @@
   "files": [
     "dist"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dtadpole/heveld.git"
+  },
+  "homepage": "https://github.com/dtadpole/heveld",
+  "bugs": {
+    "url": "https://github.com/dtadpole/heveld/issues"
+  },
+  "keywords": [
+    "cordis",
+    "harness",
+    "agent",
+    "framework",
+    "plugin"
+  ],
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit && tsc -p tsconfig.test.json",
     "start": "node src/cli.ts",
-    "test": "node --test test/*.test.ts"
+    "test": "node --test test/*.test.ts",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
