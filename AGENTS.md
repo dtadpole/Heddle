@@ -68,6 +68,9 @@ and these are the articles that bind here.
 
 ## The rules that are local to this repository
 
+- **A renderer is a library, not a rewrite.** Markdown and code rendering use maintained, low-dependency
+  packages: `marked` for markdown, with the output reduced by an allow-list in `src/server/sanitize.ts` because
+  no markdown library sanitizes by default. A written renderer is a fallback, not a first choice.
 - **Endpoint configuration is never committed.** A URL, a model name or a credential
   belongs to the machine, and it is read from `$HEDDLE_CONFIG`,
   `$HEDDLE_HOME/heddle.json` or `~/.heddle/heddle.json`, with `HEDDLE_<ENDPOINT>_*`

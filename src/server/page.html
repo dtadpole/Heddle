@@ -169,7 +169,14 @@
   #doc hr { border: none; border-top: 1px solid var(--line); margin: 1.2rem 0; }
   #doc a { color: #6aa6ff; }
   #doc img { max-width: 100%; }
-  #doc table { border-collapse: collapse; }
+  /**
+   * A table is a table: bordered cells, a header rule, and its own horizontal scroll when it is wider than the
+   * pane. Measured before this — the markup was right and the cells ran together with no borders, which reads as
+   * a paragraph of pipes rather than a table.
+   */
+  #doc table { border-collapse: collapse; margin: .8em 0; display: block; overflow-x: auto; max-width: 100%; }
+  #doc th, #doc td { border: 1px solid var(--line); padding: .3rem .55rem; text-align: left; vertical-align: top; }
+  #doc thead th { background: color-mix(in oklab, currentColor 7%, transparent); font-weight: 600; }
   #doc .frontmatter { border: 1px solid var(--line); border-radius: .35rem; padding: .2rem .7rem .7rem; opacity: .85; margin-bottom: 1rem; }
   #doc .frontmatter h2 { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; opacity: .6; }
   #timeline { position: relative; height: 1.6rem; margin: .1rem 0 .7rem; border-radius: .25rem; background: color-mix(in oklab, currentColor 7%, transparent); overflow: hidden; }

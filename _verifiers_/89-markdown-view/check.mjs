@@ -170,6 +170,42 @@ test('a browser renders the document as a document, and a document cannot inject
     assert.ok(drawn.lists > 0, 'lists render as lists')
     assert.equal(drawn.showsSource, false, 'and the reader is not shown markdown source instead')
     assert.ok(drawn.frontmatter > 0, 'a document that opens with frontmatter shows it as metadata')
+    /**
+     * A table **is** a table.
+     *
+     * The owner reported it: a document's tables were rendered as text, and a table is the one construct where
+     * "shown as text" is not a readable fallback — the columns are the information. Judged in the browser as well
+     * as in the unit tests, because the markup can be right and the cells run together with no borders, which
+     * reads as a paragraph of pipes.
+     */
+    const table = JSON.parse(
+      await browser.evaluate(`(() => {
+        const pane = document.getElementById('doc')
+        pane.innerHTML = ${JSON.stringify(
+          '<table><thead><tr><th>Part</th><th>Claims</th></tr></thead><tbody><tr><td>1</td><td>10</td></tr></tbody></table>',
+        )}
+        const element = pane.querySelector('table')
+        if (element === null) return JSON.stringify({ found: false })
+        const header = element.querySelector('thead th')
+        const cell = element.querySelector('tbody td')
+        const headerStyle = getComputedStyle(header)
+        const cellStyle = getComputedStyle(cell)
+        return JSON.stringify({
+          found: true,
+          headerCells: element.querySelectorAll('thead th').length,
+          bodyCells: element.querySelectorAll('tbody td').length,
+          bordered: headerStyle.borderTopWidth !== '0px' && cellStyle.borderTopWidth !== '0px',
+          padded: parseFloat(cellStyle.paddingLeft) > 0,
+          headerDiffersFromCell: headerStyle.backgroundColor !== cellStyle.backgroundColor
+        })
+      })()`),
+    )
+    assert.ok(table.found, 'a table element renders')
+    assert.equal(table.headerCells, 2, 'with its header cells')
+    assert.equal(table.bodyCells, 2, 'and its body cells')
+    assert.ok(table.bordered, 'each cell has a border, so the columns are visibly columns')
+    assert.ok(table.padded, 'and padding, so the text is not against the rule')
+    assert.ok(table.headerDiffersFromCell, 'with a header that reads as a header')
     assert.ok(drawn.chatHidden && drawn.ledgerHidden, 'while the other two views are off screen')
 
     /**

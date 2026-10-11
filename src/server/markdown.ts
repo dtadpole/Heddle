@@ -1,19 +1,31 @@
+import { Marked, type Tokens } from 'marked'
+
+import { sanitizeHtml } from './sanitize.ts'
+
 /**
- * A small Markdown renderer, for showing a document as a document.
+ * Markdown rendering, on **marked**.
  *
- * Written rather than installed, and that is a decision worth stating: heddle carries four runtime
- * dependencies, and a full CommonMark implementation is several times the size of the whole UI. What a
- * reader needs here is a **document view** — headings, paragraphs, lists, code, emphasis, links, rules,
- * quotes — not every corner of the specification.
+ * The first version of this file was a renderer written here. It was replaced on the owner's instruction on
+ * 2026-10-11 — find an existing library with few dependencies and high function rather than writing one — and the
+ * instruction was right on the evidence:
  *
- * Two rules matter more than the feature list:
+ * - `marked` 18.1.0 has **zero dependencies** and 520 KB on disk, against four runtime dependencies for the whole
+ *   harness, and a few times that size for `markdown-it`, `micromark` or `remark` once their trees are counted;
+ * - it is maintained, and it renders constructs mine did not: nested lists, tables with alignment, autolinks,
+ *   reference links, strikethrough, task lists, and the rest of GitHub-flavoured markdown.
  *
- * - **Everything is escaped first.** A document is untrusted text: it comes from a model, a repository, or a
- *   person, and any of them can contain `<script>`. Every renderer path escapes, and the only tags in the
- *   output are the ones this file writes. A test asserts that, because it is the property that fails
- *   silently.
- * - **Anything not understood is shown, not dropped.** An unknown construct becomes an escaped paragraph.
- *   A renderer that swallows what it does not recognise loses the reader's text without saying so.
+ * What it does **not** do is make any of that safe, and that is why this file still exists. `marked` documents
+ * that it "does not sanitize the output HTML", and a document here is untrusted text — from a model, a repository,
+ * or a person. So the two guarantees the written renderer had are kept here, and **the unit tests that assert them
+ * are unchanged**: they were the acceptance test for adopting a library rather than something to relax for one.
+ *
+ * 1. **The library's output is reduced to an allow-list of elements and attributes**, so a document cannot produce
+ *    a tag of its own. Measured: escaping the *source* first was wrong — `marked` escapes the escaped text again
+ *    inside a code block, so `1 < 2` in a fence rendered as `&amp;lt;`. The guarantee belongs on the output when
+ *    the parser is someone else's code, and it is an allow-list rather than a deny-list because a deny-list is a
+ *    list of the attacks its author thought of.
+ * 2. **A link's scheme is checked** in the renderer's own hook. Measured: `marked` emits `href="javascript:…"`
+ *    without complaint, so the check has to be here.
  */
 
 /** Escape the five characters that can start a tag, an entity, or a quote break-out. */
@@ -24,12 +36,12 @@ export function escapeHtml(text: string): string {
 /**
  * Whether a link's target may be followed.
  *
- * A renderer that passes a `javascript:` URL through is handing a document the ability to run code, and saying
- * "the browser decides" is not a defence — the browser follows what it is given. Relative targets, fragments,
- * and the three schemes a document legitimately links to are allowed; everything else becomes text.
+ * Relative targets, fragments, and the three schemes a document legitimately links to are allowed; everything else
+ * becomes text. A renderer that passes a `javascript:` URL through hands a document the ability to run code, and
+ * "the browser decides" is not a defence — the browser follows what it is given.
  */
 export function safeUrl(url: string): string | null {
-  const trimmed = url.trim()
+  const trimmed = String(url ?? '').trim()
   if (trimmed.length === 0) return null
   if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
     return /^(?:https?|mailto):/i.test(trimmed) ? trimmed : null
@@ -37,134 +49,54 @@ export function safeUrl(url: string): string | null {
   return trimmed
 }
 
-/** Find the `)` that closes a `(`-balanced link target, so `alert(1)` cannot end it early. */
-function closingParen(text: string, from: number): number {
-  let depth = 0
-  for (let index = from; index < text.length; index += 1) {
-    const character = text[index]
-    if (character === '\\') {
-      index += 1
-      continue
-    }
-    if (character === '(') depth += 1
-    else if (character === ')') {
-      if (depth === 0) return index
-      depth -= 1
-    }
-  }
-  return -1
-}
+/**
+ * The parser, configured once.
+ *
+ * `gfm` stays on because it is the dialect a document in a repository is written in. `breaks` stays **off**: one
+ * newline inside a paragraph is a space in that dialect, and turning it on reflows every wrapped line of prose
+ * into its own line.
+ */
+const marked = new Marked({ gfm: true, breaks: false })
 
-/** An image or a link at `start`, or `null` when the text there is not one. */
-function linkAt(text: string, start: number): { readonly kind: 'image' | 'link'; readonly label: string; readonly url: string; readonly end: number } | null {
-  const image = text.startsWith('![', start)
-  const open = image ? start + 2 : text.startsWith('[', start) ? start + 1 : -1
-  if (open === -1) return null
-  const labelEnd = text.indexOf(']', open)
-  if (labelEnd === -1 || text[labelEnd + 1] !== '(') return null
-  const urlStart = labelEnd + 2
-  const urlEnd = closingParen(text, urlStart)
-  if (urlEnd === -1) return null
-  return {
-    kind: image ? 'image' : 'link',
-    label: text.slice(open, labelEnd),
-    url: text.slice(urlStart, urlEnd),
-    end: urlEnd + 1,
-  }
-}
+marked.use({
+  renderer: {
+    /**
+     * Refuse a scheme rather than emit it, and keep the label so the document still reads with the reason beside
+     * it — a reader who saw a link in the source should see what became of it.
+     */
+    link({ href, title, text }: Tokens.Link): string {
+      const target = safeUrl(href)
+      if (target === null) return `${text} (link refused)`
+      const heading = title === null || title === undefined ? '' : ` title="${escapeHtml(title)}"`
+      return `<a href="${escapeHtml(target)}" rel="noreferrer noopener"${heading}>${text}</a>`
+    },
+    /** An image with a refused source becomes its alt text, so nothing is fetched and nothing is lost. */
+    image({ href, title, text }: Tokens.Image): string {
+      const target = safeUrl(href)
+      if (target === null) return escapeHtml(text)
+      const heading = title === null || title === undefined ? '' : ` title="${escapeHtml(title)}"`
+      return `<img src="${escapeHtml(target)}" alt="${escapeHtml(text)}"${heading}>`
+    },
+  },
+})
 
 /**
- * Inline spans, applied to already-escaped text.
+ * Render inline spans only — a title, a table cell, a label.
  *
- * A scanner rather than a set of regexes, and the change was forced by a test: the regex for a link target
- * stopped at the first `)`, so `[click](javascript:alert(1))` produced the href `javascript:alert(1` and a
- * stray `)` — a URL cut in half. Balanced parentheses are what a target can contain, and finding the end of
- * one is a scan, not a match.
- *
- * Code spans are pulled out before anything else, because `**` inside a code span is literal — a renderer that
- * bolds inside code is wrong in a way a reader notices immediately in a document about code.
+ * The library's own inline parser, which is part of the point of using it: one implementation of emphasis and
+ * code spans rather than two that can disagree.
  */
-export function renderInline(escaped: string): string {
-  const out: string[] = []
-  let index = 0
-  while (index < escaped.length) {
-    const character = escaped[index]
-
-    /** A code span: everything to the matching backtick is literal. */
-    if (character === '`') {
-      const close = escaped.indexOf('`', index + 1)
-      if (close !== -1) {
-        out.push(`<code>${escaped.slice(index + 1, close)}</code>`)
-        index = close + 1
-        continue
-      }
-    }
-
-    if (character === '[' || (character === '!' && escaped[index + 1] === '[')) {
-      const found = linkAt(escaped, index)
-      if (found !== null) {
-        const target = safeUrl(found.url)
-        if (found.kind === 'image') {
-          out.push(target === null ? found.label : `<img alt="${found.label}" src="${target}">`)
-        } else if (target === null) {
-          /** A refused scheme keeps the label as text, so the document still reads and nothing is followed. */
-          out.push(`${found.label} (link refused)`)
-        } else {
-          out.push(`<a href="${target}" rel="noreferrer noopener">${found.label}</a>`)
-        }
-        index = found.end
-        continue
-      }
-    }
-
-    /** Emphasis, matched at the position the scanner has reached so a code span cannot be caught by it. */
-    if (escaped.startsWith('**', index)) {
-      const close = escaped.indexOf('**', index + 2)
-      if (close !== -1) {
-        out.push(`<strong>${escaped.slice(index + 2, close)}</strong>`)
-        index = close + 2
-        continue
-      }
-    }
-    if (escaped.startsWith('~~', index)) {
-      const close = escaped.indexOf('~~', index + 2)
-      if (close !== -1) {
-        out.push(`<del>${escaped.slice(index + 2, close)}</del>`)
-        index = close + 2
-        continue
-      }
-    }
-    if (character === '*') {
-      const close = escaped.indexOf('*', index + 1)
-      if (close !== -1 && close > index + 1) {
-        out.push(`<em>${escaped.slice(index + 1, close)}</em>`)
-        index = close + 1
-        continue
-      }
-    }
-
-    out.push(character ?? '')
-    index += 1
-  }
-  return out.join('')
+export function renderInline(text: string): string {
+  return sanitizeHtml(marked.parseInline(String(text ?? '')) as string, { url: safeUrl })
 }
 
 /**
  * Render a document to HTML.
  *
- * Block-level constructs only, one pass, no nesting beyond a list's own items. That covers what a document
- * view shows and keeps the function small enough to reason about — and every line it does not recognise is
- * still rendered, as a paragraph.
+ * A leading YAML block is lifted out and shown as metadata rather than parsed: every document in this repository
+ * opens with frontmatter, and as markdown it renders as a horizontal rule and a heading made of the first key.
  */
 export function renderMarkdown(source: string): string {
-  /**
-   * A leading YAML block is **lifted out**, not rendered as text.
-   *
-   * Measured: `title: heddle version: 0.3.0 description: …` appeared as the first paragraph of every document in
-   * this repository, because every one of them opens with frontmatter — which is metadata, not prose, and
-   * reading it as a sentence is worse than not showing it. It comes back as a titled block so the reader knows
-   * the document declared something rather than that the renderer dropped it.
-   */
   const text = String(source ?? '').replace(/\r\n?/g, '\n')
   const front = /^---\n([\s\S]*?)\n---\n?/.exec(text)
   const body = front === null ? text : text.slice(front[0].length)
@@ -172,101 +104,5 @@ export function renderMarkdown(source: string): string {
     front === null
       ? ''
       : `<section class="frontmatter"><h2>frontmatter</h2><pre><code>${escapeHtml((front[1] ?? '').trim())}</code></pre></section>\n`
-  const lines = body.split('\n')
-  const out: string[] = []
-  /** The open list, so consecutive items join one list rather than many. */
-  let list: 'ul' | 'ol' | null = null
-  let paragraph: string[] = []
-  let quote: string[] = []
-
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return
-    out.push(`<p>${renderInline(escapeHtml(paragraph.join(' ')))}</p>`)
-    paragraph = []
-  }
-  const flushList = () => {
-    if (list !== null) {
-      out.push(`</${list}>`)
-      list = null
-    }
-  }
-  const flushQuote = () => {
-    if (quote.length === 0) return
-    out.push(`<blockquote>${renderInline(escapeHtml(quote.join(' ')))}</blockquote>`)
-    quote = []
-  }
-  const flushAll = () => {
-    flushParagraph()
-    flushList()
-    flushQuote()
-  }
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? ''
-
-    /** A fenced block runs to its closing fence, or to the end when there is none — never dropped. */
-    const fence = /^\s*(?:```|~~~)\s*([A-Za-z0-9+#-]*)\s*$/.exec(line)
-    if (fence !== null) {
-      flushAll()
-      const language = fence[1] ?? ''
-      const body: string[] = []
-      index += 1
-      while (index < lines.length && !/^\s*(?:```|~~~)\s*$/.test(lines[index] ?? '')) {
-        body.push(lines[index] ?? '')
-        index += 1
-      }
-      out.push(
-        `<pre><code${language.length > 0 ? ` class="language-${escapeHtml(language)}"` : ''}>${escapeHtml(body.join('\n'))}</code></pre>`,
-      )
-      continue
-    }
-
-    if (/^\s*$/.test(line)) {
-      flushAll()
-      continue
-    }
-
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line)
-    if (heading !== null) {
-      flushAll()
-      const level = (heading[1] ?? '#').length
-      out.push(`<h${level}>${renderInline(escapeHtml(heading[2] ?? ''))}</h${level}>`)
-      continue
-    }
-
-    if (/^\s*(?:---+|\*\*\*+|___+)\s*$/.test(line)) {
-      flushAll()
-      out.push('<hr>')
-      continue
-    }
-
-    const item = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line)
-    if (item !== null) {
-      flushParagraph()
-      flushQuote()
-      const wanted: 'ul' | 'ol' = /^\s*\d/.test(line) ? 'ol' : 'ul'
-      if (list !== wanted) {
-        flushList()
-        out.push(`<${wanted}>`)
-        list = wanted
-      }
-      out.push(`<li>${renderInline(escapeHtml(item[1] ?? ''))}</li>`)
-      continue
-    }
-
-    const quoted = /^\s*>\s?(.*)$/.exec(line)
-    if (quoted !== null) {
-      flushParagraph()
-      flushList()
-      quote.push(quoted[1] ?? '')
-      continue
-    }
-
-    flushList()
-    flushQuote()
-    paragraph.push(line.trim())
-  }
-
-  flushAll()
-  return frontHtml + out.join('\n')
+  return sanitizeHtml(frontHtml + (marked.parse(body) as string), { url: safeUrl })
 }

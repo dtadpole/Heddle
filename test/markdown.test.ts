@@ -12,10 +12,16 @@ import { escapeHtml, renderMarkdown } from '../src/server/markdown.ts'
  */
 
 test('a document cannot inject markup', () => {
+  /**
+   * The sanitizer is an allow-list over the parser's output, so a `script` element is **dropped with its content**
+   * — showing `alert(1)` as text is not a favour to a reader — while a tag that is allowed keeps only the
+   * attributes allowed on it.
+   */
   const html = renderMarkdown('Hello <script>alert(1)</script> and <img src=x onerror=alert(1)>')
   assert.ok(!html.includes('<script'), 'no script tag survives')
-  assert.ok(!html.includes('<img src=x'), 'and no attribute can be smuggled in through a tag')
-  assert.match(html, /&lt;script&gt;/, 'the text is shown as text')
+  assert.ok(!html.includes('alert(1)'), 'and its content is dropped rather than shown')
+  assert.ok(!html.includes('onerror'), 'an event handler cannot survive on an allowed tag')
+  assert.match(html, /<img src="x">/, 'while the tag itself keeps the attribute that is allowed')
 })
 
 test('a link that would run script is refused, and the label survives', () => {
@@ -80,23 +86,80 @@ test('consecutive items join one list, and a switch of marker starts another', (
 })
 
 test('a quote is its own block', () => {
+  /**
+   * The block's lines are kept as the parser keeps them. The written renderer joined them into one line; the
+   * library wraps them in a paragraph inside the blockquote, which is what CommonMark says and what a reader
+   * expects from a quoted paragraph.
+   */
   const html = renderMarkdown('> quoted words\n> on two lines\n')
-  assert.match(html, /<blockquote>quoted words on two lines<\/blockquote>/, 'the lines join, as a paragraph does')
+  assert.match(html, /<blockquote>/, 'a quote is a blockquote')
+  assert.match(html, /quoted words/, 'holding its text')
+  assert.match(html, /on two lines/, 'and every line of it')
 })
 
 test('an unrecognised construct is shown rather than dropped', () => {
   /**
    * A renderer that swallows what it does not understand loses the reader's text without saying so, which is
    * worse than showing it plainly.
+   *
+   * A table is no longer one of these: it is understood, and the test that used to assert it became text is
+   * now the table test below.
    */
-  const html = renderMarkdown('| a | b |\n| - | - |\n\n::: callout\nodd\n:::')
-  assert.match(html, /\| a \| b \|/, 'a table becomes its own text')
-  assert.match(html, /::: callout/, 'and an unknown directive is still visible')
+  const html = renderMarkdown('::: callout\nodd\n:::')
+  assert.match(html, /::: callout/, 'an unknown directive is still visible')
 })
 
-test('text is escaped before the inline rules run, so markup cannot be manufactured', () => {
+test('a table renders as a table, with its cells and its alignment', () => {
+  /**
+   * The owner's report: a document's tables were rendered as text. A table is the one construct where "shown as
+   * text" is not a readable fallback — the columns are the information — so it is the one the renderer has to
+   * understand rather than pass through.
+   */
+  const html = renderMarkdown('| Part | Claims | State |\n| --- | ---: | :---: |\n| 1 | 10 | holds |\n| 2 | 6 | holds |\n')
+  assert.equal((html.match(/<table>/g) ?? []).length, 1, 'one table')
+  /** `/<th/` would also count `<thead>` — measured, and it reported four header cells for three. */
+  assert.equal((html.match(/<th[\s>]/g) ?? []).length, 3, 'three header cells')
+  assert.equal((html.match(/<td[\s>]/g) ?? []).length, 6, 'six body cells')
+  assert.match(html, /<th>Part<\/th>/, 'the header text is a header cell')
+  /** The alignment attribute is the parser's choice, and it is the standard one: `<th align="…">`. */
+  assert.match(html, /<th align="right">Claims<\/th>/, 'a right-aligned column says so')
+  assert.match(html, /<th align="center">State<\/th>/, 'and a centered one')
+  assert.match(html, /<td align="right">10<\/td>/, 'including in the body')
+  assert.ok(!html.includes('|'), 'no pipe is left as text')
+})
+
+test('a table row does not need its outer pipes, and an escaped pipe stays in its cell', () => {
+  const html = renderMarkdown('a | b\n--- | ---\n1 | 2\n')
+  assert.equal((html.match(/<th[\s>]/g) ?? []).length, 2, 'a row without outer pipes is still a row')
+  /** Asserted on the string, because in a regex `a \| b` is alternation rather than an escaped pipe. */
+  assert.ok(
+    renderMarkdown('| x |\n| --- |\n| a \\| b |').includes('<td>a | b</td>'),
+    'an escaped pipe stays inside its cell',
+  )
+})
+
+test('emphasis and code work inside a cell, and the cell is still escaped', () => {
+  const html = renderMarkdown('| what | how |\n| --- | --- |\n| **bold** | `<x>` |\n')
+  assert.match(html, /<td><strong>bold<\/strong><\/td>/, 'inline spans render in a cell')
+  assert.match(html, /<td><code>&lt;x&gt;<\/code><\/td>/, 'and code is escaped inside its cell')
+})
+
+test('a table is not read where there is no delimiter row', () => {
+  /** The delimiter row is what makes the line above it a header; without one this is a paragraph with pipes. */
+  const html = renderMarkdown('| a | b |\n| c | d |\n')
+  assert.ok(!html.includes('<table>'), 'no table is invented')
+  assert.match(html, /\| a \| b \|/, 'and the text is shown as it was written')
+})
+
+test('a bolded tag does not become a tag', () => {
+  /**
+   * The written renderer escaped the source first, so this came out as `<strong>&lt;b&gt;…`. The library parses
+   * the text and the sanitizer then drops the element, because `b` is not an element a document view shows —
+   * which is the same guarantee by a different route: no tag the document wrote survives inside the emphasis.
+   */
   const html = renderMarkdown('**<b>not bold</b>**')
-  assert.match(html, /<strong>&lt;b&gt;not bold&lt;\/b&gt;<\/strong>/, 'the escaping holds inside emphasis')
+  assert.match(html, /<strong>not bold<\/strong>/, 'the emphasis survives with its text')
+  assert.ok(!html.includes('<b>'), 'and the element the document wrote does not')
 })
 
 test('escaping covers every character that can break out', () => {

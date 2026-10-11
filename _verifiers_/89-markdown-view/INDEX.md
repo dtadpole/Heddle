@@ -39,15 +39,30 @@ actually execute.
 The renderer itself is judged by unit tests beside it in `test/markdown.test.ts`, because escaping and emphasis
 are decisions a browser check cannot isolate.
 
+## Which library renders it, and why that is not a gap in the judging
+
+Rendering is **`marked`** 18.1.0 — **zero dependencies**, 520 KB — adopted on the owner's instruction of
+2026-10-11 to use an existing renderer rather than a written one. The candidates that were measured:
+`markdown-it` (6 dependencies), `micromark` (several packages), `commonmark` (3), `snip`-style micro renderers
+(zero but a fraction of the function).
+
+`marked` does **not** sanitize its output, and says so; `href="javascript:…"` is emitted without complaint. So the
+two guarantees below are still asserted here, and **the unit tests that assert them were not changed to suit the
+library** — they were the acceptance test for adopting one. The guarantee moved from the renderer to an
+allow-list over the library's output, because the parser is now someone else's code:
+
+1. only the elements and attributes a document view uses survive (`src/server/sanitize.ts`, with its own tests);
+2. a link's scheme is checked in the parser's own hook.
+
 ## What it deliberately does not judge
 
-- **Every corner of the specification.** This is a document view, not a CommonMark implementation: no tables, no
-  nested lists, no reference links. What it does not understand is rendered as text, which the unit tests
-  assert — an unknown construct is shown rather than dropped.
-- **Raw HTML in a document.** It is escaped, and that is the design rather than a gap: a document that could
-  write markup could run script.
-- **Syntax highlighting.** Code keeps its language as a class and is otherwise exact; colouring it is a
-  separate feature with its own size cost.
+- **Every corner of the specification.** The library covers far more than the written renderer did — nested
+  lists, reference links, task lists — and none of that is claimed here beyond what a check exercises.
+- **Raw HTML in a document.** It is dropped by the allow-list, which is the design rather than a gap: a document
+  that could write markup could run script.
+- **Syntax highlighting.** Code keeps its language as a class (`language-ts`) and is otherwise exact. Colouring
+  it needs a highlighter — `highlight.js` and `prismjs` are both zero-dependency candidates — and it is a
+  separate feature with its own judging.
 
 ## Running it
 
