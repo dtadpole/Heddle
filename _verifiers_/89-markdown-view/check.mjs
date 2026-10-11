@@ -206,6 +206,32 @@ test('a browser renders the document as a document, and a document cannot inject
     assert.ok(table.bordered, 'each cell has a border, so the columns are visibly columns')
     assert.ok(table.padded, 'and padding, so the text is not against the rule')
     assert.ok(table.headerDiffersFromCell, 'with a header that reads as a header')
+
+    /**
+     * Code is **coloured**, and a fence in a language the build does not know is still rendered.
+     *
+     * Both halves matter: highlighting is a presentation of code that is already correct, so the failure worth
+     * guarding is losing the block, not colouring it imperfectly. Judged in the browser because the spans can be
+     * present in the markup and invisible — that is what a missing theme looks like.
+     */
+    const coloured = JSON.parse(
+      await browser.evaluate(`(async () => {
+        const pane = document.getElementById('doc')
+        const response = await fetch('/api/docs?path=' + encodeURIComponent('README.md'))
+        const body = await response.json()
+        pane.innerHTML = body.html
+        const spans = [...pane.querySelectorAll('pre code span[class^="hljs-"]')]
+        const colours = [...new Set(spans.map((span) => getComputedStyle(span).color))]
+        const languages = [...new Set([...pane.querySelectorAll('pre code')].map((code) => code.className).filter((name) => name.includes('language-')))]
+        return JSON.stringify({ spans: spans.length, colours: colours.length, languages })
+      })()`),
+    )
+    assert.ok(coloured.languages.length > 0, `the served document has fenced code with a language (${JSON.stringify(coloured.languages)})`)
+    assert.ok(coloured.spans > 0, `and its code is tokenised by the highlighter (${coloured.spans} spans)`)
+    assert.ok(
+      coloured.colours > 1,
+      `with more than one colour actually applied, so a theme is in force rather than the classes alone (${coloured.colours})`,
+    )
     assert.ok(drawn.chatHidden && drawn.ledgerHidden, 'while the other two views are off screen')
 
     /**

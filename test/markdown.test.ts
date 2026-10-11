@@ -67,9 +67,16 @@ test('emphasis inside a code span stays literal, because a document about code d
 })
 
 test('a fenced block keeps its language and its text exactly', () => {
+  /**
+   * Asserted on the block's **text**, not its markup: the highlighter tokenises the code into spans, so the source
+   * is no longer one run of characters in the HTML. What has to hold is that stripping the tags gives back exactly
+   * what the fence held, and that the escaping is not applied twice.
+   */
   const html = renderMarkdown('```ts\nconst x: number = 1 < 2 ? a : b\n```')
   assert.match(html, /<pre><code class="language-ts">/, 'the language is carried')
-  assert.match(html, /const x: number = 1 &lt; 2 \? a : b/, 'the code is escaped and otherwise untouched')
+  assert.ok(!html.includes('&amp;lt;'), 'and the escaping is not applied twice')
+  const text = html.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+  assert.equal(text.trim(), 'const x: number = 1 < 2 ? a : b', 'the code reads exactly as it was written')
 })
 
 test('an unterminated fence still renders its content rather than swallowing it', () => {

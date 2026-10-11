@@ -26,6 +26,7 @@ document here is untrusted text: it comes from a model, a repository, or a perso
 | 2 | headings, paragraphs, fenced code, lists and links become markup, and the source is **not** what is shown | "rendered" and "shown as source" are one CSS mistake apart |
 | 3 | a document that opens with YAML frontmatter shows it as metadata | every document in this repository does, and as prose it reads as a sentence |
 | 4 | a document cannot produce a `script` element, or an attribute of its own | the property that fails silently |
+| 7 | a fence in a registered language is tokenised and **coloured**, and one outside the set is still rendered | spans can be present in the markup and invisible without a theme |
 | 5 | a path outside the document root, and a file that is not markdown, are refused | a document view that can be asked for any file is disclosure with a renderer in front |
 | 6 | the listing is stable and holds no dependency trees | a listing that reshuffles, or lists `node_modules`, is unusable |
 
@@ -46,6 +47,13 @@ Rendering is **`marked`** 18.1.0 — **zero dependencies**, 520 KB — adopted o
 `markdown-it` (6 dependencies), `micromark` (several packages), `commonmark` (3), `snip`-style micro renderers
 (zero but a fraction of the function).
 
+Code is coloured by **`highlight.js`** 11.12.0 — also **zero dependencies** — through the **`marked-highlight`**
+2.2.4 plugin, also zero. Measured against the alternatives: `prismjs` 1.30.0 is zero-dependency too but needs a
+component per language and a CSS file per theme, and `shiki` 4.5.0 is the best-looking and pulls **8 packages** with
+grammars and themes. `lowlight`, the wrapper these are usually paired with, was measured and **rejected**: it adds
+three packages including `highlight.js` itself. The full `highlight.js` is 9.2 MB because it ships every language;
+this imports its `core` and registers twenty-one grammars.
+
 `marked` does **not** sanitize its output, and says so; `href="javascript:…"` is emitted without complaint. So the
 two guarantees below are still asserted here, and **the unit tests that assert them were not changed to suit the
 library** — they were the acceptance test for adopting one. The guarantee moved from the renderer to an
@@ -60,9 +68,9 @@ allow-list over the library's output, because the parser is now someone else's c
   lists, reference links, task lists — and none of that is claimed here beyond what a check exercises.
 - **Raw HTML in a document.** It is dropped by the allow-list, which is the design rather than a gap: a document
   that could write markup could run script.
-- **Syntax highlighting.** Code keeps its language as a class (`language-ts`) and is otherwise exact. Colouring
-  it needs a highlighter — `highlight.js` and `prismjs` are both zero-dependency candidates — and it is a
-  separate feature with its own judging.
+- **A colour for every language in the world.** Twenty-one grammars are registered, which is what this repository
+  and its sessions are written in plus a few a tool output can be in. A fence in a language outside that set is
+  still rendered as code, and a check asserts it.
 
 ## Running it
 

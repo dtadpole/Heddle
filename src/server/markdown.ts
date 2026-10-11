@@ -1,5 +1,7 @@
 import { Marked, type Tokens } from 'marked'
+import { markedHighlight } from 'marked-highlight'
 
+import { highlightCode } from './highlight.ts'
 import { sanitizeHtml } from './sanitize.ts'
 
 /**
@@ -57,6 +59,20 @@ export function safeUrl(url: string): string | null {
  * into its own line.
  */
 const marked = new Marked({ gfm: true, breaks: false })
+
+/**
+ * Colour the code, through the marked plugin for the two libraries.
+ *
+ * Both are zero-dependency, and the plugin is what lets a fence keep its language while the highlighter colours it —
+ * `class="language-ts"` on the `<code>`, and the highlighter's own `hljs-` spans inside. The allow-list accepts both
+ * because it permits `span`, `class` and `pre`, and **nothing else** the highlighter could emit.
+ */
+marked.use(
+  markedHighlight({
+    langPrefix: 'language-',
+    highlight: (code: string, language: string) => highlightCode(code, language),
+  }),
+)
 
 marked.use({
   renderer: {
