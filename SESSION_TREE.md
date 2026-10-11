@@ -85,8 +85,12 @@ exists rather than maintained by hand.
 
 ## 3. The tree
 
-The left column renders folders only. Files are not nodes; a leaf is reached by opening the
-transcript, not by browsing.
+The left column renders folders **and the files inside them**, folders first. This reverses the first
+version of this section, which read *"files are not nodes; a leaf is reached by opening the transcript,
+not by browsing"* — the owner asked for the files on 2026-10-11, and for clicking one to open its
+content in the right panel. What the reversal keeps is the part that was really about navigation: a
+file is a leaf that carries no session, and what nobody means by content (dot-entries, `node_modules`,
+`__pycache__`) is still not enumerated at all.
 
 **Node kinds.** Each node carries a `kind`, a `label`, an optional `badge`, and — for a folder that
 has a session — the session's id, turn count and running flag.
@@ -98,10 +102,36 @@ has a session — the session's id, turn count and running flag.
 | `instance` | an instance inside a type folder — **the only kind that carries a session** | its parent is a `type`, and the name matches `^[a-z0-9]+(-[a-z0-9]+){1,3}$` |
 | `folder` | a plain content folder | anything else that carries an `INDEX.md` |
 | `generated` | a folder a tool writes | named by the caller, exactly as the convention linter's `--generated` names it |
+| `file` | a leaf, and the only kind that opens a **panel** rather than a conversation | not a directory; carries its size and no children |
 
 A `type` may appear at any depth, including inside an instance (`_projects_/a-project/_context_/`),
 and an `instance` may hold content and further type folders — the conventions place no depth limit,
 and the observed maximum is four.
+
+**A row reads left to right as "what it is" then "what you can do".** The left carries the kind's
+icon, the type's badge and the name, then the session marker and turn count; the right carries the
+disclosure (`+` when closed, `−` when open) and, where there is anything to do, a `…` menu last of
+all. Both controls moved to the right edge on the owner's instruction of 2026-10-11, and for the same
+reason: a control that removes something must not sit a pixel away from the one that navigates, and
+the eye should find the controls in one place rather than hunting a glyph that is sometimes left of
+the name and sometimes right of it.
+
+**Actions live behind the menu, never on the row.** A workspace root offers *Rename…* and
+*Unregister*; an instance offers *New session here* and, once it has a conversation, *Rename
+conversation…*; a type folder, a plain folder and a file offer nothing yet and therefore draw no menu
+rather than an empty one. A rename keeps the path and changes only the label — for a workspace that is
+the record's `title`, for a conversation the meta record's `title`, which is why the append-only log is
+never rewritten by either. An empty name is refused rather than saved.
+
+**The selected row is what the right panel is showing.** One idea rather than two: the panel shows a
+conversation or a file, and the tree marks the row being shown — a left accent bar and a tint, not a
+tint alone, because a tint is what hover already draws. Selecting a folder with a session, selecting a
+folder without one, opening a file and switching back to Chat each move the mark, and exactly one row
+carries it at a time. The session marker (`●`/`○`) stays a separate fact: it says whether a
+conversation *exists* there, which is not the same question as which one is on screen.
+
+**A file row carries no disclosure.** A file is a leaf: a `+` on it would promise children that cannot
+exist, and clicking the row shows the file's content in the right panel instead.
 
 **What is not enumerated.** Plumbing is hidden: dot-folders (`.git`, `.github`), `node_modules`,
 `__pycache__`. A folder without an `INDEX.md` and without a session is still enumerated, because
@@ -172,6 +202,8 @@ is kept because the checks and the CLI already read it.
 | `heddle workspace add <path> [--title T]` | register a target folder as a root |
 | `heddle workspaces --json` | the roots, newest first, each with its derived sessions |
 | `heddle tree [<path>] --json [--generated NAME]…` | one level of the tree; no path lists the roots |
+| `heddle file <path> --json` | a text file under a root, as the right panel shows it |
+| `heddle workspace rename <id\|path> <name>` | retitle a root, leaving its path alone |
 | `heddle run --turn T [--new]` | ask this folder's session, or start a new one for it |
 | `heddle sessions --json` | every session, flat — unchanged, and the way history is reached |
 
@@ -185,15 +217,26 @@ not need a browser.
 |---|---|
 | `GET /api/tree` | the roots, one level |
 | `GET /api/tree?path=<abs>` | one level under `<abs>`; `400` when the path is outside every root |
-| `POST /api/folders/session` `{folder}` | the folder's current session, created when absent |
+| `GET /api/file?path=<abs>` | a text file's content; `400` outside every root, `404` when it is not a file, `415` when it is not UTF-8 text |
+| `POST /api/folders/session` `{folder, new?}` | the folder's current session, created when absent; `new` starts another |
+| `PATCH /api/workspaces/<id\|path>` `{title}` | retitle a root; `400` on an empty name |
+| `POST /api/sessions/<id>/title` `{title}` | retitle a conversation; the log is untouched |
 | `GET /api/sessions`, `/api/sessions/<id>`, `/api/events`, `/api/turn` | unchanged |
 
 `/api/turn` gains an optional `folder`; `session` still addresses a session directly.
 
-**Web UI.** The left column becomes the tree: disclosure, kind icon, type badge, label, session
-marker. Selecting a folder with a session loads its transcript through the existing
-`/api/sessions/<id>` route; selecting one without a session opens the folder and the first prompt
-creates it.
+**The file viewer.** A file row opens a third view beside Chat and Trajectory, showing the file's path,
+its size, its line count and its text. Three refusals are sentences rather than an empty panel: a
+directory is not a file, a binary is not text, and a file longer than **256 KB is truncated and says
+so** rather than being refused — a big log is exactly what a reader opens. The reader is a **view**: it
+never bypasses the sandbox, because a tool acting for a model still goes through the sandbox and the
+approval policy, while this route is fenced by the token and by "under a registered root", checked on
+the **canonical** path so a symlink resolving outside a root is refused rather than followed.
+
+**Web UI.** The left column is the tree: disclosure, kind icon, type badge, label, session marker,
+and a file row with no disclosure. Selecting a folder with a session loads its transcript through the
+existing `/api/sessions/<id>` route; selecting one without a session opens the folder and the first
+prompt creates it; clicking a file shows its content through `/api/file`.
 
 ## 6. Decisions, and what was rejected
 

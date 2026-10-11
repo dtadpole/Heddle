@@ -8,7 +8,7 @@ import { runTurn } from './agent/loop.ts'
 import { describeEndpoint } from './endpoints.ts'
 import { canonicalPath } from './paths.ts'
 import { defaultSessionRoot } from './session/store.ts'
-import { tree, type TreeNode } from './session/tree.ts'
+import { readFileText, tree, type TreeNode } from './session/tree.ts'
 import type { WorkspaceService } from './workspace/service.ts'
 import { printStream } from './stream/printer.ts'
 import { heddleHome } from './config/schema.ts'
@@ -92,8 +92,10 @@ commands:
   sessions                   list the sessions this store holds
   workspaces                 list the workspaces and their sessions
   workspace add <path> [name]  register a target folder as a workspace root
+  workspace rename <id|path> <name>  retitle a root, leaving its path alone
   workspace remove <id|path>   unregister a root, reporting where its sessions went
   tree [<path>]              print one level of the folder tree the left column shows
+  file <path>                print a text file under a workspace root, as the right panel shows it
   context                    show the assembled context for a session, without calling a model
   hooks                      list the hook points this build emits
   web                        serve the Web UI on localhost
@@ -243,9 +245,9 @@ function parseArgs(argv: readonly string[]): Args {
          */
         args.command = 'workspace'
         const subcommand = next() ?? ''
-        if (subcommand !== 'add' && subcommand !== 'list' && subcommand !== 'remove') {
+        if (subcommand !== 'add' && subcommand !== 'list' && subcommand !== 'remove' && subcommand !== 'rename') {
           throw new Error(
-            `unknown workspace subcommand '${subcommand}'; try 'heddle workspace add <path> [name]', 'heddle workspace remove <id|path>' or 'heddle workspace list'`,
+            `unknown workspace subcommand '${subcommand}'; try 'heddle workspace add <path> [name]', 'heddle workspace rename <id|path> <name>', 'heddle workspace remove <id|path>' or 'heddle workspace list'`,
           )
         }
         args.subcommand = subcommand
@@ -267,6 +269,14 @@ function parseArgs(argv: readonly string[]): Args {
           if (id === undefined || id.startsWith('-')) throw new Error('workspace remove needs a workspace id or path')
           args.target = id
         }
+        if (subcommand === 'rename') {
+          const id = next()
+          if (id === undefined || id.startsWith('-')) throw new Error('workspace rename needs a workspace id or path')
+          args.target = id
+          const name = next()
+          if (name === undefined || name.startsWith('-')) throw new Error('workspace rename needs a name')
+          args.name = name
+        }
         break
       }
       case 'tree': {
@@ -279,6 +289,14 @@ function parseArgs(argv: readonly string[]): Args {
         args.command = 'tree'
         const candidate = argv[index + 1]
         if (candidate !== undefined && !candidate.startsWith('-')) args.target = next()
+        break
+      }
+      case 'file': {
+        /** `file <path>` — one path, and only when it is not a flag, for the same reason as `tree`. */
+        args.command = 'file'
+        const candidate = argv[index + 1]
+        if (candidate === undefined || candidate.startsWith('-')) throw new Error('file needs a path')
+        args.target = next()
         break
       }
       default:
@@ -665,7 +683,15 @@ async function runCommand(command: string, target: string | undefined, json: boo
     }
     if (command === 'workspace') {
       if (target === undefined) throw new Error('workspace add needs a path')
-      const { record, created } = requireWorkspace(app.ctx).add(target, args.name)
+      const workspaces = requireWorkspace(app.ctx)
+      if (args.subcommand === 'rename') {
+        const renamed = workspaces.rename(target, args.name ?? '')
+        if (renamed === undefined) throw new Error(`no workspace '${target}'`)
+        if (json) process.stdout.write(`${JSON.stringify(renamed, null, 2)}\n`)
+        else process.stdout.write(`heddle: renamed to ${renamed.title}  ${renamed.path}\n`)
+        return true
+      }
+      const { record, created } = workspaces.add(target, args.name)
       if (json) process.stdout.write(`${JSON.stringify({ ...record, created }, null, 2)}\n`)
       else process.stdout.write(`heddle: ${created ? 'registered' : 'already registered'} ${record.title}  ${record.path}\n`)
       return true
@@ -690,6 +716,23 @@ async function runCommand(command: string, target: string | undefined, json: boo
       })
       if (json) process.stdout.write(`${JSON.stringify(node, null, 2)}\n`)
       else process.stdout.write(`${describeTree(node).join('\n')}\n`)
+      return true
+    }
+    if (command === 'file') {
+      if (target === undefined) throw new Error('file needs a path')
+      const wanted = canonicalPath(target)
+      /**
+       * The same fence as the tree, and one more reason for it: a reader that answers for any path is a
+       * way to read the whole machine behind a token. The canonical path is what is checked, so a
+       * symlink that resolves outside every root is refused here rather than followed.
+       */
+      const workspaces = requireWorkspace(app.ctx)
+      if (workspaces.owner(wanted) === undefined) {
+        throw new Error(`${wanted} is not under any workspace root; register its folder with 'heddle workspace add <path>'`)
+      }
+      const reading = readFileText(wanted)
+      if (json) process.stdout.write(`${JSON.stringify(reading, null, 2)}\n`)
+      else process.stdout.write(reading.text.endsWith('\n') || reading.text === '' ? reading.text : `${reading.text}\n`)
       return true
     }
     if (command === 'hooks') {

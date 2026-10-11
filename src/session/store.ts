@@ -342,6 +342,26 @@ export class SessionStore {
     return handle
   }
 
+  /**
+   * Retitle a session in place.
+   *
+   * The **meta file** is a record, not the log: `session.jsonl` stays append-only and untouched, so a
+   * rename cannot rewrite anything a run recorded. Only the title a person reads is replaced, and the
+   * empty string clears it rather than leaving a blank name behind.
+   */
+  rename(id: SessionId, title: string): SessionMeta | null {
+    const current = this.list().find((meta) => meta.id === id)
+    if (current === undefined) return null
+    const trimmed = title.trim()
+    const next: SessionMeta = {
+      ...current,
+      ...(trimmed.length > 0 ? { title: trimmed } : {}),
+    }
+    if (trimmed.length === 0) delete (next as { title?: string }).title
+    writeFileSync(join(this.root, id, 'meta.json'), `${JSON.stringify(next, null, 2)}\n`)
+    return next
+  }
+
   /** Open an existing session by id, or by the newest one when `id` is omitted. */
   open(id?: SessionId): SessionHandle | null {
     if (id !== undefined) {

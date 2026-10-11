@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { isUnder } from '../src/paths.ts'
-import { badgeFor, classify, kindOf, tree, type TreeInput } from '../src/session/tree.ts'
+import { badgeFor, classify, kindOf, readFileText, tree, type TreeInput } from '../src/session/tree.ts'
 import type { SessionMeta } from '../src/session/store.ts'
 
 /**
@@ -186,15 +186,56 @@ test('plumbing is not enumerated and a declared generated folder is named as one
   }
 })
 
-test('a file is never a node, and an unreadable folder is empty rather than fatal', () => {
+test('files are nodes after folders, a dot-entry is not, and an unreadable folder is empty rather than fatal', () => {
   const root = scaffold(['_tools_/some-tool'])
   try {
     writeFileSync(join(root, 'README.md'), '# read me\n')
+    writeFileSync(join(root, '.hidden.md'), '# not shown\n')
     writeFileSync(join(root, '_tools_', 'INDEX.md'), '# the type\n')
     const input: TreeInput = { roots: [{ path: root, title: 'fixture' }], sessions: [] }
-    assert.deepEqual((tree(root, input).children ?? []).map((node) => node.label), ['_tools_'])
+
+    /**
+     * The owner's rule of 2026-10-11, reversing this test's first version: files are shown under a
+     * folder, and a click opens one. Folders still come first, and a dot-entry is still not content.
+     */
+    const children = tree(root, input).children ?? []
+    assert.deepEqual(
+      children.map((node) => `${node.kind}:${node.label}`),
+      ['type:_tools_', 'file:README.md'],
+      'folders first, then files, and a dot-entry is not enumerated',
+    )
+    const file = children.find((node) => node.kind === 'file')
+    assert.deepEqual(file?.children, [], 'a file is a leaf: asked and empty, not unasked')
+    assert.equal(file?.bytes, 10, 'and it carries its size, so a row can say how big it is')
+
+    assert.equal(kindOf(join(root, 'README.md'), input), 'file', 'a path that is not a directory is a file, whatever its name looks like')
+
     const missing = tree(join(root, 'not-there'), input)
     assert.deepEqual(missing.children, [], 'a folder that does not exist has nothing to show')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('the reader hands back text, refuses what a viewer cannot show, and says when it truncated', () => {
+  const root = scaffold([])
+  try {
+    writeFileSync(join(root, 'notes.md'), '# one\n# two\n')
+    const reading = readFileText(join(root, 'notes.md'))
+    assert.equal(reading.name, 'notes.md')
+    assert.equal(reading.text, '# one\n# two\n')
+    assert.equal(reading.lines, 2, 'a trailing newline does not count as a third line')
+    assert.equal(reading.truncated, false)
+
+    const clipped = readFileText(join(root, 'notes.md'), { limit: 4 })
+    assert.equal(clipped.text, '# on')
+    assert.equal(clipped.truncated, true, 'a file longer than the limit is truncated rather than refused')
+    assert.equal(clipped.bytes, 12, 'and its real size is still reported')
+
+    writeFileSync(join(root, 'blob.bin'), Buffer.from([0x00, 0x01, 0x02]))
+    assert.throws(() => readFileText(join(root, 'blob.bin')), /binary/)
+    assert.throws(() => readFileText(root), /not a file/, 'a directory is not a file')
+    assert.throws(() => readFileText(join(root, 'not-there')), /not a file/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

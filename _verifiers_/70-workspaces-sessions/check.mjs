@@ -103,7 +103,7 @@ function entry(path, text = '') {
  * A fixture shaped like the conventions repository, because that is what the tree has to classify.
  *
  * Every content folder carries its `INDEX.md` (the convention's one hard rule), a type folder holds
- * only its index and its instances, `_monitors_` is left empty on purpose — an empty type folder is
+ * only its index and its instances, `_formatters_` is left empty on purpose — an empty type folder is
  * valid in the conventions and must render as such — and the two folders that must **not** appear are
  * a plumbing directory and a generated one.
  *
@@ -118,6 +118,14 @@ async function conventionsFixture(h) {
   for (const type of ['_tools_', '_verifiers_', '_monitors_', '_projects_']) {
     entry(join(work, type, 'INDEX.md'), `# ${type}\n`)
   }
+  /**
+   * One type folder with **nothing** inside it — not even its `INDEX.md`.
+   *
+   * `_monitors_` above has its index, which is a file node now that files are shown, so it is no longer
+   * the empty case. This one is created and left bare on purpose: "asked and empty" is a distinct answer
+   * from "not asked", and the only way to judge it is with a folder that has no entries at all.
+   */
+  mkdirSync(join(work, '_formatters_'), { recursive: true })
   entry(join(work, '_tools_', 'some-tool', 'INDEX.md'), '# some-tool\n')
   entry(join(work, '_tools_', 'some-tool', 'run.py'), 'print("hi")\n')
   entry(join(work, '_verifiers_', '05-config-system', 'INDEX.md'), '# the claim\n')
@@ -457,7 +465,7 @@ test('the nearest registered root owns a session when roots nest', async (contex
   }
 })
 
-test('the tree lists one folder level at a time, and a file is not a node', async (context) => {
+test('the tree lists one level at a time, folders before files, and a dot-entry is not a node', async (context) => {
   if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
   if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
   const h = harness('levels')
@@ -466,16 +474,75 @@ test('the tree lists one folder level at a time, and a file is not a node', asyn
     const { result, tree } = await treeAt(h, h.work)
     assert.equal(result.code, 0, `the tree ran\n${result.stdout}${result.stderr}`)
 
-    const labels = (tree.children ?? []).map((node) => node.label)
+    const children = tree.children ?? []
+    const labels = children.map((node) => node.label)
     assert.ok(labels.includes('_tools_') && labels.includes('shared'), `the level lists folders\nsaw: ${labels.join(', ')}`)
-    assert.ok(!labels.includes('AGENTS.md') && !labels.includes('README.md'), 'a file is not a node')
+
+    /**
+     * This check asserted the opposite until 2026-10-11 — *a file is not a node* — and the owner reversed
+     * it: the navigation shows the files under a folder, and clicking one opens its content in the right
+     * panel. What survives from the original rule is the part that was really about navigation: the level
+     * is one deep, folders come first, and what nobody means by content (dot-entries, `node_modules`) is
+     * still not enumerated.
+     */
+    const file = children.find((node) => node.label === 'AGENTS.md')
+    assert.ok(file, `a file under the root is a node, with the owner's rule\nsaw: ${labels.join(', ')}`)
+    assert.equal(file.kind, 'file', 'and it says it is a file')
+    assert.deepEqual(file.children, [], 'a file holds nothing inside, ever — asked and empty rather than unasked')
+    assert.ok(typeof file.bytes === 'number' && file.bytes > 0, 'and how big it is, without being opened')
+
+    const firstFile = children.findIndex((node) => node.kind === 'file')
+    const lastFolder = children.map((node) => node.kind !== 'file').lastIndexOf(true)
+    assert.ok(firstFile > lastFolder, 'folders come before files, so the structure stays together at the top')
+
     assert.ok(!labels.includes('some-tool'), 'a grandchild is not listed, because its parent was not asked for')
     const tools = childOf(tree, '_tools_')
     assert.ok(tools, 'the type folder is there')
     assert.equal(tools.children, null, 'a node that was not expanded says so rather than reporting an empty list')
+
+    const inner = await treeAt(h, join(h.work, '_tools_'))
+    const innerLabels = (inner.tree.children ?? []).map((node) => node.label)
+    assert.ok(innerLabels.includes('some-tool'), 'expanding a folder lists its instance')
+    assert.ok(innerLabels.includes('INDEX.md'), 'and its files, because this level was asked for')
   } finally {
     removeDir(h.home)
     removeDir(h.work)
+  }
+})
+
+test('a file under a root reads, and what cannot be shown is refused with a reason', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
+  const h = harness('file-read')
+  const outside = fixtureDir('file-outside')
+  try {
+    await conventionsFixture(h)
+    const read = await runCli(adminArgs(h, ['file', join(h.work, 'shared', 'INDEX.md'), '--json']), { env: h.env, cwd: h.work })
+    assert.equal(read.code, 0, `the file read\n${read.stdout}${read.stderr}`)
+    const body = parseJson(read.stdout)
+    assert.equal(body.name, 'INDEX.md', 'the reading names the file')
+    assert.ok(String(body.text).includes('# shared'), `and carries its text\nsaw: ${String(body.text).slice(0, 60)}`)
+    assert.equal(body.truncated, false, 'a small file is whole')
+    assert.ok(body.lines >= 1, 'and says how many lines it has')
+    assert.ok(body.bytes > 0, 'and how many bytes')
+
+    /**
+     * The fence, and it is the same one the tree uses: a reader that answers for any path is a way to read
+     * the whole machine behind a token, and a symlink is why the canonical path is what gets checked.
+     */
+    entry(join(outside, 'secret.md'), '# not under any root\n')
+    const refused = await runCli(adminArgs(h, ['file', join(outside, 'secret.md')]), { env: h.env, cwd: h.work })
+    assert.notEqual(refused.code, 0, 'a file outside every root is refused')
+    assert.match(`${refused.stdout}${refused.stderr}`, /workspace root/i, 'and the refusal names the rule')
+
+    // A directory is not a file, and saying so is better than an empty panel.
+    const directory = await runCli(adminArgs(h, ['file', join(h.work, 'shared')]), { env: h.env, cwd: h.work })
+    assert.notEqual(directory.code, 0, 'a folder is refused')
+    assert.match(`${directory.stdout}${directory.stderr}`, /not a file/i, 'with a sentence that says why')
+  } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+    removeDir(outside)
   }
 })
 
@@ -490,6 +557,7 @@ test('a type folder is a type, and its badge names it without the underscores', 
       ['_tools_', 'TLS'],
       ['_verifiers_', 'VRF'],
       ['_monitors_', 'MNT'],
+      ['_formatters_', 'FRM'],
     ]) {
       const node = childOf(tree, label)
       assert.equal(node?.kind, 'type', `${label} is a type folder`)
@@ -668,7 +736,7 @@ test('an empty type folder is a type with no children rather than an error', asy
   const h = harness('empty-type')
   try {
     await conventionsFixture(h)
-    const { result, tree } = await treeAt(h, join(h.work, '_monitors_'))
+    const { result, tree } = await treeAt(h, join(h.work, '_formatters_'))
     assert.equal(result.code, 0, `an empty type folder is not an error\n${result.stdout}${result.stderr}`)
     assert.equal(tree.kind, 'type', 'it is still a type folder')
     assert.deepEqual(tree.children, [], 'asked and empty is an empty list, which is not the same as unasked')
@@ -812,27 +880,101 @@ test('a folder opens and closes with the same control, including a leaf with not
     )
     browser = await openBrowser()
     await browser.goto(live.url)
-    await browser.waitFor('document.querySelectorAll("#tree .twisty").length > 0', 20_000)
+    await browser.waitFor(`document.querySelectorAll("#tree .twisty").length > 0`, 20_000)
 
     await browser.evaluate('document.querySelector("#tree .twisty").click()')
-    await browser.waitFor('document.querySelectorAll(\'#tree li[data-kind="type"]\').length > 0', 20_000)
+    await browser.waitFor(`document.querySelectorAll('#tree li[data-kind="type"]').length > 0`, 20_000)
 
-    // A leaf: `_monitors_` is a type folder with nothing inside it.
-    await browser.evaluate(
-      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_monitors_').querySelector('.twisty').click()`,
+    /**
+     * The owner's rule of 2026-10-11: clicking an **expandable folder** expands and closes it, and the
+     * folder glyph on the left says which state it is in — a reader should not have to read the `+` / `−`
+     * control, or aim at it, to know whether a folder is open.
+     */
+    const toggled = JSON.parse(
+      await browser.evaluate(`(async () => {
+        const rowFor = (label) => [...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === label)
+        const state = (label) => {
+          const row = rowFor(label)
+          const li = row.closest('li')
+          return {
+            glyph: row.querySelector('.icon svg')?.dataset.state ?? null,
+            sign: row.querySelector('.twisty')?.textContent ?? null,
+            open: li.dataset.open,
+            expanded: li.getAttribute('aria-expanded'),
+            group: li.querySelector('ul[role=group]') !== null,
+          }
+        }
+        const before = state('_tools_')
+        rowFor('_tools_').click()
+        await new Promise((done) => setTimeout(done, 700))
+        const opened = state('_tools_')
+        rowFor('_tools_').click()
+        await new Promise((done) => setTimeout(done, 400))
+        const closed = state('_tools_')
+        rowFor('_tools_').click()
+        await new Promise((done) => setTimeout(done, 700))
+        const reopened = state('_tools_')
+        // Left closed, because the assertions that follow open it themselves.
+        rowFor('_tools_').click()
+        await new Promise((done) => setTimeout(done, 400))
+        return JSON.stringify({ before, opened, closed, reopened, leftClosed: state('_tools_') })
+      })()`),
     )
-    await browser.waitFor('document.body.innerText.includes("no folders inside")', 20_000)
-    const open = JSON.parse(await browser.evaluate(disclosure('_monitors_')))
+    assert.equal(toggled.before.glyph, 'closed', 'a closed folder shows the closed glyph')
+    assert.equal(toggled.before.sign, '+', 'and a plus on its control')
+    assert.equal(toggled.opened.glyph, 'open', 'clicking the row itself opens the folder, and the glyph says so')
+    assert.equal(toggled.opened.sign, '−', 'the control follows the state')
+    assert.equal(toggled.opened.open, 'true', 'the tree item carries the state for a reader')
+    assert.equal(toggled.opened.group, true, 'and the children are drawn')
+    assert.equal(toggled.closed.glyph, 'closed', 'clicking it again closes the folder')
+    assert.equal(toggled.closed.group, false, 'and takes the children away')
+    assert.equal(toggled.reopened.glyph, 'open', 'and it opens again, so the two states are a toggle rather than a one-way door')
+    assert.equal(toggled.leftClosed.glyph, 'closed', 'and it closes again, leaving the tree where the next assertions expect it')
+
+    /**
+     * Opening an **instance** also makes it the folder being worked in, which is why a conversation appears
+     * with the folder rather than behind a second click.
+     */
+    // The folder is reopened first: a row that is not drawn cannot be clicked, and the block above
+    // deliberately leaves `_tools_` closed.
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').click()`,
+    )
+    await browser.waitFor(`[...document.querySelectorAll('#tree .row')].some((entry) => entry.querySelector('.label').textContent === 'some-tool')`, 20_000)
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === 'some-tool').click()`,
+    )
+    await browser.waitFor(`document.getElementById("tree-note").textContent.includes("a new conversation in some-tool")`, 20_000)
+    const openedInstance = JSON.parse(
+      await browser.evaluate(`JSON.stringify({
+        selected: [...document.querySelectorAll('#tree .row[aria-current="true"]')].map((entry) => entry.querySelector('.label').textContent),
+        note: document.getElementById('tree-note').textContent,
+      })`),
+    )
+    assert.deepEqual(openedInstance.selected, ['some-tool'], 'opening an instance selects it, and only it')
+
+    // Closed again, because the assertions that follow drive the disclosure from a known state.
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').click()`,
+    )
+    await browser.waitFor(`![...document.querySelectorAll('#tree .row')].some((entry) => entry.querySelector('.label').textContent === 'some-tool')`, 20_000)
+
+    // A leaf: `_formatters_` is a type folder with nothing inside it.
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_formatters_').querySelector('.twisty').click()`,
+    )
+    await browser.waitFor(`document.getElementById('tree-note').textContent.includes('nothing inside') || document.querySelector('#tree .empty') !== null`, 20_000)
+    const open = JSON.parse(await browser.evaluate(disclosure('_formatters_')))
     assert.equal(open.text, '−', 'an opened folder shows a minus, leaf or not')
     assert.equal(open.disabled, false, 'and its control is still usable, so the folder can be closed again')
     assert.equal(open.expanded, 'true', 'the state is on the tree item, where a reader is told about it')
-    assert.equal(open.note, 'no folders inside', 'and what is inside is said in words rather than by disabling the control')
+    assert.equal(open.note, 'nothing inside', 'and what is inside is said in words rather than by disabling the control')
 
     await browser.evaluate(
-      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_monitors_').querySelector('.twisty').click()`,
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_formatters_').querySelector('.twisty').click()`,
     )
-    await browser.waitFor('!document.body.innerText.includes("no folders inside")', 20_000)
-    const closed = JSON.parse(await browser.evaluate(disclosure('_monitors_')))
+    await browser.waitFor(`!document.getElementById('tree-note').textContent.includes('nothing inside') || document.querySelector('#tree .empty') !== null`, 20_000)
+    const closed = JSON.parse(await browser.evaluate(disclosure('_formatters_')))
     assert.equal(closed.text, '+', 'and clicking the minus closes it again')
     assert.equal(closed.expanded, 'false', 'with the state updated')
     assert.equal(closed.children, 0, 'and the group gone rather than left behind')
@@ -844,10 +986,10 @@ test('a folder opens and closes with the same control, including a leaf with not
     await browser.evaluate(
       `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').querySelector('.twisty').click()`,
     )
-    await browser.waitFor('document.body.innerText.includes("some-tool")', 20_000)
+    await browser.waitFor(`[...document.querySelectorAll('#tree .row')].some((entry) => entry.querySelector('.label').textContent === 'some-tool')`, 20_000)
     const toolsOpen = JSON.parse(await browser.evaluate(disclosure('_tools_')))
     assert.equal(toolsOpen.text, '−', 'a folder with children opens the same way')
-    assert.equal(toolsOpen.children, 1, 'and its one instance is drawn')
+    assert.equal(toolsOpen.children, 2, 'and what is inside it is drawn: its instance, and its own index as a file')
 
     /**
      * No list in the tree draws a marker, and a nested row is indented by the tree's own rule.
@@ -877,10 +1019,172 @@ test('a folder opens and closes with the same control, including a leaf with not
       `a nested row is indented by the tree's own rule rather than by a browser marker gutter (${layout.indent}px)`,
     )
 
+    /**
+     * A file row opens its content in the right panel.
+     *
+     * The owner's rule of 2026-10-11, and the half of it that only a browser can judge: the tree showed
+     * folders and a click meant a conversation, so `File` is a third view beside Chat and Trajectory, a
+     * file row carries no disclosure, and what the panel shows is the file's own text rather than a
+     * summary of it.
+     */
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === 'INDEX.md').click()`,
+    )
+    await browser.waitFor(`document.getElementById("file-body").innerText.includes("# _tools_")`, 20_000)
+    const fileView = JSON.parse(
+      await browser.evaluate(`JSON.stringify((() => {
+        const row = [...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === 'INDEX.md')
+        const ring = [...document.querySelectorAll('#views button')].map((button) => button.textContent)
+        return {
+          hidden: document.getElementById('file').hidden,
+          head: document.getElementById('file-head').textContent,
+          body: document.getElementById('file-body').textContent.trim(),
+          disclosure: row.querySelector('.twisty') === null ? 'none' : 'present',
+          menu: row.querySelector('.menu-wrap') === null ? 'none' : 'present',
+          selected: [...document.querySelectorAll('#tree .row[aria-current="true"]')].map((entry) => entry.querySelector('.label').textContent),
+          logHidden: document.getElementById('log').hidden,
+          ring,
+        }
+      })())`),
+    )
+    assert.equal(fileView.hidden, false, 'clicking a file shows the file view in the right panel')
+    assert.match(fileView.head, /INDEX\.md/, 'the header names the file')
+    /**
+     * A markdown document arrives **rendered** — that is what the preview is for — so the assertion is the
+     * heading's text rather than its source, and the verbatim case is judged on a file that is not markdown.
+     */
+    assert.match(fileView.body, /_tools_/, 'the panel shows the document that was opened, not a summary of it')
+    assert.equal(fileView.logHidden, true, 'and the conversation steps aside while the file is shown')
+    assert.equal(fileView.disclosure, 'none', 'a file is a leaf, so its row carries no disclosure control')
+    assert.equal(fileView.menu, 'none', 'and no actions menu until it has an action')
+    /**
+     * The selection is what the right panel is showing, and it is exactly one row: a tint alone would be
+     * indistinguishable from hover, so the check asks for the mark rather than for a colour.
+     */
+    assert.deepEqual(fileView.selected, ['INDEX.md'], 'the file being shown is the selected row, and only it')
+    assert.deepEqual(fileView.ring, ['Chat', 'Trajectory'], 'the view ring is the two views it always was — the file panel is not a third tab')
+
+    // A file that is not markdown is shown verbatim: the same pane, a different renderer.
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === 'run.py').click()`,
+    )
+    await browser.waitFor(`document.getElementById('file-body').innerText.includes('print')`, 20_000)
+    const source = await browser.evaluate(`JSON.stringify({ body: document.getElementById('file-body').textContent, renderer: document.getElementById('file-body').dataset.renderer ?? 'text' })`)
+    assert.match(JSON.parse(source).body, /print\("hi"\)/, 'a source file is shown verbatim, whitespace and all')
+
+    /**
+     * The row grammar the owner asked for: what a row **is** on the left, what can be **done** with it on
+     * the right, and every action behind `…` rather than on the row.
+     */
+    const grammar = JSON.parse(
+      await browser.evaluate(`JSON.stringify((() => {
+        const rowFor = (label) => [...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === label)
+        const order = (row) => [...row.children].map((child) => (child.classList.contains('menu-wrap') ? 'menu' : child.classList.contains('twisty') ? 'twisty' : child.classList.contains('label') ? 'label' : child.classList.contains('kind') ? 'kind' : child.className || child.tagName.toLowerCase()))
+        const instance = rowFor('some-tool')
+        const workspace = rowFor([...document.querySelectorAll('#tree .row')][0].querySelector('.label').textContent)
+        /** The row's **own** controls: a menu's items are descendants of the row but not of its grammar. */
+        const own = (row) => [...row.children].flatMap((child) => child.classList.contains('menu-wrap') ? [child.querySelector('button')] : child.tagName === 'BUTTON' ? [child] : []).map((button) => button.textContent)
+        return {
+          instanceOrder: order(instance),
+          workspaceButtons: own(workspace),
+          instanceButtons: own(instance),
+        }
+      })())`),
+    )
+    const twistyAt = grammar.instanceOrder.indexOf('twisty')
+    const menuAt = grammar.instanceOrder.indexOf('menu')
+    const labelAt = grammar.instanceOrder.indexOf('label')
+    assert.ok(labelAt > -1 && twistyAt > labelAt, `the disclosure is on the right of the name\nsaw: ${grammar.instanceOrder.join(', ')}`)
+    assert.ok(menuAt > twistyAt, `and the menu is the rightmost control\nsaw: ${grammar.instanceOrder.join(', ')}`)
+    assert.equal(grammar.workspaceButtons.length, 2, `a workspace row shows exactly two controls\nsaw: ${grammar.workspaceButtons.join(', ')}`)
+    assert.ok(['+', '−'].includes(grammar.workspaceButtons[0]), 'the disclosure, whose sign follows the state')
+    assert.equal(grammar.workspaceButtons[1], '…', 'and the menu')
+    assert.ok(
+      grammar.instanceButtons.includes('…'),
+      `an instance row always shows its menu\nsaw: ${grammar.instanceButtons.join(', ')}`,
+    )
+    assert.ok(
+      grammar.instanceButtons.every((text) => ['+', '−', '…'].includes(text)),
+      `and only the two controls, never an action on the row itself\nsaw: ${grammar.instanceButtons.join(', ')}`,
+    )
+    assert.ok(
+      !grammar.workspaceButtons.includes('×'),
+      'and the destructive action is not on the row — it lives behind the menu',
+    )
+
+    // The menu really holds the actions, which is the half a screenshot cannot tell you.
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === 'some-tool').querySelector('.menu-wrap button').click()`,
+    )
+    const menu = JSON.parse(
+      await browser.evaluate(`JSON.stringify([...document.querySelectorAll('#tree .menu:not([hidden]) button')].map((button) => button.textContent))`),
+    )
+    assert.deepEqual(menu, ['New session here'], `the instance menu offers what an instance can do\nsaw: ${menu.join(', ')}`)
+
+    /**
+     * The actions themselves, through the routes the menu calls.
+     *
+     * The menu is opened rather than driven — a `window.prompt` cannot be answered from here — so the two
+     * requests behind `Rename…` are made from the page's own origin, which is what the menu does. That
+     * judges the routes rather than the button's wiring, and the wiring is what the assertions above pin.
+     */
+    const renamedRoot = JSON.parse(
+      await browser.evaluate(`(async () => {
+        const response = await fetch('/api/workspaces/' + encodeURIComponent(${JSON.stringify(h.work)}), {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: 'renamed in a check' }),
+        })
+        const body = await response.json()
+        return JSON.stringify({ status: response.status, title: body.title })
+      })()`),
+    )
+    assert.equal(renamedRoot.status, 200, 'the root can be renamed')
+    assert.equal(renamedRoot.title, 'renamed in a check', 'and the record carries the new name')
+
+    const titled = JSON.parse(
+      await browser.evaluate(`(async () => {
+        const opened = await fetch('/api/folders/session', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ folder: ${JSON.stringify(join(h.work, '_tools_', 'some-tool'))} }),
+        })
+        const { session } = await opened.json()
+        const renamed = await fetch('/api/sessions/' + encodeURIComponent(session.id) + '/title', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: 'a renamed conversation' }),
+        })
+        const body = await renamed.json()
+        return JSON.stringify({ status: renamed.status, title: body.title, id: session.id })
+      })()`),
+    )
+    assert.equal(titled.status, 200, 'a conversation can be retitled')
+    assert.equal(titled.title, 'a renamed conversation', 'and the meta record carries the new title')
+
+    // The refusal cases, because a rename that silently does nothing is worse than one that refuses.
+    const refused = JSON.parse(
+      await browser.evaluate(`(async () => {
+        const blank = await fetch('/api/workspaces/' + encodeURIComponent(${JSON.stringify(h.work)}), {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: '   ' }),
+        })
+        const missing = await fetch('/api/sessions/session-00000000-0000-0000-0000-000000000000/title', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: 'nowhere' }),
+        })
+        return JSON.stringify({ blank: blank.status, missing: missing.status })
+      })()`),
+    )
+    assert.equal(refused.blank, 400, 'an empty name is refused rather than saved')
+    assert.equal(refused.missing, 404, 'and a session that does not exist is not invented')
+
     await browser.evaluate(
       `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').querySelector('.twisty').click()`,
     )
-    await browser.waitFor('!document.body.innerText.includes("some-tool")', 20_000)
+    await browser.waitFor(`![...document.querySelectorAll('#tree .row')].some((entry) => entry.querySelector('.label').textContent === 'some-tool')`, 20_000)
     const toolsClosed = JSON.parse(await browser.evaluate(disclosure('_tools_')))
     assert.equal(toolsClosed.text, '+', 'and closes the same way')
     assert.equal(toolsClosed.children, 0, 'leaving no group behind')

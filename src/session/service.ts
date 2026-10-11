@@ -133,6 +133,11 @@ export class SessionService extends Service {
     return this.store.list()
   }
 
+  /** Retitle a session; the log is untouched and the meta record is the only thing rewritten. */
+  rename(id: SessionId, title: string): SessionMeta | null {
+    return this.store.rename(id, title)
+  }
+
   /** The last complete answer, which is what a transcript read returns. */
   lastAnswer(handle: SessionHandle): string {
     return this.store.lastAnswer(handle)

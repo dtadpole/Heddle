@@ -42,7 +42,7 @@
   li:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
   li[aria-current] { background: color-mix(in oklab, currentColor 14%, transparent); }
   .meta { opacity: .6; font-size: .78rem; }
-  #log { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .6rem; }
+  #log { flex: 1; overflow-y: auto; padding: .85rem; display: flex; flex-direction: column; gap: .5rem; font-size: 13px; line-height: 1.45; }
   .turn { border-left: 3px solid var(--line); padding-left: .6rem; white-space: pre-wrap; }
   .turn.user { border-color: #4b8bf5; }
   .turn.assistant { border-color: #2fa36b; }
@@ -70,7 +70,7 @@
    * "hidden means hidden" and every future display rule must lose to it.
    */
   [hidden] { display: none !important; }
-  #ledger { flex: 1; overflow-y: auto; padding: .75rem 1rem 1rem; font-size: .85rem; }
+  #ledger { flex: 1; overflow-y: auto; padding: .65rem .85rem .85rem; font-size: .79rem; line-height: 1.45; }
   #ledger .summary { font-size: .8rem; opacity: .7; margin-bottom: .6rem; }
   #ledger .turn { border-left: 3px solid var(--line); margin: 0 0 .6rem; padding-left: .6rem; }
   /**
@@ -152,6 +152,26 @@
    * positioned by their own start and duration, coloured by what they did. A pick scrolls the ledger to that
    * turn, which is the whole point: a long ledger is otherwise navigated by scrolling and hoping.
    */
+  #docs { flex: 1; display: flex; min-height: 0; }
+  #docs-list { width: 16rem; flex: none; overflow-y: auto; margin: 0; padding: .4rem .25rem .4rem .8rem; border-right: 1px solid var(--line); font-size: .76rem; }
+  #docs-list li { padding: .2rem .35rem; border-radius: .3rem; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #docs-list li:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
+  #docs-list li[aria-current='true'] { background: color-mix(in oklab, currentColor 14%, transparent); }
+  #doc { flex: 1; overflow-y: auto; padding: .8rem 1rem 1.5rem; min-width: 0; font-size: .9rem; line-height: 1.5; }
+  #doc h1, #doc h2, #doc h3, #doc h4 { line-height: 1.3; margin: 1.2em 0 .4em; }
+  #doc h1 { font-size: 1.35rem; } #doc h2 { font-size: 1.15rem; } #doc h3 { font-size: 1rem; }
+  #doc p, #doc ul, #doc ol, #doc blockquote, #doc pre { margin: .6em 0; }
+  #doc ul, #doc ol { padding-left: 1.3rem; }
+  #doc code { font-family: ui-monospace, monospace; font-size: .88em; background: color-mix(in oklab, currentColor 8%, transparent); padding: .08rem .25rem; border-radius: .2rem; }
+  #doc pre { background: color-mix(in oklab, currentColor 7%, transparent); padding: .7rem .8rem; border-radius: .35rem; overflow-x: auto; }
+  #doc pre code { background: none; padding: 0; }
+  #doc blockquote { border-left: 3px solid var(--line); margin-left: 0; padding-left: .8rem; opacity: .85; }
+  #doc hr { border: none; border-top: 1px solid var(--line); margin: 1.2rem 0; }
+  #doc a { color: #6aa6ff; }
+  #doc img { max-width: 100%; }
+  #doc table { border-collapse: collapse; }
+  #doc .frontmatter { border: 1px solid var(--line); border-radius: .35rem; padding: .2rem .7rem .7rem; opacity: .85; margin-bottom: 1rem; }
+  #doc .frontmatter h2 { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; opacity: .6; }
   #timeline { position: relative; height: 1.6rem; margin: .1rem 0 .7rem; border-radius: .25rem; background: color-mix(in oklab, currentColor 7%, transparent); overflow: hidden; }
   #timeline:empty { display: none; }
   #timeline button { position: absolute; top: 0; bottom: 0; padding: 0; border: none; border-right: 1px solid var(--line); background: color-mix(in oklab, #4b8bf5 45%, transparent); cursor: pointer; }
@@ -165,6 +185,15 @@
   #ledger .usage.provider { color: #2fa36b; opacity: .9; }
   #ledger pre { white-space: pre-wrap; word-break: break-word; background: color-mix(in oklab, currentColor 6%, transparent); padding: .5rem .6rem; border-radius: .3rem; font-size: .8rem; margin: .3rem 0 0; }
   #ledger .loose { margin-top: .8rem; }
+  /**
+   * The file view: a header that says what was opened and how big it is, then the text.
+   *
+   * `white-space: pre` with wrapping, because the one thing a viewer must not do is reflow source into
+   * unreadable lines; and `tab-size` so an indented file does not walk off the panel.
+   */
+  #file { flex: 1; overflow: auto; padding: 0; min-width: 0; }
+  #file-head { position: sticky; top: 0; background: Canvas; border-bottom: 1px solid var(--line); padding: .35rem .6rem; font-size: .72rem; opacity: .75; font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #file-body { margin: 0; padding: .75rem; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: .82rem; tab-size: 2; }
   /**
    * The left column is the **folder tree**, and the row's layout is what makes it readable: a boxed
    * `+` / `−` disclosure, the kind's icon, the type's badge, the folder's name as the label, and a
@@ -182,13 +211,20 @@
   #tree ul[role='group'] { padding-left: .85rem; border-left: 1px solid var(--line); }
   #tree .row { display: flex; align-items: center; gap: .35rem; padding: .16rem .3rem; border-radius: .3rem; cursor: pointer; }
   #tree .row:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
-  #tree .row[aria-current='true'] { background: color-mix(in oklab, currentColor 14%, transparent); }
-  #tree .twisty { font: inherit; line-height: 1; padding: 0; width: 1.05rem; height: 1.05rem; display: inline-flex; align-items: center; justify-content: center; background: none; border: 1px solid var(--line); border-radius: .2rem; color: inherit; opacity: .75; cursor: pointer; }
+  /**
+   * The selected row, and it has to be visible *while* the pointer is elsewhere: a tint alone is what
+   * hover already draws, so the selection carries a left accent bar and a bolder name as well.
+   */
+  #tree .row[aria-current='true'] { background: color-mix(in oklab, currentColor 16%, transparent); box-shadow: inset 2px 0 0 currentColor; }
+  #tree .row[aria-current='true'] .label { font-weight: 600; opacity: 1; }
+  #tree .menu-wrap { position: relative; display: inline-flex; }
+  #tree .menu { position: absolute; right: 0; top: 1.35rem; z-index: 5; display: flex; flex-direction: column; min-width: 10rem; padding: .2rem; background: Canvas; border: 1px solid var(--line); border-radius: .35rem; box-shadow: 0 6px 18px color-mix(in oklab, currentColor 18%, transparent); }
+  #tree .menu[hidden] { display: none; }
+  #tree .menu button { text-align: left; font: inherit; font-size: .82rem; padding: .3rem .5rem; background: none; border: 0; border-radius: .25rem; color: inherit; cursor: pointer; }
+  #tree .menu button:hover { background: color-mix(in oklab, currentColor 10%, transparent); }
   #tree .kind { display: inline-flex; opacity: .8; }
   #tree .badge { font-size: .66rem; letter-spacing: .04em; padding: 0 .25rem; border: 1px solid var(--line); border-radius: .25rem; opacity: .8; }
   #tree .label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #tree .mark { font-size: .7rem; opacity: .5; }
-  #tree .mark.on { color: #2fa36b; opacity: 1; }
   #tree .turns { font-size: .72rem; opacity: .5; }
   #tree li[data-kind='generated'] .label { opacity: .55; }
   #tree li[data-kind='folder'] .label { opacity: .8; }
@@ -208,6 +244,26 @@
   textarea { flex: 1; resize: vertical; min-height: 3.5rem; font: inherit; padding: .5rem; }
   button { font: inherit; padding: .5rem 1rem; }
   h1 button { font: inherit; padding: 0 .35rem; line-height: 1.2; }
+  /**
+   * The file pane, by what the server decided to show.
+   *
+   * Text and source keep their whitespace and their monospace; a document is a document. The line
+   * numbers are a non-selectable gutter, so copying the pane copies the source and not the numbers —
+   * and the colours are the ones the turn blocks already use, so a reader meets no new palette.
+   */
+  /**
+   * The preview reads smaller than the conversation, on the owner's instruction of 2026-10-11, because a
+   * preview is read by the screenful rather than the paragraph: `.78rem` for source, `.88rem` for a
+   * rendered document, and a little less sidebar for its list, so more of the file fits on screen.
+   */
+  #file-body { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .78rem; line-height: 1.45; overflow-wrap: anywhere; }
+  #file-body[data-renderer='markdown'] { white-space: normal; font-family: inherit; font-size: .88rem; line-height: 1.5; }
+  #file-body .line { display: block; }
+  #file-body .ln { display: inline-block; width: 3.2em; margin-right: .6rem; text-align: right; opacity: .45; user-select: none; }
+  #file-body .tok-comment { opacity: .65; font-style: italic; }
+  #file-body .tok-string { color: #2fa36b; }
+  #file-body .tok-number { color: #b7791f; }
+  #file-body .tok-keyword { color: #8b5cf6; }
   .untwisty { font: inherit; padding: 0 .3rem; opacity: .55; }
   .untwisty:hover { opacity: 1; }
 </style>
@@ -236,6 +292,7 @@
   <nav id="views" aria-label="view">
     <button type="button" data-view="chat" aria-current="true">Chat</button>
     <button type="button" data-view="trajectory">Trajectory</button>
+    <button type="button" data-view="docs">Docs</button>
   </nav>
   <div id="log" data-view="chat"></div>
   <!--
@@ -247,6 +304,26 @@
   -->
   <div id="timeline" data-view="trajectory" aria-label="timeline" role="navigation" hidden></div>
   <div id="ledger" data-view="trajectory" hidden></div>
+  <!--
+    The Docs view: a document, rendered.
+
+    A repository is largely markdown, and reading one as source is the wrong default — so this is the default
+    renderer for it. The list and the document are two panes of one view, and the text is rendered **on the
+    server** by the renderer its unit tests judge, rather than by markup in this file.
+  -->
+  <div id="docs" data-view="docs" hidden>
+    <ol id="docs-list" aria-label="documents"></ol>
+    <article id="doc"></article>
+  </div>
+  <!-- The file a tree row opened: a header that says what it is, and its text. -->
+  <div id="file" data-view="file" hidden>
+    <header id="file-head"></header>
+    <!--
+      A `div` rather than a `pre`: the pane shows three different things — a document, source with a
+      line-number gutter, and text verbatim — and `white-space` is what tells them apart.
+    -->
+    <div id="file-body" data-renderer="text"></div>
+  </div>
   <form id="prompt">
     <textarea name="prompt" placeholder="ask heddle something" autofocus></textarea>
     <button>run</button>
@@ -256,6 +333,12 @@
 const log = document.getElementById('log')
 const ledger = document.getElementById('ledger')
 const timeline = document.getElementById('timeline')
+const docs = document.getElementById('docs')
+const docsList = document.getElementById('docs-list')
+const docPane = document.getElementById('doc')
+const filePane = document.getElementById('file')
+const fileHead = document.getElementById('file-head')
+const fileBody = document.getElementById('file-body')
 /** Where each turn's section is, so picking a segment can take the reader to it. */
 const turnAnchors = new Map()
 
@@ -390,6 +473,9 @@ async function showView(next) {
   log.hidden = view !== 'chat'
   ledger.hidden = view !== 'trajectory'
   timeline.hidden = view !== 'trajectory'
+  docs.hidden = view !== 'docs'
+  if (view === 'docs' && docsList.children.length === 0) await loadDocList()
+  filePane.hidden = view !== 'file'
   if (view === 'trajectory' && current !== null) {
     followTail = true
     await showLedger(current)
@@ -612,9 +698,67 @@ function renderLedger(data, timeline_ = { spans: [], durationMs: 0 }) {
   }
 }
 
+/**
+ * The document list, read once per page.
+ *
+ * The root is the directory the harness was started in — the workspace the session ran against — and the server
+ * is what decides which files are inside it. Nothing here can widen that: the page only asks for a path the
+ * listing gave it.
+ */
+let docListLoaded = false
+async function loadDocList() {
+  if (docListLoaded) return
+  docsList.replaceChildren()
+  try {
+    const body = await (await fetch('/api/docs')).json()
+    for (const entry of body.docs ?? []) {
+      const item = document.createElement('li')
+      item.textContent = entry.path
+      item.title = entry.path
+      item.dataset.path = entry.path
+      item.onclick = () => showDoc(entry.path)
+      docsList.append(item)
+    }
+    docListLoaded = true
+    const first = docsList.querySelector('li')
+    if (first !== null) await showDoc(first.dataset.path)
+  } catch (error) {
+    const note = document.createElement('div')
+    note.className = 'turn denied'
+    note.textContent = 'could not list documents: ' + (error && error.message)
+    docPane.replaceChildren(note)
+  }
+}
+
+/** Render one document, marking which is being shown. */
+async function showDoc(path) {
+  for (const item of docsList.children) {
+    if (item.dataset.path === path) item.setAttribute('aria-current', 'true')
+    else item.removeAttribute('aria-current')
+  }
+  try {
+    const response = await fetch('/api/docs?path=' + encodeURIComponent(path))
+    const body = await response.json()
+    if (body.error !== undefined) {
+      docPane.replaceChildren(Object.assign(document.createElement('p'), { className: 'turn denied', textContent: body.error }))
+      return
+    }
+    /**
+     * The HTML is written as innerHTML because the **server** produced it with the renderer its tests judge:
+     * every path escapes before it writes a tag, and a unit test asserts that no document can inject one. The
+     * page therefore never renders a document's own text as markup.
+     */
+    docPane.innerHTML = body.html ?? ''
+    docPane.scrollTop = 0
+  } catch (error) {
+    docPane.replaceChildren(Object.assign(document.createElement('p'), { className: 'turn denied', textContent: String(error && error.message) }))
+  }
+}
+
 async function showSession(id) {
   current = id
   await refreshSessions()
+  syncSelectionToSession()
   if (view === 'trajectory') await showLedger(id)
   /**
    * The log is cleared and refilled from the session's own history.
@@ -926,6 +1070,8 @@ function setNote(text) {
 const FOLDER_PATH = 'M2 4.6A1.6 1.6 0 0 1 3.6 3h2.6l1.6 2h4.6A1.6 1.6 0 0 1 14 6.6v4.8A1.6 1.6 0 0 1 12.4 13H3.6A1.6 1.6 0 0 1 2 11.4z'
 /** The one mark that distinguishes a type folder from a plain one: the braces around its name. */
 const TYPE_MARK = 'M6.3 7.4 5 9.5l1.3 2.1M9.7 7.4 11 9.5l-1.3 2.1'
+/** The front panel of an open folder, drawn as if the flap had fallen forward inside the same box. */
+const FOLDER_OPEN_FRONT = 'M4.6 7.9h8.9l-1.4 4.6H3.2z'
 
 function svgPath(d) {
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
@@ -933,8 +1079,14 @@ function svgPath(d) {
   return path
 }
 
-/** One inline SVG per kind of node, drawn in `currentColor` so it follows the theme. */
-function kindIcon(kind) {
+/**
+ * One inline SVG per kind of node, drawn in `currentColor` so it follows the theme.
+ *
+ * A folder's glyph carries the one bit a reader needs before clicking: **open or closed**. The closed
+ * folder is the outline, and the open one adds the tilted front panel inside the same 16px box, so the
+ * state is visible without moving any other row — the owner's rule of 2026-10-11.
+ */
+function kindIcon(kind, open = false) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('viewBox', '0 0 16 16')
   svg.setAttribute('width', '14')
@@ -944,8 +1096,18 @@ function kindIcon(kind) {
   svg.setAttribute('stroke-width', '1.2')
   svg.setAttribute('stroke-linejoin', 'round')
   svg.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('data-state', kind === 'file' ? 'file' : open ? 'open' : 'closed')
   if (kind === 'generated') svg.setAttribute('stroke-dasharray', '2 1.5')
+  if (kind === 'file') {
+    /**
+     * A page rather than a folder: the same body with the corner turned down, which is the one mark
+     * that says "you can open this and read it" next to a row that says "you can go into this".
+     */
+    svg.append(svgPath('M4 2h5l3 3v9H4z'), svgPath('M9 2v3h3'))
+    return svg
+  }
   svg.append(svgPath(FOLDER_PATH))
+  if (open) svg.append(svgPath(FOLDER_OPEN_FRONT))
   if (kind === 'type') svg.append(svgPath(TYPE_MARK))
   if (kind === 'instance') {
     const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
@@ -959,10 +1121,61 @@ function kindIcon(kind) {
   return svg
 }
 
+/** How big a file is, in the units a person reads without counting digits. */
+function humanBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+/**
+ * Show one file in the right panel.
+ *
+ * The fetch is the whole mechanism, and the refusals are shown rather than swallowed: a file the server
+ * will not read — outside every root, a directory, a binary — arrives as a status and a sentence, and a
+ * panel that went blank instead would look like an empty file. The path is the row's canonical path, so
+ * what is read is what was clicked.
+ */
+let fileFetches = 0
+async function showFile(node) {
+  const ticket = ++fileFetches
+  chooseSelected(node.path)
+  fileHead.textContent = node.path
+  fileBody.textContent = 'reading…'
+  await showView('file')
+  try {
+    const response = await fetch('/api/file?path=' + encodeURIComponent(node.path))
+    const body = await response.json()
+    if (ticket !== fileFetches) return
+    if (!response.ok) {
+      fileBody.textContent = body.error ?? `the server answered ${response.status}`
+      return
+    }
+    const bits = [humanBytes(body.bytes), body.lines + (body.lines === 1 ? ' line' : ' lines')]
+    if (body.truncated) bits.push(`showing the first ${humanBytes(body.text.length)}`)
+    fileHead.textContent = `${body.path}  ·  ${bits.join('  ·  ')}`
+    /**
+     * The server decided how to show this file and, for a document or source, produced the markup.
+     * Handing it over is the whole client-side renderer: nothing here parses, escapes or highlights,
+     * which is what keeps one escaping rule in the project rather than two that can disagree.
+     */
+    fileBody.dataset.renderer = body.renderer ?? 'text'
+    if (typeof body.html === 'string') {
+      fileBody.innerHTML = body.html
+    } else {
+      fileBody.textContent = body.text
+    }
+  } catch (error) {
+    if (ticket !== fileFetches) return
+    fileBody.textContent = 'could not read this file: ' + (error && error.message)
+  }
+}
+
 function selectNode(node) {
   if (node.session) {
     activeFolder = node.path
     setNote('')
+    chooseSelected(node.path)
     showSession(node.session.id)
     return
   }
@@ -973,6 +1186,7 @@ function selectNode(node) {
      */
     activeFolder = node.path
     current = null
+    chooseSelected(node.path)
     log.replaceChildren()
     ledger.replaceChildren()
     setNote('a new conversation in ' + node.label)
@@ -981,31 +1195,202 @@ function selectNode(node) {
   setNote('a session lives in an instance — open the folder inside a type folder')
 }
 
+/**
+ * What the right panel is showing, as a path in the tree.
+ *
+ * One idea rather than two: the panel shows a conversation or a file, and the tree marks the row that
+ * is being shown. That is why the mark follows a session change *and* a file click, and why switching
+ * back to Chat moves it to the conversation again — a mark that meant something else would be a second
+ * thing to keep in step.
+ */
+let selectedPath = null
+
+/** Paint the selection, and only the selection: called after every change that redraws or adds rows. */
+function markSelection() {
+  for (const row of treeList.querySelectorAll('.row')) {
+    if (row.dataset.path === selectedPath) row.setAttribute('aria-current', 'true')
+    else row.removeAttribute('aria-current')
+  }
+}
+
+function chooseSelected(path) {
+  selectedPath = path
+  markSelection()
+}
+
+/** Move the mark to the row whose session is the one now shown, when that row is drawn at all. */
+function syncSelectionToSession() {
+  if (current === null) return
+  for (const [path, entry] of rowIndex) {
+    if (entry.node.session?.id === current) {
+      chooseSelected(path)
+      return
+    }
+  }
+}
+
+/** Close every open row menu; any click outside one is a dismissal. */
+function closeMenus() {
+  for (const list of document.querySelectorAll('#tree .menu')) list.hidden = true
+  for (const button of document.querySelectorAll('#tree [aria-haspopup="true"]')) button.setAttribute('aria-expanded', 'false')
+}
+
+/**
+ * What a row offers, as `{label, run}` pairs. An empty list means no `…` is drawn at all.
+ *
+ * The owner's rule of 2026-10-11: actions live behind the menu rather than on the row, because a control
+ * that removes something should not sit one pixel from the control that navigates. A workspace can be
+ * renamed and unregistered; an instance can start a session and retitle the one it has. A file, a type
+ * folder and a plain folder offer nothing yet, so they show no menu rather than an empty one.
+ */
+function menuItemsFor(node) {
+  const items = []
+  if (node.kind === 'workspace') {
+    items.push({
+      label: 'Rename…',
+      run: async () => {
+        const title = window.prompt('Rename this workspace', node.label)
+        if (title === null) return
+        const response = await fetch('/api/workspaces/' + encodeURIComponent(node.path), {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title }),
+        })
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          setNote(body.error ?? 'could not rename that workspace')
+          return
+        }
+        setNote('')
+        await renderTree()
+      },
+    })
+    /**
+     * A refusal is shown rather than swallowed: `bootstrap` re-registers any folder that still has
+     * sessions and no root above it, so "removed" and "gone" are different answers and the second one is
+     * not available.
+     */
+    items.push({
+      label: 'Unregister',
+      run: async () => {
+        const response = await fetch('/api/workspaces/' + encodeURIComponent(node.path), { method: 'DELETE' })
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}))
+          setNote(body.error ?? 'could not unregister that workspace')
+          return
+        }
+        setNote('')
+        await renderTree()
+      },
+    })
+  }
+  if (node.kind === 'instance') {
+    items.push({
+      label: 'New session here',
+      run: async () => {
+        const response = await fetch('/api/folders/session', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ folder: node.path, new: true }),
+        })
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          setNote(body.error ?? 'could not start a session there')
+          return
+        }
+        setNote('')
+        await showSession(body.session.id)
+        await renderTree()
+      },
+    })
+    if (node.session) {
+      items.push({
+        label: 'Rename conversation…',
+        run: async () => {
+          const title = window.prompt('Rename this conversation', node.session.title ?? '')
+          if (title === null) return
+          const response = await fetch('/api/sessions/' + encodeURIComponent(node.session.id) + '/title', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ title }),
+          })
+          const body = await response.json().catch(() => ({}))
+          if (!response.ok) {
+            setNote(body.error ?? 'could not rename that conversation')
+            return
+          }
+          setNote('')
+          await renderTree()
+          await refreshSessions()
+        },
+      })
+    }
+  }
+  return items
+}
+
+/** The `…` control: a button, and the one list it opens. */
+function menuButton(node, items) {
+  const wrap = document.createElement('span')
+  wrap.className = 'menu-wrap'
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'untwisty'
+  button.textContent = '…'
+  button.title = 'actions for ' + node.label
+  button.setAttribute('aria-label', 'actions for ' + node.label)
+  button.setAttribute('aria-haspopup', 'true')
+  button.setAttribute('aria-expanded', 'false')
+  const list = document.createElement('div')
+  list.className = 'menu'
+  list.setAttribute('role', 'menu')
+  list.hidden = true
+  for (const item of items) {
+    const entry = document.createElement('button')
+    entry.type = 'button'
+    entry.setAttribute('role', 'menuitem')
+    entry.textContent = item.label
+    entry.onclick = async (event) => {
+      event.stopPropagation()
+      closeMenus()
+      await item.run()
+    }
+    list.append(entry)
+  }
+  button.onclick = (event) => {
+    event.stopPropagation()
+    const wasOpen = list.hidden === false
+    closeMenus()
+    list.hidden = wasOpen
+    button.setAttribute('aria-expanded', String(!wasOpen))
+  }
+  wrap.append(button, list)
+  return wrap
+}
+
+document.addEventListener('click', closeMenus)
+
 function nodeRow(node) {
   const li = document.createElement('li')
   li.setAttribute('role', 'treeitem')
-  // The state lives on the tree item, where a reader is told about it, and on the control's label.
-  li.setAttribute('aria-expanded', 'false')
   li.dataset.kind = node.kind
   li.dataset.open = 'false'
+  if (node.kind !== 'file') {
+    // The state lives on the tree item, where a reader is told about it, and on the control's label.
+    li.setAttribute('aria-expanded', 'false')
+  }
 
   const row = document.createElement('div')
   row.className = 'row'
   row.dataset.path = node.path
   row.tabIndex = 0
-  if (node.session && node.session.id === current) row.setAttribute('aria-current', 'true')
+  if (node.path === selectedPath) row.setAttribute('aria-current', 'true')
 
-  const twisty = document.createElement('button')
-  twisty.type = 'button'
-  twisty.className = 'twisty'
-  twisty.textContent = '+'
-  twisty.setAttribute('aria-label', 'expand ' + node.label)
-  twisty.onclick = async (event) => {
-    event.stopPropagation()
-    await toggle(node, li, twisty)
-  }
-
-  row.append(twisty, kindIcon(node.kind))
+  /** The left of the row is what it **is**: its kind, a type's badge, and its name. */
+  const icon = document.createElement('span')
+  icon.className = 'icon'
+  icon.append(kindIcon(node.kind, false))
+  row.append(icon)
   if (node.badge) {
     const badge = document.createElement('span')
     badge.className = 'badge'
@@ -1016,49 +1401,14 @@ function nodeRow(node) {
   label.className = 'label'
   label.textContent = node.label
   row.append(label)
+
   /**
-   * A workspace row can be unregistered, and only a workspace row can.
+   * The dot that used to sit here said whether an instance held a session: hollow when none, filled when one.
    *
-   * The record is found by **path**, which is what a tree node carries: ids exist and are stable, but
-   * they are not what the UI draws, and inventing an id column to hold a delete button would put an
-   * identifier in front of a person for the sake of a request body. The server resolves a path as
-   * readily as an id.
-   *
-   * A refusal is shown rather than swallowed — `bootstrap` re-registers any folder that still has
-   * sessions and no root above it, so "removed" and "gone" are different answers and the second one
-   * is not available.
+   * It is gone, by the owner's decision of 2026-10-11 — **one dot per folder is noise, not information**. What
+   * it reported is already reported twice: the row's own `turns` count appears only when there is a session,
+   * and the folder glyph changes when one is opened. Nothing is lost by removing a third statement of it.
    */
-  if (node.kind === 'workspace') {
-    const remove = document.createElement('button')
-    remove.type = 'button'
-    remove.className = 'untwisty'
-    remove.textContent = '×'
-    remove.title = 'unregister this workspace root'
-    remove.setAttribute('aria-label', 'unregister ' + node.label)
-    remove.onclick = async (event) => {
-      event.stopPropagation()
-      const response = await fetch('/api/workspaces/' + encodeURIComponent(node.path), { method: 'DELETE' })
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}))
-        setNote(body.error ?? 'could not unregister that workspace')
-        return
-      }
-      setNote('')
-      await renderTree()
-    }
-    row.append(remove)
-  }
-  /**
-   * The marker says whether there is a session **and** whether there could be one: a hollow dot on an
-   * instance with none is the invitation, and a filled one is the record.
-   */
-  if (node.kind === 'instance') {
-    const mark = document.createElement('span')
-    mark.className = node.session ? 'mark on' : 'mark'
-    mark.textContent = node.session ? '●' : '○'
-    mark.title = node.session ? 'has a session' : 'no session yet'
-    row.append(mark)
-  }
   if (node.session) {
     const turns = document.createElement('span')
     turns.className = 'turns'
@@ -1066,10 +1416,32 @@ function nodeRow(node) {
     row.append(turns)
   }
 
-  row.onclick = () => {
-    selectNode(node)
-    for (const other of treeList.querySelectorAll('.row[aria-current]')) other.removeAttribute('aria-current')
-    if (node.session) row.setAttribute('aria-current', 'true')
+  /**
+   * The right of the row is what can be **done** with it, and the row is now clicked to open and close — so the
+   * only control at the right edge is the menu.
+   *
+   * The `+` / `−` box that used to sit here is gone, by the owner's decision of 2026-10-11: the folder glyph on
+   * the left already reports the state, and clicking the row performs the act, so the box was a second way to
+   * do one thing and the eye had to find it before it could be used.
+   */
+  const actions = menuItemsFor(node)
+  if (actions.length > 0) row.append(menuButton(node, actions))
+
+  row.onclick = async () => {
+    /**
+     * A row is one of two things, and the click says which.
+     *
+     * A **file** opens its content in the right panel. A **folder expands or closes** — the owner's rule
+     * of 2026-10-11, and what the folder glyph on the left reports — and opening an instance also makes it
+     * the folder being worked in, so expanding one with a conversation shows that conversation. Closing is
+     * a pure navigation act: it puts the contents away without changing what the panel is showing.
+     */
+    if (node.kind === 'file') {
+      showFile(node)
+      return
+    }
+    await toggle(node, li)
+    if (li.dataset.open === 'true' && node.kind === 'instance') selectNode(node)
   }
   row.onkeydown = (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -1079,12 +1451,12 @@ function nodeRow(node) {
   }
 
   li.append(row)
-  rowIndex.set(node.path, { node, li, twisty })
+  rowIndex.set(node.path, { node, li, icon })
   return li
 }
 
 /** Draw a node's children, fetching them when they were not part of the answer that drew the node. */
-async function loadChildren(node, li, twisty) {
+async function loadChildren(node, li) {
   const group = document.createElement('ul')
   group.setAttribute('role', 'group')
   li.append(group)
@@ -1111,32 +1483,38 @@ async function loadChildren(node, li, twisty) {
      */
     const empty = document.createElement('div')
     empty.className = 'empty'
-    empty.textContent = 'no folders inside'
+    empty.textContent = 'nothing inside'
     group.append(empty)
     return
   }
   for (const child of children) group.append(nodeRow(child))
+  markSelection()
 }
 
-async function toggle(node, li, twisty) {
+async function toggle(node, li) {
   const open = li.dataset.open === 'true'
+  const entry = rowIndex.get(node.path)
+  /**
+   * The signs of one state: the **folder glyph on the left**, and the list item's own `aria-expanded` — which is
+   * what tells a screen reader, and is why removing the `+` / `−` box lost no accessibility: the state was
+   * always on the row as well as on the control.
+   */
+  const paint = (isOpen) => {
+    li.dataset.open = isOpen ? 'true' : 'false'
+    li.setAttribute('aria-expanded', isOpen ? 'true' : 'false')
+    if (entry !== undefined && entry.icon !== undefined) entry.icon.replaceChildren(kindIcon(node.kind, isOpen))
+  }
   if (open) {
-    li.dataset.open = 'false'
-    li.setAttribute('aria-expanded', 'false')
-    twisty.textContent = '+'
-    twisty.setAttribute('aria-label', 'expand ' + node.label)
+    paint(false)
     li.querySelector('ul[role=group]')?.remove()
     expanded.delete(node.path)
     rememberExpanded()
     return
   }
-  li.dataset.open = 'true'
-  li.setAttribute('aria-expanded', 'true')
-  twisty.textContent = '−'
-  twisty.setAttribute('aria-label', 'collapse ' + node.label)
+  paint(true)
   expanded.add(node.path)
   rememberExpanded()
-  await loadChildren(node, li, twisty)
+  await loadChildren(node, li)
 }
 
 async function renderTree() {
@@ -1181,9 +1559,12 @@ async function renderTree() {
    */
   for (const path of [...expanded].sort((left, right) => left.split('/').length - right.split('/').length)) {
     const entry = rowIndex.get(path)
-    if (entry === undefined || entry.li.dataset.open === 'true') continue
-    await toggle(entry.node, entry.li, entry.twisty)
+    // A file is never in `expanded`; skipping it keeps a stray key from asking for a disclosure it has.
+    if (entry === undefined || entry.node.kind === 'file' || entry.li.dataset.open === 'true') continue
+    await toggle(entry.node, entry.li)
   }
+  if (selectedPath === null) syncSelectionToSession()
+  markSelection()
 }
 
 document.getElementById('views').addEventListener('click', (clickEvent) => {

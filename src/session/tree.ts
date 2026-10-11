@@ -1,11 +1,11 @@
-import { readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, join, sep } from 'node:path'
 
 import { canonicalPath, depthOf, isUnder } from '../paths.ts'
 import type { SessionMeta } from './store.ts'
 
 /**
- * The folder tree the Web UI's left column shows.
+ * The folder tree the Web UI's left column shows, and the content a file node opens.
  *
  * This is a **derivation**, not a service: `tree()` is handed the roots, the sessions and the names
  * of any generated folders, and answers with nodes. Two properties make it the thing a check can
@@ -14,9 +14,11 @@ import type { SessionMeta } from './store.ts'
  * - **One level at a time.** A node's `children` is the array of its direct children when the caller
  *   asked for that node, and `null` when it did not. `null` and `[]` mean different things — "not
  *   asked" and "asked and empty" — and the difference is what makes the tree lazy.
- * - **Folders only.** A file is not a node. A leaf is reached by opening the transcript, not by
- *   browsing, and the folders that a person does not mean by "content" (dot-directories,
- *   `node_modules`, `__pycache__`) are not enumerated at all.
+ * - **Folders and files, folders first.** A folder is the navigation and a file is the leaf: the
+ *   owner asked for the files to be shown on 2026-10-11, reversing this module's first rule, which
+ *   enumerated folders only on the reasoning that a leaf is reached by opening the transcript rather
+ *   than by browsing. What is still not enumerated is what nobody means by "content": dot-entries,
+ *   `node_modules`, `__pycache__`.
  *
  * The classification is the conventions repository's own, restated here rather than read from it:
  * a type folder is a plural noun in underscores, an instance is kebab-case and sits directly inside
@@ -25,7 +27,7 @@ import type { SessionMeta } from './store.ts'
  * vocabulary is optional configuration elsewhere and is not needed to render.
  */
 
-export type NodeKind = 'roots' | 'workspace' | 'type' | 'instance' | 'folder' | 'generated'
+export type NodeKind = 'roots' | 'workspace' | 'type' | 'instance' | 'folder' | 'generated' | 'file'
 
 /** What a folder's session contributes to its row. */
 export interface TreeSession {
@@ -41,8 +43,10 @@ export interface TreeNode {
   /** The type's short name, for a type folder; `null` everywhere else. */
   readonly badge: string | null
   readonly session: TreeSession | null
-  /** Direct children when they were asked for, `null` when they were not. */
+  /** Direct children when they were asked for, `null` when they were not; `[]` for a file. */
   readonly children: readonly TreeNode[] | null
+  /** A file's size, so a row can say how big it is without opening it. */
+  readonly bytes?: number
   /**
    * The adopted roots, on the virtual root node only.
    *
@@ -114,16 +118,88 @@ function currentByFolder(sessions: readonly SessionMeta[]): Map<string, SessionM
   return map
 }
 
-/** The subdirectories worth showing, name-sorted the way a person reads a list. */
-function subfolders(dir: string): string[] {
+/**
+ * One directory's entries worth showing: folders first, then files, each name-sorted.
+ *
+ * Folders first is what makes a tree navigable — the structure a person is walking stays together at
+ * the top, and the leaves sit under it. Dot-entries and the two noise directories are not returned at
+ * all, which is the same judgement the tree made when it showed folders only.
+ */
+function entries(dir: string): { readonly name: string; readonly directory: boolean; readonly bytes: number }[] {
   try {
     return readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !PLUMBING.has(entry.name))
-      .map((entry) => entry.name)
-      .sort((left, right) => collator.compare(left, right))
+      .filter((entry) => !entry.name.startsWith('.') && !PLUMBING.has(entry.name))
+      .map((entry) => ({
+        name: entry.name,
+        directory: entry.isDirectory(),
+        bytes: entry.isFile() ? sizeOf(join(dir, entry.name)) : 0,
+      }))
+      .sort((left, right) => (left.directory === right.directory ? collator.compare(left.name, right.name) : left.directory ? -1 : 1))
   } catch {
     // A folder that cannot be read is a folder with nothing to show, not a failure of the tree.
     return []
+  }
+}
+
+/** A file's size, or 0 when it cannot be read — an unreadable file is still a row. */
+function sizeOf(path: string): number {
+  try {
+    return statSync(path).size
+  } catch {
+    return 0
+  }
+}
+
+/** How much of a file the reader will hand back, unless a caller says otherwise. */
+export const FILE_LIMIT_BYTES = 256 * 1024
+
+/** A file, as the right panel shows it. */
+export interface FileReading {
+  readonly path: string
+  readonly name: string
+  readonly bytes: number
+  readonly lines: number
+  readonly text: string
+  /** The file is longer than the limit, so `text` is its beginning and not all of it. */
+  readonly truncated: boolean
+}
+
+/**
+ * Read a text file for the viewer, refusing what a viewer cannot show.
+ *
+ * Three refusals, and each is a sentence a person can act on rather than a silent empty panel: a
+ * directory or a missing path is not a file, a binary is not text, and a file longer than the limit
+ * is **truncated and says so** instead of being refused — a big log is exactly the thing a reader
+ * opens.
+ *
+ * This is a **view**, not a way around the sandbox: the caller decides which paths are readable
+ * (both do it by asking the workspace service whether the path is under a registered root, on the
+ * canonical path, so a symlink pointing outside is refused), and a tool that writes or reads on a
+ * model's behalf still goes through the sandbox and the approval policy.
+ */
+export function readFileText(path: string, options: { readonly limit?: number } = {}): FileReading {
+  const canonical = canonicalPath(path)
+  const limit = options.limit ?? FILE_LIMIT_BYTES
+  let stats
+  try {
+    stats = statSync(canonical)
+  } catch {
+    throw new Error(`${canonical} is not a file`)
+  }
+  if (!stats.isFile()) throw new Error(`${canonical} is not a file`)
+
+  const whole = readFileSync(canonical)
+  const slice = whole.subarray(0, limit)
+  if (slice.includes(0)) throw new Error(`${canonical} looks like a binary file, so it has no text to show`)
+  const text = slice.toString('utf8')
+  if (text.includes('\uFFFD')) throw new Error(`${canonical} is not UTF-8 text, so it has no text to show`)
+  return {
+    path: canonical,
+    name: basename(canonical),
+    bytes: stats.size,
+    lines: text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0),
+    text,
+    truncated: whole.length > slice.length,
   }
 }
 
@@ -181,13 +257,18 @@ function row(path: string, kind: NodeKind, label: string, context: Context): Omi
   }
 }
 
-/** The direct children of a folder: its subfolders, or a registered root sitting among them. */
+/** The direct children of a folder: its subfolders, its files, or a registered root among them. */
 function childrenOf(dir: string, kind: NodeKind, context: Context): TreeNode[] {
-  return subfolders(dir).map((name) => {
-    const path = canonicalPath(join(dir, name))
+  return entries(dir).map((entry) => {
+    const path = canonicalPath(join(dir, entry.name))
+    /**
+     * A file is a leaf and says so: `children: []` — asked for and empty — rather than `null`, because
+     * "not asked" would invite a client to look for children that cannot exist.
+     */
+    if (!entry.directory) return { ...row(path, 'file', entry.name, context), children: [], bytes: entry.bytes }
     const root = context.byPath.get(path)
     if (root !== undefined) return { ...row(path, 'workspace', root.title, context), children: null }
-    return { ...row(path, classify(name, kind, context.generated), name, context), children: null }
+    return { ...row(path, classify(entry.name, kind, context.generated), entry.name, context), children: null }
   })
 }
 
@@ -195,10 +276,12 @@ function childrenOf(dir: string, kind: NodeKind, context: Context): TreeNode[] {
  * What a folder is, worked out from the root above it rather than from its name alone.
  *
  * The walk is why an instance is only an instance inside a type folder, and why a type may appear at
- * any depth: each segment is classified against the one before it.
+ * any depth: each segment is classified against the one before it. A path that is not a directory is
+ * a **file** whatever its name looks like, so a folder-name pattern never turns a file into a type.
  */
 export function kindOf(path: string, input: TreeInput): NodeKind {
   const canonical = canonicalPath(path)
+  if (!isDirectory(canonical)) return 'file'
   const context = buildContext(input)
   const self = context.byPath.get(canonical)
   if (self !== undefined) return 'workspace'
@@ -208,6 +291,15 @@ export function kindOf(path: string, input: TreeInput): NodeKind {
   let kind: NodeKind = 'workspace'
   for (const segment of relative) kind = classify(segment, kind, context.generated)
   return kind
+}
+
+/** Whether a path is a directory, for the two places that must not treat a file as a folder. */
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -238,6 +330,11 @@ export function tree(path: string | null, input: TreeInput): TreeNode {
   }
 
   const canonical = canonicalPath(path)
+  if (!isDirectory(canonical)) {
+    // Asking for a file answers with the file's own row, so a client that navigates by path never gets
+    // a folder-shaped node for something that cannot hold children.
+    return { ...row(canonical, 'file', basename(canonical), context), children: [], bytes: sizeOf(canonical) }
+  }
   const root = context.byPath.get(canonical)
   const kind = root !== undefined ? 'workspace' : kindOf(canonical, input)
   const label = root !== undefined ? root.title : basename(canonical)

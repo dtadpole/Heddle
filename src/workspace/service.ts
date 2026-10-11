@@ -248,6 +248,25 @@ export class WorkspaceService extends Service {
   }
 
   /**
+   * Retitle a root, by id or by path.
+   *
+   * The title is a label a person reads and nothing an association is made of — the path is, and a
+   * rename never touches it. An empty title is refused rather than saved, because a nameless row in a
+   * tree is a row a person cannot find again.
+   */
+  rename(idOrPath: string, title: string): WorkspaceRecord | undefined {
+    const trimmed = title.trim()
+    if (trimmed.length === 0) throw new Error('a workspace needs a name')
+    const shape = this.read()
+    const record = this.find(idOrPath)
+    if (record === undefined) return undefined
+    const updated: WorkspaceRecord = { ...record, title: trimmed, updatedAt: new Date().toISOString() }
+    shape.workspaces[record.id] = updated
+    this.write(shape)
+    return updated
+  }
+
+  /**
    * The root that owns a folder: the **nearest** registered root at or above it.
    *
    * `undefined` when no root is above the folder, which is a fact rather than a failure — the caller
