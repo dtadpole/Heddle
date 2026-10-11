@@ -129,6 +129,13 @@ and `role="group"` on the children. The whole row toggles; indentation is `depth
 is persisted in `localStorage` under `heddle.tree.expanded.v1`, keyed by absolute path, pruned when a
 path disappears.
 
+**A folder that turns out to be empty still opens and closes.** The first version disabled the control
+and turned it into `·` once a folder had no children, and the owner hit it immediately: a leaf could be
+opened and then had no control left to close it. Whether a folder is empty is only known *after*
+asking, so the control cannot be the thing that reports it — the children area says `no folders inside`
+in words, and `+` / `−` keep meaning what they say. A check now judges this in a browser, because no
+API check could see it.
+
 **Loading is lazy, one level at a time.** A node's children are fetched when it is first expanded;
 `children: null` means "not asked for", `[]` means "asked for and empty". An empty type folder
 (`_monitors_` with only its `INDEX.md`) is a type with no children, not an error.

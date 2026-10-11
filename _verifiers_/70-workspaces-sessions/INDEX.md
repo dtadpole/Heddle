@@ -22,20 +22,25 @@ rejected, in [`../../SESSION_TREE.md`](../../SESSION_TREE.md).
 
 ## What decides it
 
-`check.mjs` — one file, twenty checks in three groups:
+`check.mjs` — one file, twenty-two checks in three groups:
 
 | Group | Checks | What it judges |
 |---|---|---|
-| the transcript | 4 | a session outlives its run, resumes, is readable on disk, and is appended to rather than rewritten |
+| the transcript | 5 | a session outlives its run, resumes, is readable on disk, is appended to rather than rewritten, and survives a frame torn by an interruption |
 | the association | 3 | a session is grouped under the folder it ran in, a subdirectory is a member of the root above it, and one folder's prompts continue one session |
-| the tree | 13 | containment, the segment-wise trap, the nearest root, `--new` and history, one level at a time, type and instance classification, badges, recursion, plain containers, plumbing and generated folders, **the boundary that only an instance carries a session**, the folder name as the session name, an empty type folder, and a folder outside every root |
+| the tree | 14 | containment, the segment-wise trap, the nearest root, `--new` and history, one level at a time, type and instance classification, badges, recursion, plain containers, plumbing and generated folders, **the boundary that only an instance carries a session**, the folder name as the session name, an empty type folder, a folder outside every root, and **a folder that opens and closes with the same control — in a browser** |
 
 ## Where it stands, 2026-10-11
 
-**20 checks, all passing — verdict `0`.** The tree group was written **before** the mechanism it judges,
+**22 checks, all passing — verdict `0`.** The tree group was written **before** the mechanism it judges,
 because the owner asked for the checks first; both then landed in one session, and the checks went from
 unjudged to passing without being bent: the two assertions that had to change are the ones whose rule the
 owner reversed, and each says so in its own comment.
+
+One check is a **browser** check, added after the owner hit a defect no API check could see: a leaf folder
+could be opened and then had no control left to close it with, because the disclosure was disabled once
+the folder turned out to be empty. It was confirmed to catch that defect by putting the old behaviour back
+and watching it fail with `expected '−', actual '·'`.
 
 ## Running it
 
@@ -55,11 +60,12 @@ whole reason for existing — see [`_tools_/verify-runner/`](../../_tools_/verif
   ask whether the mechanism works.
 - **Anything it has to spend to see.** Every fixture here is a scripted endpoint and a local
   directory tree, so the run is free and offline.
-- **A rendered page.** The tree is judged as a **derivation**, one level at a time, through the CLI —
-  which is where the mechanism lives and where a browser is not needed. The pixels, the kind icons, the
-  type badges and the `+` / `−` control are not judged by any check here. They were read back from a
-  real browser by hand against a fixture shaped like the conventions repository, which is evidence but
-  not a check; the roadmap's "a browser check" is still open.
+- **A rendered page, except one behaviour.** The tree is judged as a **derivation**, one level at a time,
+  through the CLI — which is where the mechanism lives and where a browser is not needed. One rendered
+  behaviour *is* judged, because the owner found it broken and no API check could have: that a folder opens
+  **and closes** with the same control, including a leaf with nothing inside. The pixels, the kind icons and
+  the type badges are not judged anywhere; they were read back from a real browser by hand against a fixture
+  shaped like the conventions repository, and the roadmap's "a browser check" is now partly done.
 
 ## Read next
 

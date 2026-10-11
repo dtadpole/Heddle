@@ -72,16 +72,16 @@ wording. Correcting the statement is the owner's act; correcting the *state* is 
 evidence.
 
 **Every part is judged, and every check passes.** Measured on 2026-10-11 by running every verifier:
-**93 checks, 0 failures, 0 unjudged**. The fourteen that waited on part 7's tree — written ahead of the
+**94 checks, 0 failures, 0 unjudged**. The fourteen that waited on part 7's tree — written ahead of the
 mechanism because the owner asked for the checks first — now pass, and the two checks allowed to report
 unjudged (part 1's real-backend probe and the daemon check) both found their subject on this machine.
 The two counts that matter are kept apart: *unjudged* is a mechanism that does not exist, and *failed*
 is one that does not work.
 
 That measurement was taken while **another session was working in the same checkout**, so it is a
-reading of a moving tree: part 3 grew from five checks to eight, part 10 from nine to ten, and
-`_verifiers_/85-trajectory-view/` arrived as a new part with two checks of its own. The numbers are
-counts of checks rather than of parts.
+reading of a moving tree: part 3 grew from five checks to eight, part 10 from nine to ten, and two new
+parts arrived — `_verifiers_/85-trajectory-view/` with two checks and `_verifiers_/87-resizable-panels/`
+with one. The numbers are counts of checks rather than of parts.
 
 The checks were then **reviewed from a user's seat** and extended: what would a person rely on that
 nothing yet judged? Session grouping by folder, a replacement for a built-in tool, what happens after a

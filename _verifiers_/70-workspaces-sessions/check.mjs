@@ -5,6 +5,7 @@ import { test } from 'node:test'
 
 import { decodeTranscript } from '../../src/session/transcript.ts'
 import { fixtureDir, isolatedHome, parseJson, readTranscript, removeDir, repoRoot, runCli, scriptedConfig, sessionsUnder, skipUnless, transcriptFile } from '../../_tools_/check-helpers/lib.mjs'
+import { browserAvailable, openBrowser } from '../../_tools_/check-helpers/browser.mjs'
 
 /**
  * Verifier 7 — workspaces and sessions.
@@ -696,8 +697,7 @@ test('a folder outside every root is refused rather than walked', async (context
   }
 })
 
-test('a session interrupted mid-frame still reads, and its next turn lands', async (context) => {
-  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+test('a session interrupted mid-frame still reads, and its next turn lands', async (context) => {  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
   /**
    * The failure this judges was found by testing the storage format rather than the feature: a
    * transcript torn in the middle of a frame made **every event written afterwards unreadable**,
@@ -734,6 +734,130 @@ test('a session interrupted mid-frame still reads, and its next turn lands', asy
     )
     assert.ok(!decodeTranscript(readFileSync(transcript)).torn, 'the record no longer ends in a half-written frame')
   } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+  }
+})
+
+/** Boot a server for the one browser check here, resolving once it prints its URL. */
+function startServer(args, env) {
+  return new Promise((resolvePromise, reject) => {
+    void (async () => {
+      const { spawn } = await import('node:child_process')
+      const child = spawn(process.execPath, [join(repoRoot, 'dist', 'cli.js'), ...args], {
+        cwd: repoRoot,
+        env: { ...process.env, NO_COLOR: '1', ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let output = ''
+      let settled = false
+      const onData = (chunk) => {
+        output += chunk.toString()
+        const match = /heddle web: (http:\/\/\S+)/.exec(output)
+        if (match && !settled) {
+          settled = true
+          resolvePromise({ url: match[1], kill: () => child.kill('SIGKILL') })
+        }
+      }
+      child.stdout.on('data', onData)
+      child.stderr.on('data', onData)
+      child.on('exit', (code) => {
+        if (!settled) {
+          settled = true
+          reject(new Error(`the server exited ${code} before printing a URL\n${output}`))
+        }
+      })
+      setTimeout(() => {
+        if (!settled) {
+          settled = true
+          child.kill('SIGKILL')
+          reject(new Error(`the server printed no URL within 15s\n${output}`))
+        }
+      }, 15_000)
+    })()
+  })
+}
+
+/** The state of one row's disclosure, read from the page. */
+function disclosure(label) {
+  return `JSON.stringify((() => {
+    const row = [...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === ${JSON.stringify(label)})
+    if (row === undefined) return { missing: true }
+    const li = row.closest('li')
+    const button = row.querySelector('.twisty')
+    const note = li.querySelector('.empty')
+    return { text: button.textContent, disabled: button.disabled, expanded: li.getAttribute('aria-expanded'), open: li.dataset.open, note: note === null ? null : note.textContent, children: li.querySelector('ul[role=group]') === null ? 0 : li.querySelectorAll('ul[role=group] > li').length }
+  })())`
+}
+
+test('a folder opens and closes with the same control, including a leaf with nothing inside', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
+  if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
+  const h = harness('tree-ui')
+  let live
+  let browser
+  try {
+    await conventionsFixture(h)
+    /**
+     * This is the one check in this part that judges a **rendered page**, and it exists because the
+     * owner hit the defect it pins: the first version of the tree turned the disclosure into a
+     * disabled `·` once a folder turned out to be empty, so a leaf could be opened and then had no
+     * control left to close it with. No API check could see that — the route answered correctly and
+     * the derivation was right — which is the whole argument for a browser check.
+     */
+    live = await startServer(
+      ['web', '--host', '127.0.0.1', '--port', '0', '--config', join(repoRoot, 'cordis.yml'), '--session-root', join(h.home, 'sessions')],
+      { ...h.env, HOME: h.home },
+    )
+    browser = await openBrowser()
+    await browser.goto(live.url)
+    await browser.waitFor('document.querySelectorAll("#tree .twisty").length > 0', 20_000)
+
+    await browser.evaluate('document.querySelector("#tree .twisty").click()')
+    await browser.waitFor('document.querySelectorAll(\'#tree li[data-kind="type"]\').length > 0', 20_000)
+
+    // A leaf: `_monitors_` is a type folder with nothing inside it.
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_monitors_').querySelector('.twisty').click()`,
+    )
+    await browser.waitFor('document.body.innerText.includes("no folders inside")', 20_000)
+    const open = JSON.parse(await browser.evaluate(disclosure('_monitors_')))
+    assert.equal(open.text, '−', 'an opened folder shows a minus, leaf or not')
+    assert.equal(open.disabled, false, 'and its control is still usable, so the folder can be closed again')
+    assert.equal(open.expanded, 'true', 'the state is on the tree item, where a reader is told about it')
+    assert.equal(open.note, 'no folders inside', 'and what is inside is said in words rather than by disabling the control')
+
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_monitors_').querySelector('.twisty').click()`,
+    )
+    await browser.waitFor('!document.body.innerText.includes("no folders inside")', 20_000)
+    const closed = JSON.parse(await browser.evaluate(disclosure('_monitors_')))
+    assert.equal(closed.text, '+', 'and clicking the minus closes it again')
+    assert.equal(closed.expanded, 'false', 'with the state updated')
+    assert.equal(closed.children, 0, 'and the group gone rather than left behind')
+
+    /**
+     * A folder **with** children closes the same way, so the two are one behaviour rather than two
+     * code paths that can drift apart.
+     */
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').querySelector('.twisty').click()`,
+    )
+    await browser.waitFor('document.body.innerText.includes("some-tool")', 20_000)
+    const toolsOpen = JSON.parse(await browser.evaluate(disclosure('_tools_')))
+    assert.equal(toolsOpen.text, '−', 'a folder with children opens the same way')
+    assert.equal(toolsOpen.children, 1, 'and its one instance is drawn')
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').querySelector('.twisty').click()`,
+    )
+    await browser.waitFor('!document.body.innerText.includes("some-tool")', 20_000)
+    const toolsClosed = JSON.parse(await browser.evaluate(disclosure('_tools_')))
+    assert.equal(toolsClosed.text, '+', 'and closes the same way')
+    assert.equal(toolsClosed.children, 0, 'leaving no group behind')
+  } finally {
+    browser?.close()
+    live?.kill()
     removeDir(h.home)
     removeDir(h.work)
   }

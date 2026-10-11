@@ -33,17 +33,17 @@ deliberately does not.
 
 ## Where each stands, 2026-10-11
 
-**93 checks, 0 failures, 0 unjudged**, measured by running every verifier after `npm run build` on
+**94 checks, 0 failures, 0 unjudged**, measured by running every verifier after `npm run build` on
 2026-10-11. Nothing is left unjudged: the fourteen checks that were waiting on part 7's mechanism —
 written ahead of it because the owner asked for the checks first — now pass, and the two that are
-allowed to report unjudged (part 1's real-backend probe and part 12's daemon check) both found their
-subject on this machine.
+allowed to report unjudged (part 1's real-backend probe and the daemon check) both found their subject
+on this machine.
 
 This measurement was taken while **another session was working in the same checkout**, so the counts
-have moved under it twice: part 3 grew from five checks to eight, part 10 from nine to ten, and
-`85-trajectory-view` arrived as a new part with two checks of its own. The numbers are counts of
-checks rather than of parts, and the rows below are the current shape rather than a diff against the
-previous measurement.
+have moved under it more than once: part 3 grew from five checks to eight, part 10 from nine to ten, and
+two new parts arrived — `85-trajectory-view` with two checks and `87-resizable-panels` with one. The
+numbers are counts of checks rather than of parts, and the rows below are the current shape rather than
+a diff against the previous measurement.
 
 | # | Checks | Verdict |
 |---|---|---|
@@ -54,7 +54,7 @@ previous measurement.
 | 4 | 6 | `0` — allow list, an out-of-repository tool, a replacement, a malformed spec refused |
 | 5 | 6 | `0` — multi-round tasks, results fed back, the limit reported, resume, a failed tool |
 | 6 | 6 | `0` — the hook points, retarget, refusal, replacement, a refusal that stops, a broken hook named |
-| 7 | 21 | `0` — the transcript and resume; containment, the segment-wise trap and the nearest root; one session per folder and `--new`; the tree's one level, kinds, badges, laziness and plumbing; the boundary that only an instance carries a session; and a session interrupted mid-frame still reading, with its next turn landing |
+| 7 | 22 | `0` — the transcript, resume and a frame torn by an interruption; containment, the segment-wise trap and the nearest root; one session per folder and `--new`; the tree's one level, kinds, badges, laziness, plumbing and the boundary that only an instance carries a session; and, in a browser, that a folder opens and closes with the same control |
 | 8 | 5 | `0` — the three modes, the sibling prefix, and the temp directory only when admitted |
 | 9 | 4 | `0` — port, page, API, and the live stream |
 | 10 | 10 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode, a stale token's recovery page, session history over the API and in a browser |
