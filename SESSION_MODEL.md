@@ -103,6 +103,37 @@ The chat pane keeps reading the **log**, because a person wants to see what was 
 differ on purpose, and each says which reading it is — the one place the design allows disagreement, and
 only because it is the *point* of the surface.
 
+**3.5 The log stays local, and the session's definition is tracked content.**
+
+The owner's ruling of 2026-10-11, and it settles what the rest of this document only implied:
+
+| The fact | Where it lives | Tracked? |
+|---|---|---|
+| the **log** — every event, in order | `~/.heddle/sessions/<workspace>/<session-id>.jsonl` | no, it is machine state |
+| the **session definition** — the log it references, how to compose its context, which tools it may use, its endpoint and preset | `<target folder>/<…>/<instance>/_sessions_/<session>/` | **yes, committed to GitHub** |
+| the **label** a person reads | the session's own `_sessions_` instance, with `meta.json` as the local cache | yes, in the instance |
+
+So a session is not one file but a **pair**: a bulky append-only log kept out of the repository, and a
+small tracked instance that says *which* log it is and *how* to run it. That is a better split than either
+extreme — a log in the repository would put every token a model ever read into git history, and a session
+with no tracked definition could not be reviewed, diffed or pointed at by a folder.
+
+`_sessions_` is a registered type in the reflection vocabulary as of the same day, so the instance follows
+the conventions like any other: a kebab-case instance folder, its own `INDEX.md`, and the metadata the
+harness reads beside it. Two things it settles and two it leaves open:
+
+- **Settled: the tree and the store now have one anchor each, and they meet at the instance.** The tree
+  finds a session because `<instance>/_sessions_/<session>/` exists; the store finds one because its log
+  exists. A session whose folder was deleted is a log with no definition; a session whose log was deleted is
+  a definition with no transcript, and both are states a view can report rather than guess at.
+- **Settled: the folder is the session's identity in the repository.** `meta.cwd` stops being the only
+  place the binding is written down, and the instruction root (§3.2) becomes the folder the instance sits in.
+- **Open: what a session instance is called.** Instance names are two to four kebab-case words, so
+  `<session-id>` is not one; a name derived from the first prompt, from the date, or from the folder plus an
+  ordinal are the candidates, and the id stays the identity either way.
+- **Open: the metadata's file name and shape** — an `INDEX.md` for the reader and a `session.json` for the
+  harness is the shape the conventions suggest, since an entry point is prose and a harness needs fields.
+
 **3.4 A title is a fact about the session, and the log is where facts live.**
 
 `session/title` becomes a log event, latest wins, appended by `rename`, and `meta.title` becomes the
