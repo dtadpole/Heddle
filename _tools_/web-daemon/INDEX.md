@@ -42,6 +42,23 @@ version, no session data — which is the one route reachable without a token, s
 must say nothing worth having. The definition and the server therefore agree on a single endpoint instead
 of on parsing a banner.
 
+## The request fence, and the viewer it used to break
+
+heddle refuses a request whose `Host` is not loopback, and refuses one whose `Origin` names another
+authority. A cross-site request may **read** and may not **change** anything — `GET` and `HEAD` pass,
+everything else is refused.
+
+That split is a correction. The fence first refused every cross-site request, and a viewer that embeds the
+page in a **sandboxed iframe** has an opaque origin, so the browser marks its requests cross-site: measured,
+`allow-same-origin` rendered heddle and a fully sandboxed frame received `refused: a cross-site request`.
+heddle was unreachable from the sidebar it was meant to be watched in. Reads are safe to allow because the
+credential cannot travel — the session cookie is `SameSite=Strict`, so a browser never attaches it to a
+cross-site request, and the same read without the cookie is a `401`. A write must name this authority in
+`Origin`, and an opaque origin's `null` matches nothing.
+
+**This is why the gate is not a workaround for the fence.** The gate forwards the caller's `Sec-Fetch-Site`
+untouched, so a sandboxed viewer reaches heddle through it only because heddle now permits the read.
+
 ## How the token works here
 
 The launch token is minted **per process** and never stored, which does not change because the process is

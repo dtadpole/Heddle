@@ -222,15 +222,53 @@ test('a request from another site is refused before any token is compared', asyn
     const handshake = await fetch(server.url, { redirect: 'manual' })
     const cookie = (handshake.headers.get('set-cookie') ?? '').split(';')[0]
 
-    const crossSite = await fetch(new URL('/api/sessions', server.url), {
+    /**
+     * A cross-site **read** is allowed, and this is the correction of a bug rather than a relaxation.
+     *
+     * The fence used to refuse every cross-site request, which made heddle unreachable from a viewer that
+     * embeds the page in a sandboxed iframe — measured, such a frame has an opaque origin, so the browser
+     * marks its requests cross-site, and heddle answered `refused: a cross-site request` to the sidebar it
+     * was meant to be watched in. Reads are safe because the credential cannot travel: the cookie is
+     * `SameSite=Strict`, so the browser never attaches it to a cross-site request, which the next assertion
+     * demonstrates by asking without one.
+     */
+    const crossSiteRead = await fetch(new URL('/api/sessions', server.url), {
       headers: { cookie, 'sec-fetch-site': 'cross-site' },
     })
-    assert.equal(crossSite.status, 403, 'a cross-site request is refused with 403 rather than 401, so the refusal is about the request and not the credential')
+    assert.equal(crossSiteRead.status, 200, 'a cross-site read with a session is served, so a sandboxed viewer can show the page')
+
+    const crossSiteWithoutCookie = await fetch(new URL('/api/sessions', server.url), {
+      headers: { 'sec-fetch-site': 'cross-site' },
+    })
+    assert.equal(
+      crossSiteWithoutCookie.status,
+      401,
+      'and a cross-site read without the session gets nothing, because the browser does not send the cookie',
+    )
+
+    /**
+     * A cross-site **write** is refused. This is what carries the weight now that reads are permitted, and
+     * it holds whether or not the request names an origin — an opaque origin sends `null`, which matches
+     * nothing, and a forged one is refused by the same comparison.
+     */
+    const crossSiteWrite = await fetch(new URL('/api/turn', server.url), {
+      method: 'POST',
+      headers: { cookie, 'sec-fetch-site': 'cross-site', 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'should not run' }),
+    })
+    assert.equal(crossSiteWrite.status, 403, 'a cross-site POST is refused')
+
+    const opaqueOriginWrite = await fetch(new URL('/api/turn', server.url), {
+      method: 'POST',
+      headers: { cookie, origin: 'null', 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'should not run' }),
+    })
+    assert.equal(opaqueOriginWrite.status, 403, 'and so is one that names the opaque origin')
 
     const foreignOrigin = await fetch(new URL('/api/sessions', server.url), {
       headers: { cookie, origin: 'https://evil.example' },
     })
-    assert.equal(foreignOrigin.status, 403, 'and an Origin that is not this server is refused')
+    assert.equal(foreignOrigin.status, 403, 'while an Origin that is not this server is refused')
 
     const sameOrigin = await fetch(new URL('/api/sessions', server.url), {
       headers: { cookie, origin: `http://127.0.0.1:${new URL(server.url).port}` },

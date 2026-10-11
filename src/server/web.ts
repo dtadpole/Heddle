@@ -356,12 +356,39 @@ export function rejectUntrusted(request: { headers: Record<string, string | stri
   const hostname = host.startsWith('[') ? host.slice(1, host.indexOf(']')) : host.split(':')[0]
   if (host !== '' && !isLoopback(hostname ?? '')) return `refused: Host ${host} is not loopback`
 
+  /**
+   * A cross-site request may **read**, and may not change anything.
+   *
+   * The first version refused every cross-site request, and that broke a legitimate consumer: a viewer that
+   * embeds the page in a **sandboxed iframe** has an opaque origin, so the browser marks its requests
+   * cross-site — measured, `allow-same-origin` renders the page and a fully sandboxed frame gets
+   * `refused: a cross-site request`. heddle's own Web UI was unreachable from the very sidebar it is meant
+   * to be watched in.
+   *
+   * Reads are safe to allow because the credential cannot travel: the session cookie is `SameSite=Strict`,
+   * so a browser does not attach it to a cross-site request, and an attacker who issues one receives the
+   * token form rather than a session. A state-changing request is a different matter — it is refused unless
+   * it names this authority in `Origin`, which is checked below.
+   */
   const site = String(request.headers['sec-fetch-site'] ?? '')
-  if (site === 'cross-site') return 'refused: a cross-site request'
+  const method = String(request.method ?? 'GET').toUpperCase()
+  const changesState = method !== 'GET' && method !== 'HEAD'
+  if (site === 'cross-site' && changesState) {
+    /**
+     * The message says what the rule is, because the reader is usually the author of a viewer that embeds
+     * the page: a cross-site request may read and may not change anything.
+     */
+    return 'refused: a cross-site request that changes state; a cross-site request may read, but writes must come from this origin'
+  }
 
   const origin = request.headers.origin
   if (typeof origin === 'string' && origin.length > 0) {
     try {
+      /**
+       * `null` is what a sandboxed frame and a `file://` page send, and it matches no authority — so a
+       * state-changing request from an opaque origin is refused here even though its read requests are
+       * allowed. This check is what carries the weight once cross-site reads are permitted.
+       */
       if (new URL(origin).host !== authority) return `refused: Origin ${origin} does not match ${authority}`
     } catch {
       return `refused: Origin ${origin} is not a URL`
