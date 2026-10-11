@@ -133,6 +133,16 @@ export interface DecodedTranscript {
   readonly frames: number
   /** True when a trailing byte range was not a complete frame and was left out. */
   readonly torn: boolean
+  /**
+   * How many bytes were read whole.
+   *
+   * This is what a repair keeps: the file is cut back to here before anything is appended, because a
+   * torn frame in the middle of a file makes every frame **after** it unreadable — the walk stops at
+   * the first incomplete frame, so appending past one would write events nothing could ever read.
+   * Measured before the repair existed: a torn tail plus one appended frame read back as one event
+   * instead of two, with the new event silently gone.
+   */
+  readonly readableBytes: number
 }
 
 /**
@@ -150,6 +160,7 @@ export function decodeTranscript(buffer: Buffer): DecodedTranscript {
       format: 'plain-text',
       frames: 0,
       torn: false,
+      readableBytes: buffer.length,
     }
   }
 
@@ -165,10 +176,10 @@ export function decodeTranscript(buffer: Buffer): DecodedTranscript {
       // A frame that cannot be decoded is treated as the end of the readable record rather than as
       // a failure of the whole file: everything before it already decoded.
       consumed = frame.start
-      return { lines, format: 'zstd-frames', frames: frames.length, torn: true }
+      return { lines, format: 'zstd-frames', frames: frames.length, torn: true, readableBytes: consumed }
     }
     lines.push(...text.split('\n').filter((line) => line.length > 0))
     consumed = frame.end
   }
-  return { lines, format: 'zstd-frames', frames: frames.length, torn: consumed !== buffer.length }
+  return { lines, format: 'zstd-frames', frames: frames.length, torn: consumed !== buffer.length, readableBytes: consumed }
 }

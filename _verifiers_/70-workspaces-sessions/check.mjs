@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, truncateSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
+import { decodeTranscript } from '../../src/session/transcript.ts'
 import { fixtureDir, isolatedHome, parseJson, readTranscript, removeDir, repoRoot, runCli, scriptedConfig, sessionsUnder, skipUnless, transcriptFile } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
@@ -692,5 +693,48 @@ test('a folder outside every root is refused rather than walked', async (context
     removeDir(h.home)
     removeDir(h.work)
     removeDir(outside)
+  }
+})
+
+test('a session interrupted mid-frame still reads, and its next turn lands', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  /**
+   * The failure this judges was found by testing the storage format rather than the feature: a
+   * transcript torn in the middle of a frame made **every event written afterwards unreadable**,
+   * because the reader walks frames and stops at the first incomplete one. A session interrupted
+   * once therefore swallowed every later turn — written to the file, never read back.
+   *
+   * The check is end-to-end because that is where the claim lives: a person resumes an interrupted
+   * session and expects their next turn to be there.
+   */
+  const h = harness('torn')
+  try {
+    const first = await runCli([...h.args, '--turn', 'before the interruption'], { env: h.env })
+    assert.equal(first.code, 0, `the first turn ran\n${first.stdout}${first.stderr}`)
+    const id = sessionsUnder(join(h.home, 'sessions'))[0] ?? ''
+    const transcript = transcriptFile(join(h.home, 'sessions', id))
+
+    // A crash that stopped writing partway through the newest frame.
+    const whole = readFileSync(transcript)
+    truncateSync(transcript, whole.length - 5)
+    assert.ok(decodeTranscript(readFileSync(transcript)).torn, 'the fixture is genuinely torn')
+
+    const second = await runCli([...h.args, '--resume', id, '--turn', 'after the interruption'], { env: h.env })
+    assert.equal(second.code, 0, `the resumed turn ran\n${second.stdout}${second.stderr}`)
+
+    const events = readTranscript(join(h.home, 'sessions', id))
+    const said = events
+      .filter((event) => event.type === 'message' && event.message?.role === 'user')
+      .map((event) => event.message.content?.[0]?.text)
+    assert.ok(said.includes('before the interruption'), `the earlier turn survived the tear\nsaw: ${said.join(' | ')}`)
+    assert.ok(said.includes('after the interruption'), `and the turn written after it is readable\nsaw: ${said.join(' | ')}`)
+    assert.ok(
+      events.some((event) => event.type === 'transcript/repaired'),
+      'and the session says it was repaired rather than pretending nothing happened',
+    )
+    assert.ok(!decodeTranscript(readFileSync(transcript)).torn, 'the record no longer ends in a half-written frame')
+  } finally {
+    removeDir(h.home)
+    removeDir(h.work)
   }
 })

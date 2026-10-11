@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { createZstdCompress, zstdCompressSync } from 'node:zlib'
 
 import {
   FRAME_MAGIC,
@@ -105,4 +106,61 @@ test('the walk stops at garbage rather than searching for a frame', () => {
   assert.equal(frameEnd(notAFrame, 0), undefined)
   assert.deepEqual(splitFrames(notAFrame), [])
   assert.equal(decodeTranscript(notAFrame).format, 'plain-text')
+})
+
+test('readableBytes is the end of the last frame that was read whole', () => {
+  const { buffer, frames } = threeFrames()
+  assert.equal(decodeTranscript(buffer).readableBytes, buffer.length, 'a whole file is read whole')
+
+  const torn = buffer.subarray(0, buffer.length - 2)
+  const decoded = decodeTranscript(torn)
+  const firstTwo = (frames[0]?.length ?? 0) + (frames[1]?.length ?? 0)
+  assert.equal(decoded.readableBytes, firstTwo, 'a torn third frame is not counted as read')
+  assert.equal(decoded.torn, true)
+
+  const damaged = Buffer.from(buffer)
+  const second = frames[1]
+  assert.ok(second !== undefined)
+  damaged[second.length + 8] = (damaged[second.length + 8] ?? 0) ^ 0xff
+  assert.equal(decodeTranscript(damaged).readableBytes, frames[0]?.length, 'a frame that will not decode ends the readable record')
+})
+
+test('a frame this writer never produces is still read', async () => {
+  /**
+   * The walker claims to read *frames*, not "frames Node's one-shot compressor makes", so the shapes
+   * another writer produces are judged too. A streaming compressor emits a descriptor of `0x00`:
+   * no content size, no checksum, and a window descriptor byte — the opposite of every frame the
+   * store writes, and the branch that was untested until this check existed.
+   */
+  const stream = createZstdCompress()
+  const parts: Buffer[] = []
+  stream.on('data', (chunk: Buffer) => parts.push(chunk))
+  const ended = new Promise<void>((resolve) => stream.on('end', () => resolve()))
+  stream.end(Buffer.from('{"streamed":true}\n'))
+  await ended
+  const streamed = Buffer.concat(parts)
+
+  assert.equal(streamed[4], 0x00, 'the streaming descriptor is the one nothing else produces')
+  assert.equal(frameEnd(streamed, 0), streamed.length, 'the walk finds its end without a content size')
+  assert.deepEqual(decodeTranscript(streamed).lines, ['{"streamed":true}'])
+
+  const mixed = Buffer.concat([encodeFrame('{"ours":1}\n'), streamed, encodeFrame('{"ours":2}\n')])
+  assert.equal(splitFrames(mixed).length, 3, 'and both shapes can sit in one file')
+  assert.deepEqual(decodeTranscript(mixed).lines, ['{"ours":1}', '{"streamed":true}', '{"ours":2}'])
+})
+
+test('a frame whose content size needs four bytes is read', () => {
+  /**
+   * The frame-header descriptor carries the width of the content-size field, and a small event uses
+   * one byte while a large one uses four. Both branches are walked, so both are judged: this is
+   * incompressible text on purpose, which is what makes the frame big enough to need the wider field.
+   */
+  const random = Array.from({ length: 200_000 }, () => String.fromCharCode(97 + Math.floor(Math.random() * 26))).join('')
+  const frame = zstdCompressSync(Buffer.from(random))
+  assert.equal((frame[4] ?? 0) >> 6, 2, 'the descriptor uses a four-byte content size')
+
+  assert.equal(frameEnd(frame, 0), frame.length, 'the walk finds the end of a large frame')
+  const decoded = decodeTranscript(frame)
+  assert.equal(decoded.lines.length, 1)
+  assert.equal(decoded.lines[0], random, 'and the content is exactly what was compressed')
 })

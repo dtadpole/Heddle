@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -111,4 +111,61 @@ test('a transcript written before this format is still read, and still appended 
     'readable with cat, as it was',
   )
   assert.equal(transcriptIn(dir), legacy, 'and asking the directory still finds the plain file')
+})
+
+test('a torn tail is cut off, so the next event is still readable', () => {
+  /**
+   * The failure this prevents was measured: appending past a torn frame wrote an event that nothing
+   * could ever read, because the walk stops at the first incomplete frame. A session interrupted once
+   * became a session that silently swallowed everything after the interruption.
+   */
+  const { store: writer, root } = store()
+  const created = writer.create({ cwd: scratch })
+  writer.message(created, { role: 'user', content: [{ type: 'text', text: 'before the crash' }] })
+  const whole = readFileSync(created.transcript)
+  rmSync(created.transcript)
+  // A frame written halfway: the bytes of the previous event, plus part of the next one.
+  appendFileSync(created.transcript, whole)
+  const next = (async () => {
+    const { encodeFrame } = await import('../src/session/transcript.ts')
+    return encodeFrame(`${JSON.stringify({ seq: 99, at: new Date().toISOString(), type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'half' }] } })}\n`)
+  })()
+  return next.then((frame) => {
+    const torn = Buffer.concat([whole, frame.subarray(0, Math.floor(frame.length / 2))])
+    writeFileSync(created.transcript, torn)
+
+    const sessions = new SessionStore(root)
+    const opened = sessions.open(created.id)
+    assert.ok(opened !== null)
+    sessions.message(opened, { role: 'user', content: [{ type: 'text', text: 'after the crash' }] })
+
+    const repaired = readFileSync(opened.transcript)
+    assert.ok(!decodeTranscript(repaired).torn, 'the file no longer ends in a half-written frame')
+    const recovered = decodeTranscript(repaired)
+    const texts = recovered.lines
+      .map((line) => JSON.parse(line))
+      .filter((event) => event.type === 'message')
+      .map((event) => event.message.content[0].text)
+    assert.deepEqual(texts, ['before the crash', 'after the crash'], 'both events read, and the torn one is gone')
+    assert.ok(
+      recovered.lines.some((line) => JSON.parse(line).type === 'transcript/repaired'),
+      'and the repair is recorded on the session rather than done silently',
+    )
+  })
+})
+
+test('a transcript that is missing entirely is recreated by the next append', () => {
+  const { store: sessions, root } = store()
+  const handle = sessions.create({ cwd: scratch })
+  rmSync(handle.transcript)
+
+  const fresh = new SessionStore(root)
+  const opened = fresh.open(handle.id)
+  assert.ok(opened !== null, 'the session is still openable: its metadata is what makes it a session')
+  fresh.message(opened, { role: 'user', content: [{ type: 'text', text: 'the first event that survives' }] })
+  assert.deepEqual(
+    decodeTranscript(readFileSync(opened.transcript)).lines.map((line) => JSON.parse(line).type),
+    ['message'],
+    'the appended event is on disk and readable',
+  )
 })

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, truncateSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { zstdCompressSync } from 'node:zlib'
@@ -25,6 +25,12 @@ import { decodeTranscript, encodeFrame } from './transcript.ts'
  * `zstd -dc` reads the file; a session born before this format keeps its plain `session.jsonl` and
  * keeps being appended to in plain text, because this store never rewrites a record to change how
  * it is stored.
+ *
+ * **A torn tail is cut off when the session is opened**, and the repair is recorded as a
+ * `transcript/repaired` event. Without that, one interruption made a session unreadable from the tear
+ * onward: the frame walk stops at the first incomplete frame, so every event appended after it —
+ * including the next turn's — would sit in the file and never be read. Measured before the repair:
+ * a torn file plus one appended frame read back as one event instead of two.
  *
  * **A process that has opened a session reads it from memory.** The file is read and decoded once,
  * and every later `read`, `count`, measure or derivation is served from that fold. It exists because
@@ -437,6 +443,26 @@ export class SessionStore {
       // a session whose file has not been written yet is an empty session, not an error
     }
     const decoded = decodeTranscript(bytes)
+
+    /**
+     * A torn tail is cut off before anything is appended.
+     *
+     * Without this, one interruption makes a session permanently unreadable: a frame torn in half
+     * stops the walk, so every event written *after* it — including the next turn's — would sit in
+     * the file and never be read. Measured: a torn file plus one appended frame read back as one
+     * event rather than two, with the new event silently gone. What is dropped is a frame that was
+     * never written whole, so no event that existed as an event is lost, and the repair is recorded
+     * on the session rather than done silently.
+     */
+    const dropped = bytes.length - decoded.readableBytes
+    if (dropped > 0) {
+      try {
+        truncateSync(handle.transcript, decoded.readableBytes)
+      } catch {
+        // a transcript that cannot be truncated still reads; the next append simply lands after the tear
+      }
+    }
+
     const events: SessionEvent[] = []
     for (const [index, line] of decoded.lines.entries()) {
       try {
@@ -445,9 +471,11 @@ export class SessionStore {
         throw new Error(`${handle.transcript}:${index + 1} is not valid JSON — ${(error as Error).message}`)
       }
     }
-    const framed = decoded.format === 'zstd-frames' || (decoded.lines.length === 0 && handle.transcript.endsWith(TRANSCRIPT_NAME))
+    const framed =
+      decoded.format === 'zstd-frames' || (dropped > 0 && handle.transcript.endsWith(TRANSCRIPT_NAME)) || (decoded.lines.length === 0 && handle.transcript.endsWith(TRANSCRIPT_NAME))
     const entry = { events, framed }
     this.loaded.set(handle.id, entry)
+    if (dropped > 0) this.append(handle, { type: 'transcript/repaired', droppedBytes: dropped })
     return entry
   }
 
