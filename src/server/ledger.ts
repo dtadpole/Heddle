@@ -343,7 +343,19 @@ export function projectLedger(events: readonly LedgerEvent[]): Ledger {
     }
 
     if (event.type === 'assistant/completed') {
+      /**
+       * The settled answer is recorded **from this event** when no stream was being assembled.
+       *
+       * Measured: the handler settled a pending stream and then only wrote the finish-reason note, so a
+       * session recorded as deltas lost nothing but a session whose answer arrived as a bare completion —
+       * which is what `assistant/completed` carries — produced no assistant record at all. A ledger without
+       * the answers is not a ledger.
+       */
+      const hadStream = pending !== null
       settleAssistant(event.at, true)
+      if (!hadStream && event.text !== undefined && event.text.length > 0) {
+        put({ kind: 'assistant', label: 'assistant', text: event.text, ...(event.at !== undefined ? { startedAt: event.at } : {}) })
+      }
       const notes = [
         event.finishReason !== undefined ? `finish: ${event.finishReason}` : undefined,
         event.rounds !== undefined ? `rounds: ${event.rounds}` : undefined,
@@ -389,5 +401,129 @@ export function projectLedger(events: readonly LedgerEvent[]): Ledger {
     },
     records: all.length,
     inFlight: all.filter((record) => record.inFlight === true).length,
+  }
+}
+
+/**
+ * The timeline's domain and its spans, derived from the ledger's own timings.
+ *
+ * The overview above DSH's ledger is a real time axis: a fixed band that projects each record's start and
+ * duration from left to right, and picking an interval focuses the ledger on it. This is the arithmetic
+ * behind the same idea, kept here rather than in the page because it has rules worth judging.
+ *
+ * The rules, and the reason each exists:
+ *
+ * - **The domain is the recorded span**, from the earliest start to the latest end. Nothing is padded to a
+ *   round number, because a padded axis puts a gap where no work happened.
+ * - **A record with no timing contributes no span.** The timeline is where a reader looks for "how long",
+ *   and a bar drawn from a guessed start is a bar that lies. The record still appears in the ledger; it is
+ *   only absent from the axis.
+ * - **A running record extends the domain to the newest event and is marked running**, rather than being
+ *   dropped or given a duration. A session that is still working therefore has a domain that grows, and no
+ *   span claims to have finished.
+ * - **Every span carries its turn index**, so picking one can take the reader to the turn it belongs to.
+ */
+export interface TimelineSpan {
+  readonly turn: number
+  /** A position from 0 to 1 along the domain. */
+  readonly start: number
+  readonly end: number
+  /** Which kinds of record the span covers, most frequent first, so a band can be coloured by its content. */
+  readonly kinds: readonly LedgerKind[]
+  readonly records: number
+  /** Whether anything in this span was still running when the events ended. */
+  readonly running: boolean
+}
+
+export interface Timeline {
+  readonly spans: readonly TimelineSpan[]
+  /** From the earliest recorded start to the latest recorded end, in milliseconds. `0` when nothing is timed. */
+  readonly durationMs: number
+  readonly startsAt?: string
+  readonly endsAt?: string
+}
+
+/** Project a ledger onto a time axis. */
+export function projectTimeline(ledger: Ledger): Timeline {
+  const timed: { turn: number; start: number; end: number; kind: LedgerKind; running: boolean }[] = []
+
+  for (const turn of ledger.turns) {
+    for (const step of turn.steps) {
+      for (const record of step.records) {
+        if (record.startedAt === undefined) continue
+        const start = Date.parse(record.startedAt)
+        if (Number.isNaN(start)) continue
+        /** A finished record ends after its duration; a running one ends where the events end. */
+        const end = record.durationMs !== undefined ? start + record.durationMs : start
+        timed.push({ turn: turn.index, start, end, kind: record.kind, running: record.inFlight === true })
+      }
+    }
+  }
+
+  if (timed.length === 0) return { spans: [], durationMs: 0 }
+
+  const domainStart = Math.min(...timed.map((entry) => entry.start))
+  /**
+   * The domain ends at the latest recorded end **or** the latest start, whichever is later: a running record
+   * has no end, and an axis that stopped at the last finished work would hide the work in progress.
+   */
+  const latest = Math.max(...timed.map((entry) => entry.end), ...timed.map((entry) => entry.start))
+  /**
+   * A domain of zero width is real — one instantaneous record — and it is widened to a millisecond so every
+   * position is a number rather than `NaN`. The axis then shows a single full-width band, which is honest:
+   * there is nothing to distribute.
+   */
+  const domainEnd = latest > domainStart ? latest : domainStart + 1
+  const durationMs = domainEnd - domainStart
+
+  const byTurn = new Map<number, { start: number; end: number; kinds: LedgerKind[]; running: boolean }>()
+  for (const entry of timed) {
+    const existing = byTurn.get(entry.turn)
+    if (existing === undefined) {
+      byTurn.set(entry.turn, { start: entry.start, end: entry.end, kinds: [entry.kind], running: entry.running })
+      continue
+    }
+    existing.start = Math.min(existing.start, entry.start)
+    existing.end = Math.max(existing.end, entry.end)
+    existing.kinds.push(entry.kind)
+    existing.running ||= entry.running
+  }
+
+  const spans: TimelineSpan[] = []
+  for (const [turn, span] of [...byTurn.entries()].sort((left, right) => left[0] - right[0])) {
+    /**
+     * Kinds in the order they matter to a reader scanning the band, **most significant first**.
+     *
+     * Every turn begins with a user record, so ordering by the first record made every band the same colour
+     * and told a reader nothing — measured, and it defeated the point of colouring at all. The band should
+     * say what the turn *did*: a call, an answer, reasoning, or nothing but a prompt.
+     */
+    const order: LedgerKind[] = ['tool', 'assistant', 'reasoning', 'compaction', 'user', 'system']
+    const kinds = [...new Set(span.kinds)].sort((left, right) => order.indexOf(left) - order.indexOf(right))
+    const start = (span.start - domainStart) / durationMs
+    /**
+     * A span always has a **pickable** width, because a hairline band cannot be aimed at with a mouse.
+     *
+     * Measured: the first floor was 0.4% of the axis, and a short turn in a session with a seven-minute gap
+     * between two of them came out as a two-pixel sliver — legible as "something happened here", unusable as
+     * a control. The floor is a share of the axis wide enough to hit, and it deliberately overstates a very
+     * short turn: a target a person can click is worth more than an exact width nobody can.
+     */
+    const measuredEnd = (span.end - domainStart) / durationMs
+    spans.push({
+      turn,
+      start,
+      end: Math.max(measuredEnd, start + 0.02),
+      kinds,
+      records: span.kinds.length,
+      running: span.running,
+    })
+  }
+
+  return {
+    spans,
+    durationMs,
+    startsAt: new Date(domainStart).toISOString(),
+    endsAt: new Date(domainEnd).toISOString(),
   }
 }

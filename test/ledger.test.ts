@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { projectLedger } from '../src/server/ledger.ts'
+import { projectLedger, projectTimeline } from '../src/server/ledger.ts'
 
 /**
  * Unit tests for the Trajectory ledger.
@@ -140,4 +140,116 @@ test('projecting the same events twice gives the same ledger', () => {
     event(4, '2026-10-11T10:00:01.000Z', { type: 'turn/completed', rounds: 1 }),
   ]
   assert.deepEqual(projectLedger(events), projectLedger(events), 'a pure projection has no state to drift')
+})
+
+test('an answer recorded only as a completion still appears', () => {
+  /**
+   * Measured in a browser before this test existed: a session whose answer arrived as a bare
+   * `assistant/completed` — which is what that event carries — produced no assistant record at all, because
+   * the handler settled a pending stream and then only wrote the finish-reason note. A ledger without the
+   * answers is not a ledger.
+   */
+  const ledger = projectLedger([
+    event(1, '2026-10-11T10:00:00.000Z', { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }),
+    event(2, '2026-10-11T10:00:00.100Z', { type: 'model/request', estimatedTokens: 10 }),
+    event(3, '2026-10-11T10:00:01.000Z', { type: 'assistant/completed', text: 'the answer', finishReason: 'stop' }),
+    event(4, '2026-10-11T10:00:01.000Z', { type: 'turn/completed', rounds: 1 }),
+  ])
+  const answer = ledger.turns[0].steps[0].records.find((record) => record.kind === 'assistant')
+  assert.ok(answer, 'the answer is recorded')
+  assert.equal(answer.text, 'the answer', 'with the text the completion carried')
+})
+
+test('a stream and its completion yield one answer, not two', () => {
+  const ledger = projectLedger([
+    event(1, '2026-10-11T10:00:00.000Z', { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }),
+    event(2, '2026-10-11T10:00:00.100Z', { type: 'model/request', estimatedTokens: 10 }),
+    event(3, '2026-10-11T10:00:00.500Z', { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'the answer' } }),
+    event(4, '2026-10-11T10:00:01.000Z', { type: 'assistant/completed', text: 'the answer' }),
+    event(5, '2026-10-11T10:00:01.000Z', { type: 'turn/completed', rounds: 1 }),
+  ])
+  const answers = ledger.turns[0].steps[0].records.filter((record) => record.kind === 'assistant')
+  assert.equal(answers.length, 1, 'the stream is the answer, and the completion does not duplicate it')
+  assert.equal(answers[0].text, 'the answer')
+})
+
+test('the timeline is the recorded span, and an untimed record contributes no span', () => {
+  /**
+   * The axis is where a reader looks for "how long", so a bar drawn from a guessed start is a bar that lies.
+   * A record with no timing stays in the ledger and is absent from the axis.
+   */
+  const ledger = projectLedger([
+    event(1, '2026-10-11T10:00:00.000Z', { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }),
+    event(2, '2026-10-11T10:00:00.000Z', { type: 'model/request', estimatedTokens: 10 }),
+    event(3, '2026-10-11T10:00:02.000Z', { type: 'assistant/completed', text: 'done' }), // no time on purpose
+    event(4, '2026-10-11T10:00:02.000Z', { type: 'turn/completed', rounds: 1 }),
+    // an untimed record: it is in the ledger but must not appear on the axis
+    { type: 'something/new' },
+  ])
+  const timeline = projectTimeline(ledger)
+  assert.equal(timeline.startsAt, '2026-10-11T10:00:00.000Z', 'the domain starts at the earliest recorded time')
+  assert.equal(timeline.durationMs, 2000, 'and spans the recorded two seconds')
+  assert.equal(timeline.spans.length, 1, 'one turn, one span')
+  assert.equal(timeline.spans[0].turn, 1, 'labelled with its turn')
+  assert.ok(timeline.spans[0].start === 0, 'starting at the left edge')
+  assert.ok(timeline.spans[0].end > 0.9, 'and reaching the right')
+})
+
+test('a running record extends the axis and marks its span running', () => {
+  const ledger = projectLedger([
+    event(1, '2026-10-11T10:00:00.000Z', { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }),
+    event(2, '2026-10-11T10:00:00.000Z', { type: 'model/request', estimatedTokens: 10 }),
+    event(3, '2026-10-11T10:00:05.000Z', { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'still going' } }),
+  ])
+  const timeline = projectTimeline(ledger)
+  assert.equal(timeline.endsAt, '2026-10-11T10:00:05.000Z', 'the domain reaches the newest event')
+  assert.equal(timeline.spans[0].running, true, 'and the span is marked running rather than given a duration')
+})
+
+test('a ledger with nothing timed has an empty axis rather than a made-up one', () => {
+  assert.deepEqual(projectTimeline(projectLedger([{ type: 'session/created' }])), { spans: [], durationMs: 0 })
+})
+
+test('spans are ordered by turn and each keeps a visible width', () => {
+  const ledger = projectLedger([
+    event(1, '2026-10-11T10:00:00.000Z', { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'one' }] } }),
+    event(2, '2026-10-11T10:00:00.000Z', { type: 'model/request', estimatedTokens: 10 }),
+    event(3, '2026-10-11T10:00:00.000Z', { type: 'turn/completed', rounds: 1 }),
+    event(4, '2026-10-11T10:00:10.000Z', { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'two' }] } }),
+    event(5, '2026-10-11T10:00:10.000Z', { type: 'model/request', estimatedTokens: 10 }),
+    event(6, '2026-10-11T10:00:20.000Z', { type: 'turn/completed', rounds: 1 }),
+  ])
+  const timeline = projectTimeline(ledger)
+  assert.deepEqual(timeline.spans.map((span) => span.turn), [1, 2], 'in turn order')
+  /**
+   * The floor is a share of the axis wide enough to **aim at**, not merely to see. The first version used
+   * 0.4%, which came out as a two-pixel sliver in a session with a long gap between turns — legible as
+   * "something happened here" and unusable as a control.
+   */
+  assert.ok(timeline.spans.every((span) => span.end - span.start >= 0.02), 'each is wide enough to pick')
+})
+
+test("a turn's band is coloured by what it did, not by the prompt that opened it", () => {
+  /**
+   * Every turn starts with a user record. Ordering the kinds by the first record therefore made every band
+   * the same colour — measured, and it is the kind of detail that looks fine in a test and useless on screen.
+   */
+  const withTool = projectTimeline(
+    projectLedger([
+      event(1, '2026-10-11T10:00:00.000Z', { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }),
+      event(2, '2026-10-11T10:00:00.000Z', { type: 'model/request', estimatedTokens: 10 }),
+      event(3, '2026-10-11T10:00:00.100Z', { type: 'assistant/chunk', chunk: { type: 'tool-call', name: 'bash', arguments: '{}' } }),
+      event(4, '2026-10-11T10:00:01.000Z', { type: 'turn/completed', rounds: 1 }),
+    ]),
+  )
+  const withAnswer = projectTimeline(
+    projectLedger([
+      event(1, '2026-10-11T10:00:00.000Z', { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }),
+      event(2, '2026-10-11T10:00:00.000Z', { type: 'model/request', estimatedTokens: 10 }),
+      event(3, '2026-10-11T10:00:01.000Z', { type: 'assistant/completed', text: 'done' }),
+      event(4, '2026-10-11T10:00:01.000Z', { type: 'turn/completed', rounds: 1 }),
+    ]),
+  )
+  assert.equal(withTool.spans[0].kinds[0], 'tool', 'a turn that called a tool leads with the tool')
+  assert.equal(withAnswer.spans[0].kinds[0], 'assistant', 'and a turn that only answered leads with the answer')
 })

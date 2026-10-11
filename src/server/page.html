@@ -34,11 +34,17 @@
   nav#views button[aria-current='true'] { opacity: 1; border-color: var(--line); background: color-mix(in oklab, currentColor 7%, transparent); }
   #ledger { flex: 1; overflow-y: auto; padding: .75rem 1rem 1rem; font-size: .85rem; }
   #ledger .summary { font-size: .8rem; opacity: .7; margin-bottom: .6rem; }
-  #ledger .turn { border-left: 3px solid var(--line); margin: 0 0 .9rem; padding-left: .6rem; }
-  #ledger .turn > header { font-weight: 600; font-size: .8rem; }
-  #ledger .step { margin: .4rem 0 .4rem .6rem; padding-left: .6rem; border-left: 1px dashed var(--line); }
+  #ledger .turn { border-left: 3px solid var(--line); margin: 0 0 .6rem; padding-left: .6rem; }
+  /**
+   * The turn header stays at the top of the pane while its records scroll under it.
+   *
+   * A ledger is long, and after a page of rows the reader no longer knows which turn they are in — which is
+   * the same reason the timeline exists above it.
+   */
+  #ledger .turn > header { font-weight: 600; font-size: .8rem; position: sticky; top: -.75rem; background: canvas; padding: .2rem 0; z-index: 1; }
+  #ledger .step { margin: .2rem 0 .3rem .6rem; padding-left: .6rem; border-left: 1px dashed var(--line); }
   #ledger .step > header { font-size: .78rem; opacity: .7; }
-  #ledger details.record { margin: .25rem 0; }
+  #ledger details.record { margin: .1rem 0; }
   /**
    * A record's row is exactly one line, truncated with an ellipsis, and opens on click.
    *
@@ -55,7 +61,7 @@
     align-items: baseline;
     white-space: nowrap;
     overflow: hidden;
-    line-height: 1.5;
+    line-height: 1.35;
   }
   /**
    * The row's layout, and the three declarations that had to be right together.
@@ -81,19 +87,83 @@
     white-space: nowrap;
   }
   #ledger details.record[data-inflight='true'] > summary::after { content: ' · running'; color: #b7791f; }
-  #ledger .kind { font-family: ui-monospace, monospace; opacity: .75; min-width: 5.5rem; }
+  /**
+   * The kind annotation, as DSH's rows carry one: a small, coloured, fixed-width badge so a reader can
+   * scan a ledger for "which of these was the tool" without reading the labels.
+   */
+  #ledger .kind {
+    font-family: ui-monospace, monospace;
+    font-size: .72rem;
+    min-width: 5.5rem;
+    padding: .05rem .3rem;
+    border-radius: .2rem;
+    text-align: center;
+    background: color-mix(in oklab, currentColor 10%, transparent);
+    opacity: .9;
+  }
+  #ledger details.record[data-kind='user'] > summary > .kind { background: color-mix(in oklab, #4b8bf5 28%, transparent); }
+  #ledger details.record[data-kind='assistant'] > summary > .kind { background: color-mix(in oklab, #2fa36b 28%, transparent); }
+  #ledger details.record[data-kind='reasoning'] > summary > .kind { background: color-mix(in oklab, #b7791f 28%, transparent); }
+  #ledger details.record[data-kind='tool'] > summary > .kind { background: color-mix(in oklab, #8b5cf6 28%, transparent); }
+  #ledger details.record[data-kind='compaction'] > summary > .kind { background: color-mix(in oklab, #d14343 24%, transparent); }
+  /**
+   * The timeline: a proportional band of the session's recorded span, one pickable segment per turn.
+   *
+   * It is the same idea as the overview above DSH's ledger — real timing projected left to right, and
+   * picking an interval takes the reader to it — reduced to what heddle's events support: turns as segments,
+   * positioned by their own start and duration, coloured by what they did. A pick scrolls the ledger to that
+   * turn, which is the whole point: a long ledger is otherwise navigated by scrolling and hoping.
+   */
+  #timeline { position: relative; height: 1.6rem; margin: .1rem 0 .7rem; border-radius: .25rem; background: color-mix(in oklab, currentColor 7%, transparent); overflow: hidden; }
+  #timeline:empty { display: none; }
+  #timeline button { position: absolute; top: 0; bottom: 0; padding: 0; border: none; border-right: 1px solid var(--line); background: color-mix(in oklab, #4b8bf5 45%, transparent); cursor: pointer; }
+  #timeline button[data-leading='assistant'] { background: color-mix(in oklab, #2fa36b 45%, transparent); }
+  #timeline button[data-leading='reasoning'] { background: color-mix(in oklab, #b7791f 45%, transparent); }
+  #timeline button[data-leading='tool'] { background: color-mix(in oklab, #8b5cf6 45%, transparent); }
+  #timeline button[data-running='true'] { background-image: repeating-linear-gradient(45deg, transparent, transparent 4px, color-mix(in oklab, currentColor 25%, transparent) 4px, color-mix(in oklab, currentColor 25%, transparent) 8px); }
+  #timeline button[aria-current='true'] { outline: 2px solid currentColor; outline-offset: -2px; }
+  #timeline-legend { display: flex; gap: .75rem; font-size: .72rem; opacity: .6; margin: -.4rem 0 .7rem; }
   #ledger .when, #ledger .usage { opacity: .55; font-size: .76rem; }
   #ledger .usage.provider { color: #2fa36b; opacity: .9; }
   #ledger pre { white-space: pre-wrap; word-break: break-word; background: color-mix(in oklab, currentColor 6%, transparent); padding: .5rem .6rem; border-radius: .3rem; font-size: .8rem; margin: .3rem 0 0; }
   #ledger .loose { margin-top: .8rem; }
+  /**
+   * The left column is the **folder tree**, and the row's layout is what makes it readable: a boxed
+   * `+` / `−` disclosure, the kind's icon, the type's badge, the folder's name as the label, and a
+   * session marker only where a session actually is.
+   */
+  #tree, #tree ol { list-style: none; margin: 0; padding: 0; }
+  #tree ol { padding-left: .85rem; border-left: 1px solid var(--line); }
+  #tree li { padding: 0; }
+  #tree .row { display: flex; align-items: center; gap: .35rem; padding: .16rem .3rem; border-radius: .3rem; cursor: pointer; }
+  #tree .row:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
+  #tree .row[aria-current='true'] { background: color-mix(in oklab, currentColor 14%, transparent); }
+  #tree .twisty { font: inherit; line-height: 1; padding: 0; width: 1.05rem; height: 1.05rem; display: inline-flex; align-items: center; justify-content: center; background: none; border: 1px solid var(--line); border-radius: .2rem; color: inherit; opacity: .75; cursor: pointer; }
+  #tree .twisty[disabled] { opacity: .25; cursor: default; }
+  #tree .kind { display: inline-flex; opacity: .8; }
+  #tree .badge { font-size: .66rem; letter-spacing: .04em; padding: 0 .25rem; border: 1px solid var(--line); border-radius: .25rem; opacity: .8; }
+  #tree .label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #tree .mark { font-size: .7rem; opacity: .5; }
+  #tree .mark.on { color: #2fa36b; opacity: 1; }
+  #tree .turns { font-size: .72rem; opacity: .5; }
+  #tree li[data-kind='generated'] .label { opacity: .55; }
+  #tree li[data-kind='folder'] .label { opacity: .8; }
+  #tree .empty { font-size: .78rem; opacity: .5; padding-left: 1.4rem; }
+  #history { margin-top: .9rem; }
+  #history > summary { cursor: pointer; font-size: .8rem; opacity: .6; }
   textarea { flex: 1; resize: vertical; min-height: 3.5rem; font: inherit; padding: .5rem; }
   button { font: inherit; padding: .5rem 1rem; }
 </style>
 </head>
 <body>
 <aside>
-  <h1>Sessions</h1>
-  <ol id="sessions"></ol>
+  <h1>Workspaces</h1>
+  <ul id="tree" role="tree" aria-label="workspace folders"></ul>
+  <p id="tree-note" class="meta" hidden></p>
+  <details id="history">
+    <summary>All sessions</summary>
+    <ol id="sessions"></ol>
+  </details>
 </aside>
 <main>
   <nav id="views" aria-label="view">
@@ -101,6 +171,14 @@
     <button type="button" data-view="trajectory">Trajectory</button>
   </nav>
   <div id="log" data-view="chat"></div>
+  <!--
+    The timeline is a sibling of the ledger, not a child of it.
+
+    Measured: as a child it was deleted by the first `replaceChildren()` the ledger does, so the band was
+    cleared and then filled into an element that no longer existed — the ledger rendered and the timeline
+    silently did not. A band that scrolls the ledger cannot live inside the thing it scrolls.
+  -->
+  <div id="timeline" data-view="trajectory" aria-label="timeline" role="navigation" hidden></div>
   <div id="ledger" data-view="trajectory" hidden></div>
   <form id="prompt">
     <textarea name="prompt" placeholder="ask heddle something" autofocus></textarea>
@@ -110,6 +188,9 @@
 <script type="module">
 const log = document.getElementById('log')
 const ledger = document.getElementById('ledger')
+const timeline = document.getElementById('timeline')
+/** Where each turn's section is, so picking a segment can take the reader to it. */
+const turnAnchors = new Map()
 const list = document.getElementById('sessions')
 let current = null
 
@@ -196,6 +277,7 @@ async function showView(next) {
   }
   log.hidden = view !== 'chat'
   ledger.hidden = view !== 'trajectory'
+  timeline.hidden = view !== 'trajectory'
   if (view === 'trajectory' && current !== null) await showLedger(current)
 }
 
@@ -213,7 +295,7 @@ async function showLedger(id) {
     if (!response.ok) return
     const body = await response.json()
     if (ticket !== ledgerFetches) return
-    renderLedger(body.ledger ?? { turns: [], loose: [], tokens: {}, records: 0, inFlight: 0 })
+      renderLedger(body.ledger ?? { turns: [], loose: [], tokens: {}, records: 0, inFlight: 0 }, body.timeline ?? { spans: [], durationMs: 0 })
   } catch (error) {
     const note = document.createElement('div')
     note.className = 'turn denied'
@@ -296,7 +378,44 @@ function recordNode(record) {
 }
 
 /** Draw the whole ledger: a totals line, then each turn with its steps. */
-function renderLedger(data) {
+/**
+ * The timeline band: one button per span, positioned along the session's recorded span.
+ *
+ * Each button carries its turn number as its text for a screen reader and as a tooltip for a mouse, and
+ * picking it scrolls the ledger to that turn. A span whose turn is still running is striped rather than
+ * given a width it cannot justify — the same rule the rows follow.
+ */
+function renderTimeline(timeline_) {
+  timeline.replaceChildren()
+  const spans = timeline_?.spans ?? []
+  if (spans.length === 0) return
+  for (const span of spans) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.style.left = (span.start * 100).toFixed(3) + '%'
+    button.style.width = Math.max((span.end - span.start) * 100, 0.4).toFixed(3) + '%'
+    button.dataset.turn = String(span.turn)
+    button.dataset.leading = span.kinds[0] ?? 'system'
+    if (span.running) button.dataset.running = 'true'
+    button.title = 'turn ' + span.turn + ' · ' + span.records + ' record(s)' + (span.running ? ' · running' : '')
+    button.setAttribute('aria-label', button.title)
+    button.addEventListener('click', () => {
+      const anchor = turnAnchors.get(span.turn)
+      if (anchor === undefined) return
+      for (const other of timeline.querySelectorAll('button')) other.removeAttribute('aria-current')
+      button.setAttribute('aria-current', 'true')
+      anchor.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    })
+    timeline.append(button)
+  }
+  const legend = document.createElement('div')
+  legend.id = 'timeline-legend'
+  const total = timeline_?.durationMs ?? 0
+  legend.textContent = [human(total) + ' recorded', spans.length + ' turn(s)'].filter(Boolean).join(' · ')
+  timeline.after(legend)
+}
+
+function renderLedger(data, timeline_ = { spans: [], durationMs: 0 }) {
   /**
    * The pane is cleared here, not only in the caller.
    *
@@ -305,6 +424,9 @@ function renderLedger(data) {
    * is what makes a render idempotent regardless of who called it.
    */
   ledger.replaceChildren()
+  turnAnchors.clear()
+  for (const stale of document.querySelectorAll('#timeline-legend')) stale.remove()
+  renderTimeline(timeline_)
   const summary = document.createElement('div')
   summary.className = 'summary'
   const bits = [data.records + ' record(s)']
@@ -335,6 +457,7 @@ function renderLedger(data) {
       for (const record of step.records) stepBox.append(recordNode(record))
       box.append(stepBox)
     }
+    turnAnchors.set(turn.index, box)
     ledger.append(box)
   }
 
@@ -445,7 +568,12 @@ document.getElementById('prompt').addEventListener('submit', async (submitEvent)
   const response = await fetch('/api/turn', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ prompt, session: current }),
+    /**
+     * The folder is named when a tree node is selected, and the server continues **that folder's**
+     * session. With no selection the request is what it always was — a session in the server's own
+     * working directory — so a window opened without touching the tree still works.
+     */
+    body: JSON.stringify({ prompt, session: current, folder: activeFolder }),
   })
   if (!response.ok) { add('denied', 'request refused: ' + response.status); return }
   const reader = response.body.getReader()
@@ -468,23 +596,17 @@ document.getElementById('prompt').addEventListener('submit', async (submitEvent)
         else if (event.type === 'assistant/chunk' && event.chunk.type === 'reasoning-delta') add('reasoning', event.chunk.text)
       } else if (name === 'done') {
         for (const denial of payload.denials ?? []) add('denied', denial.tool + ': ' + denial.message)
-        document.getElementById('views').addEventListener('click', (clickEvent) => {
-  const button = clickEvent.target.closest('button[data-view]')
-  if (button) showView(button.dataset.view)
-})
-
-/**
- * The view ring switches what the right pane shows, on the session already selected.
- *
- * The handler is registered here rather than inline so the markup carries no behaviour, and `refreshSessions`
- * runs once at the end to open the newest session in whichever view is current.
- */
-document.getElementById('views').addEventListener('click', (clickEvent) => {
-  const button = clickEvent.target.closest('button[data-view]')
-  if (button) showView(button.dataset.view)
-})
-
-refreshSessions()
+        /**
+         * The turn may have created **this folder's** session, so both the tree and the list are
+         * re-read.
+         *
+         * The view-ring handler sat inside this branch until 2026-10-11, and it was a defect rather
+         * than a placement: every finished turn registered another identical listener, and the same
+         * registration appeared twice more at the end of the file. Measured: three handlers after one
+         * turn, one more per turn after that. It is registered once, below.
+         */
+        renderTree()
+        refreshSessions()
       } else if (name === 'error') add('denied', payload.message)
     }
     const lastBreak = buffer.lastIndexOf('\\n\\n')
@@ -492,23 +614,268 @@ refreshSessions()
   }
 })
 
-document.getElementById('views').addEventListener('click', (clickEvent) => {
-  const button = clickEvent.target.closest('button[data-view]')
-  if (button) showView(button.dataset.view)
-})
-
 /**
- * The view ring switches what the right pane shows, on the session already selected.
+ * The left column: the folder tree of every registered workspace.
  *
- * The handler is registered here rather than inline so the markup carries no behaviour, and `refreshSessions`
- * runs once at the end to open the newest session in whichever view is current.
+ * Three rules are the owner's, and this renderer follows them rather than re-deriving them:
+ *
+ * - **A type folder is the boundary, and a session row exists only for an instance of one.** The
+ *   server decides that and sends `session: null` everywhere else, so the page never guesses; a
+ *   folder without a session is still navigable, it is simply not a place to work.
+ * - **`+` and `−` are the disclosure**, in a boxed hit target, with the state on the row and the
+ *   children inside a `role="group"` — the shape the owner asked for by name.
+ * - **One level at a time.** A node's children are fetched when it is opened, and the expanded set is
+ *   kept in `localStorage` so a reload comes back to the same shape.
  */
+const treeList = document.getElementById('tree')
+const treeNote = document.getElementById('tree-note')
+const EXPANDED_KEY = 'heddle.tree.expanded.v1'
+
+/** Where each drawn node is, so a remembered path can be opened without walking the DOM by label. */
+const rowIndex = new Map()
+
+/** The folder the prompt box belongs to, so a run continues the folder a person selected. */
+let activeFolder = null
+
+function readExpanded() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? '[]'))
+  } catch (error) {
+    return new Set()
+  }
+}
+
+const expanded = readExpanded()
+
+function rememberExpanded() {
+  try {
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify([...expanded]))
+  } catch (error) {
+    // A browser that refuses storage still gets the tree; only the memory of its shape is lost.
+  }
+}
+
+function setNote(text) {
+  treeNote.textContent = text ?? ''
+  treeNote.hidden = text === undefined || text === null || text === ''
+}
+
+const FOLDER_PATH = 'M2 4.6A1.6 1.6 0 0 1 3.6 3h2.6l1.6 2h4.6A1.6 1.6 0 0 1 14 6.6v4.8A1.6 1.6 0 0 1 12.4 13H3.6A1.6 1.6 0 0 1 2 11.4z'
+/** The one mark that distinguishes a type folder from a plain one: the braces around its name. */
+const TYPE_MARK = 'M6.3 7.4 5 9.5l1.3 2.1M9.7 7.4 11 9.5l-1.3 2.1'
+
+function svgPath(d) {
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', d)
+  return path
+}
+
+/** One inline SVG per kind of node, drawn in `currentColor` so it follows the theme. */
+function kindIcon(kind) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 16 16')
+  svg.setAttribute('width', '14')
+  svg.setAttribute('height', '14')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '1.2')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+  if (kind === 'generated') svg.setAttribute('stroke-dasharray', '2 1.5')
+  svg.append(svgPath(FOLDER_PATH))
+  if (kind === 'type') svg.append(svgPath(TYPE_MARK))
+  if (kind === 'instance') {
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+    dot.setAttribute('cx', '8')
+    dot.setAttribute('cy', '9.9')
+    dot.setAttribute('r', '1.5')
+    dot.setAttribute('fill', 'currentColor')
+    dot.setAttribute('stroke', 'none')
+    svg.append(dot)
+  }
+  return svg
+}
+
+function selectNode(node) {
+  if (node.session) {
+    activeFolder = node.path
+    setNote('')
+    showSession(node.session.id)
+    return
+  }
+  if (node.kind === 'instance') {
+    /**
+     * An instance with no session yet is where work starts: selecting it points the prompt box at the
+     * folder and clears the pane, and the first prompt creates the session through `/api/turn`.
+     */
+    activeFolder = node.path
+    current = null
+    log.replaceChildren()
+    ledger.replaceChildren()
+    setNote('a new conversation in ' + node.label)
+    return
+  }
+  setNote('a session lives in an instance — open the folder inside a type folder')
+}
+
+function nodeRow(node) {
+  const li = document.createElement('li')
+  li.setAttribute('role', 'treeitem')
+  li.dataset.kind = node.kind
+  li.dataset.open = 'false'
+
+  const row = document.createElement('div')
+  row.className = 'row'
+  row.dataset.path = node.path
+  row.tabIndex = 0
+  if (node.session && node.session.id === current) row.setAttribute('aria-current', 'true')
+
+  const twisty = document.createElement('button')
+  twisty.type = 'button'
+  twisty.className = 'twisty'
+  twisty.textContent = '+'
+  twisty.setAttribute('aria-label', 'expand ' + node.label)
+  twisty.onclick = async (event) => {
+    event.stopPropagation()
+    await toggle(node, li, twisty)
+  }
+
+  row.append(twisty, kindIcon(node.kind))
+  if (node.badge) {
+    const badge = document.createElement('span')
+    badge.className = 'badge'
+    badge.textContent = node.badge
+    row.append(badge)
+  }
+  const label = document.createElement('span')
+  label.className = 'label'
+  label.textContent = node.label
+  row.append(label)
+  /**
+   * The marker says whether there is a session **and** whether there could be one: a hollow dot on an
+   * instance with none is the invitation, and a filled one is the record.
+   */
+  if (node.kind === 'instance') {
+    const mark = document.createElement('span')
+    mark.className = node.session ? 'mark on' : 'mark'
+    mark.textContent = node.session ? '●' : '○'
+    mark.title = node.session ? 'has a session' : 'no session yet'
+    row.append(mark)
+  }
+  if (node.session) {
+    const turns = document.createElement('span')
+    turns.className = 'turns'
+    turns.textContent = node.session.turns + 't'
+    row.append(turns)
+  }
+
+  row.onclick = () => {
+    selectNode(node)
+    for (const other of treeList.querySelectorAll('.row[aria-current]')) other.removeAttribute('aria-current')
+    if (node.session) row.setAttribute('aria-current', 'true')
+  }
+  row.onkeydown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      row.onclick()
+    }
+  }
+
+  li.append(row)
+  rowIndex.set(node.path, { node, li, twisty })
+  return li
+}
+
+/** Draw a node's children, fetching them when they were not part of the answer that drew the node. */
+async function loadChildren(node, li, twisty) {
+  const group = document.createElement('ul')
+  group.setAttribute('role', 'group')
+  li.append(group)
+  let children = node.children
+  if (children === null) {
+    try {
+      const response = await fetch('/api/tree?path=' + encodeURIComponent(node.path))
+      if (!response.ok) throw new Error('the tree answered ' + response.status)
+      children = (await response.json()).children ?? []
+    } catch (error) {
+      setNote('could not read ' + node.label + ': ' + (error && error.message))
+      children = []
+    }
+  }
+  if (children.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'empty'
+    empty.textContent = 'no folders inside'
+    group.append(empty)
+    twisty.disabled = true
+    twisty.textContent = '·'
+    twisty.setAttribute('aria-label', node.label + ' has no folders inside')
+    return
+  }
+  for (const child of children) group.append(nodeRow(child))
+}
+
+async function toggle(node, li, twisty) {
+  const open = li.dataset.open === 'true'
+  if (open) {
+    li.dataset.open = 'false'
+    twisty.textContent = '+'
+    twisty.setAttribute('aria-label', 'expand ' + node.label)
+    li.querySelector('ul[role=group]')?.remove()
+    expanded.delete(node.path)
+    rememberExpanded()
+    return
+  }
+  li.dataset.open = 'true'
+  twisty.textContent = '−'
+  twisty.setAttribute('aria-label', 'collapse ' + node.label)
+  expanded.add(node.path)
+  rememberExpanded()
+  await loadChildren(node, li, twisty)
+}
+
+async function renderTree() {
+  rowIndex.clear()
+  let body
+  try {
+    const response = await fetch('/api/tree')
+    if (!response.ok) {
+      treeList.replaceChildren()
+      setNote(
+        response.status === 503
+          ? 'this profile does not load the workspace plugin'
+          : 'the tree answered ' + response.status,
+      )
+      return
+    }
+    body = await response.json()
+  } catch (error) {
+    setNote('could not read the tree: ' + (error && error.message))
+    return
+  }
+  const tops = body.children ?? []
+  if (tops.length === 0) setNote('no workspace root yet — register one with heddle workspace add')
+  else setNote(activeFolder === null ? '' : 'a new conversation in ' + activeFolder.split('/').filter(Boolean).pop())
+  treeList.replaceChildren(...tops.map(nodeRow))
+  /**
+   * A reload comes back to the shape a person left: the remembered nodes are opened again shallowest
+   * first, so a deeper one is drawn by the time its turn comes, and each level is re-read rather than
+   * remembered, because a cached level is a level that can be stale.
+   */
+  for (const path of [...expanded].sort((left, right) => left.split('/').length - right.split('/').length)) {
+    const entry = rowIndex.get(path)
+    if (entry === undefined || entry.li.dataset.open === 'true') continue
+    await toggle(entry.node, entry.li, entry.twisty)
+  }
+}
+
 document.getElementById('views').addEventListener('click', (clickEvent) => {
   const button = clickEvent.target.closest('button[data-view]')
   if (button) showView(button.dataset.view)
 })
 
 refreshSessions()
+renderTree()
 </script>
 </body>
 </html>

@@ -6,6 +6,9 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 
 import { runTurn } from '../agent/loop.ts'
+import { projectLedger, projectTimeline } from './ledger.ts'
+import { canonicalPath } from '../paths.ts'
+import { tree } from '../session/tree.ts'
 import type { SessionEvent, SessionHandle } from '../session/store.ts'
 import {
   COOKIE_MAX_AGE,
@@ -313,6 +316,69 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
   }
 
   /**
+   * One level of the folder tree the left column draws.
+   *
+   * `GET /api/tree` lists the registered roots; `GET /api/tree?path=<absolute>` lists the folders
+   * directly inside one of them. One level, never a whole walk: the page asks for a node's children
+   * when a person opens it, which is what keeps a large target folder cheap to show.
+   *
+   * A path outside every root is refused with `400` rather than walked, for the same reason the CLI
+   * refuses it: this route sits behind the token and must not become a directory browser for the
+   * whole machine.
+   */
+  if (url.pathname === '/api/tree' && request.method === 'GET') {
+    const workspaces = ctx.workspace
+    if (workspaces === undefined) {
+      respond(response, 503, 'application/json', `${JSON.stringify({ error: 'this profile does not load the workspace plugin' })}\n`)
+      return
+    }
+    const wanted = url.searchParams.get('path')
+    if (wanted !== null && wanted.length > 0 && workspaces.owner(wanted) === undefined) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: `${canonicalPath(wanted)} is not under any workspace root` })}\n`)
+      return
+    }
+    const node = tree(wanted === null || wanted.length === 0 ? null : wanted, {
+      roots: workspaces.list().map((record) => ({ path: record.path, title: record.title })),
+      sessions: ctx.session.list(),
+      generated: workspaces.generated,
+    })
+    respond(response, 200, 'application/json', `${JSON.stringify(node, null, 2)}\n`)
+    return
+  }
+
+  /**
+   * The session a folder is bound to, created when it has none.
+   *
+   * This is the click that opens a folder: the client asks, the server answers with the folder's
+   * current session, and the transcript is then read through the existing `/api/sessions/<id>`
+   * route. It is a `POST` because it may create, and it is idempotent — asking twice for one folder
+   * answers with one session, which is the whole of "one folder, one session".
+   */
+  if (url.pathname === '/api/folders/session' && request.method === 'POST') {
+    const workspaces = ctx.workspace
+    if (workspaces === undefined) {
+      respond(response, 503, 'application/json', `${JSON.stringify({ error: 'this profile does not load the workspace plugin' })}\n`)
+      return
+    }
+    const body = await readJson(request, response)
+    if (body === null) return
+    const folder = typeof body.folder === 'string' && body.folder.length > 0 ? canonicalPath(body.folder) : ''
+    if (folder === '' || workspaces.owner(folder) === undefined) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'the folder must be under a workspace root' })}\n`)
+      return
+    }
+    const handle = ctx.session.openAt(folder, body.new === true ? { fresh: true } : {})
+    const meta = ctx.session.list().find((entry) => entry.id === handle.id)
+    respond(
+      response,
+      200,
+      'application/json',
+      `${JSON.stringify({ folder, session: { id: handle.id, turns: meta?.turns ?? 0, ...(meta?.title !== undefined ? { title: meta.title } : {}) } }, null, 2)}\n`,
+    )
+    return
+  }
+
+  /**
    * One session's history, in the same shape the live stream delivers.
    *
    * There was no such route, and the gap was visible as a **blank right side**: the page's log region is
@@ -343,7 +409,22 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
       respond(response, 404, 'application/json', `${JSON.stringify({ error: `no session ${id}` })}\n`)
       return
     }
-    respond(response, 200, 'application/json', `${JSON.stringify({ id, turns: transcriptTurns(ctx.session.events(handle)) }, null, 2)}\n`)
+    /**
+     * One route, two views of one record — which is the point of the query parameter rather than a second
+     * route: the Chat view and the Trajectory view must not be able to disagree about a session, and the way
+     * that happens is for both to be projections of the same events read once.
+     */
+    const events = ctx.session.events(handle)
+    if (url.searchParams.get('view') === 'ledger') {
+      /**
+       * The ledger and its timeline come from one projection of one read, so the axis above the ledger cannot
+       * disagree with the rows beneath it about when anything happened.
+       */
+      const ledger = projectLedger(events)
+      respond(response, 200, 'application/json', `${JSON.stringify({ id, ledger, timeline: projectTimeline(ledger) }, null, 2)}\n`)
+      return
+    }
+    respond(response, 200, 'application/json', `${JSON.stringify({ id, turns: transcriptTurns(events) }, null, 2)}\n`)
     return
   }
 
@@ -414,8 +495,31 @@ export function rejectUntrusted(request: { headers: Record<string, string | stri
   return null
 }
 
-/** Run one turn and stream its session events back as they are written. */
-async function handleTurn(ctx: Context, request: IncomingMessage, response: ServerResponse, state: RequestState): Promise<void> {
+/**
+ * Read a JSON body, answering `413` or `400` itself.
+ *
+ * Returns `null` when it has already replied, so a caller cannot answer twice for one request — the
+ * failure mode of a helper that both reports and returns is a second response written onto a socket
+ * that is already finished.
+ */
+async function readJson(request: IncomingMessage, response: ServerResponse): Promise<Record<string, unknown> | null> {
+  let raw = ''
+  for await (const chunk of request) {
+    raw += chunk
+    if (raw.length > 10 * 1024 * 1024) {
+      respond(response, 413, 'text/plain', 'request too large\n')
+      return null
+    }
+  }
+  try {
+    return JSON.parse(raw.length === 0 ? '{}' : raw) as Record<string, unknown>
+  } catch {
+    respond(response, 400, 'text/plain', 'the body must be JSON\n')
+    return null
+  }
+}
+
+/** Run one turn and stream its session events back as they are written. */async function handleTurn(ctx: Context, request: IncomingMessage, response: ServerResponse, state: RequestState): Promise<void> {
   let raw = ''
   for await (const chunk of request) {
     raw += chunk
@@ -424,7 +528,7 @@ async function handleTurn(ctx: Context, request: IncomingMessage, response: Serv
       return
     }
   }
-  let body: { session?: string; prompt?: string; endpoint?: string; model?: string }
+  let body: { session?: string; prompt?: string; endpoint?: string; model?: string; folder?: string; new?: boolean }
   try {
     body = JSON.parse(raw.length === 0 ? '{}' : raw) as typeof body
   } catch {
@@ -436,11 +540,23 @@ async function handleTurn(ctx: Context, request: IncomingMessage, response: Serv
     return
   }
 
-  const handle: SessionHandle = ctx.session.start({
-    ...(typeof body.session === 'string' && body.session.length > 0 ? { resume: body.session } : {}),
-    cwd: process.cwd(),
-    title: body.prompt.slice(0, 60),
-  })
+  /**
+   * Where the turn runs, and which session it continues.
+   *
+   * With no `folder` the behaviour is exactly what it was: a fresh session in the server's own
+   * working directory. Naming a folder is what the tree's client asks for when a person selects a
+   * node, and it continues that folder's session — which is what makes a selection in the left
+   * column mean "this folder's conversation" rather than "a new one". `new` starts another one for
+   * that folder instead, leaving the previous log where it is.
+   */
+  const folder = typeof body.folder === 'string' && body.folder.length > 0 ? canonicalPath(body.folder) : null
+  const handle: SessionHandle =
+    typeof body.session === 'string' && body.session.length > 0
+      ? ctx.session.start({ resume: body.session })
+      : folder !== null
+        ? ctx.session.openAt(folder, { ...(body.new === true ? { fresh: true } : {}), title: body.prompt.slice(0, 60) })
+        : ctx.session.start({ cwd: process.cwd(), title: body.prompt.slice(0, 60) })
+  if (folder !== null) ctx.workspace?.ensureOwner(folder)
   const endpoint = body.endpoint ?? state.defaultEndpoint ?? ctx.model.defaultEndpoint()
   if (endpoint === undefined) {
     respond(response, 400, 'text/plain', 'no endpoint is configured\n')
