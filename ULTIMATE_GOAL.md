@@ -36,7 +36,7 @@ harness. What exists is the frame the rest hangs on."*
 | 4 | pluggable tools | tools are registered as services and chosen by configuration, a tool can be added from outside the project, and a bad configuration fails loudly | [`_verifiers_/40-pluggable-tools/`](_verifiers_/40-pluggable-tools/INDEX.md) |
 | 5 | agentic loop | one turn completes a multi-step task that uses tools, feeds the results back, and records every step | [`_verifiers_/50-agentic-loop/`](_verifiers_/50-agentic-loop/INDEX.md) |
 | 6 | hooks | a listener can observe and rewrite a model or tool call, and refuse one, at named hook points with Cordis's own event modes | [`_verifiers_/60-hooks/`](_verifiers_/60-hooks/INDEX.md) |
-| 7 | workspaces and sessions | a workspace is a folder with a record, and its sessions live under it and are listed with it | [`_verifiers_/70-workspaces-sessions/`](_verifiers_/70-workspaces-sessions/INDEX.md) |
+| 7 | workspaces and sessions | a workspace names a target folder, a session is bound to a folder under it, and those folders are navigable as a recursive tree whose nodes the conventions classify | [`_verifiers_/70-workspaces-sessions/`](_verifiers_/70-workspaces-sessions/INDEX.md) |
 | 8 | permission sandbox | read-only, workspace-write and full access are three distinct behaviours, demonstrated by refusal rather than by declaration | [`_verifiers_/75-permission-sandbox/`](_verifiers_/75-permission-sandbox/INDEX.md) |
 | 9 | Web UI | a localhost page on a documented default port, and the live main-content and reasoning deltas reach a client over its stream while the model is still writing | [`_verifiers_/80-web-ui/`](_verifiers_/80-web-ui/INDEX.md) |
 | 10 | Web UI token | the page **and its stream** refuse a request without the token, and answer one with it | [`_verifiers_/90-web-ui-token/`](_verifiers_/90-web-ui-token/INDEX.md) |
@@ -71,12 +71,18 @@ README and the owner's statement, so it carries `status: unverified` and the own
 wording. Correcting the statement is the owner's act; correcting the *state* is the steward's, from
 evidence.
 
-**Every part is judged, and every check passes.** Measured on 2026-10-11, after `npm run build`:
-twelve parts, seventy-five checks, no failures and nothing left unjudged — except the one check that is
-allowed to be, the real-backend probe in part 1, which reports unjudged when the machine has no
-reachable endpoint configured. That is the shape the set was built for, and the two counts that matter
-are kept apart: *unjudged* is a part whose mechanism is missing, and *failed* is a part that does not
-work. Nothing here is either.
+**Every part is judged; one of them does not pass yet, and says so.** Measured on 2026-10-11 by running
+every verifier: **87 checks, 0 failures, 14 unjudged**. The fourteen are part 7's tree checks, written
+ahead of the mechanism they judge because the owner asked for the checks first — an unjudged claim is not
+a passing one, so part 7 reads `3` rather than `0`, and that is the state until the tree is built. The
+other checks allowed to report unjudged are part 1's real-backend probe, when the machine has no reachable
+endpoint configured, and part 11's daemon check, when no agent is installed. The two counts that matter
+are kept apart: *unjudged* is a mechanism that does not exist, and *failed* is one that does not work.
+
+That measurement was taken while **another session was working in the same checkout**, so it is a reading
+of a moving tree: part 3 had grown to seven checks and part 10 to ten, and a folder named
+`_verifiers_/85-trajectory-view/` now holds an entry point and no check file, so nothing in it is judged
+and it is not counted here.
 
 The checks were then **reviewed from a user's seat** and extended: what would a person rely on that
 nothing yet judged? Session grouping by folder, a replacement for a built-in tool, what happens after a

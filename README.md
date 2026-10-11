@@ -1,7 +1,7 @@
 ---
 title: heddle
 version: 0.3.0
-description: A harness and agent framework built on Cordis, in TypeScript, with twelve verifiers deciding what completes it.
+description: A harness and agent framework built on Cordis, in TypeScript, with a verifier deciding each part of what completes it.
 level: L2
 status: unverified
 grounded_in:
@@ -24,7 +24,8 @@ event logs grouped under workspaces, runs an agentic loop over registered tools,
 with a token budget and compaction, offers hook points around a model and a tool call, confines file
 effects with a permission sandbox, and serves a token-protected Web UI on localhost. What completes it
 is stated part by part in [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md), and decided by
-[`_verifiers_/`](_verifiers_/INDEX.md) — seventy-five checks, all passing.
+[`_verifiers_/`](_verifiers_/INDEX.md) — one folder per part, where the count and every verdict are kept
+rather than restated here.
 
 ## The Web UI
 
@@ -74,7 +75,7 @@ src/
   plugins/                   the Cordis plugins a profile names
 _context_/                   how DSH implements each mechanism this one mirrors
 _tools_/                     the verifier runner and the check helpers
-_verifiers_/                 the twelve verifications, one folder each
+_verifiers_/                 one folder per verification, each with its own entry point
 test/                        the framework's own unit suite
 ```
 
