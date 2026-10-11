@@ -2,7 +2,7 @@ import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import { realpathSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
 
 export const name = 'sandbox'
@@ -23,6 +23,19 @@ export interface SandboxExecutionPolicy {
   readonly mode: SandboxMode
   readonly workspaceRoot: string
   readonly extraWritableRoots: readonly string[]
+  /**
+   * The host's temp directory **when the policy admits it**, and `undefined` when it does not.
+   *
+   * It is **not** in the default policy. Measured: including it unconditionally meant
+   * `workspace-write` permitted a write to any path under `/var/folders/...` — a mode described as
+   * "the workspace and nothing else" that in fact allowed a large, shared, world-writable tree.
+   *
+   * Named `tempRootPath` rather than `tempRoot` because the configuration's own `tempRoot` is the
+   * **boolean** that asks for it, and two different types under one name is how the admission
+   * silently stopped working: measured, the resolved policy carried the boolean's position in the
+   * schema and the temp root never resolved to a path.
+   */
+  readonly tempRootPath?: string
 }
 
 /** Why a path was refused, with enough detail to show the user. */
@@ -51,12 +64,20 @@ export const Config = Schema.object({
   workspaceRoot: Schema.string(),
   /** Extra absolute roots a write may also reach, named one by one. */
   extraWritableRoots: Schema.array(Schema.string()).default([]),
+  /**
+   * Admit the host's temp directory to the policy. Off by default, and `true` means the real one.
+   *
+   * A boolean rather than a path because the useful value is always "the system temp directory",
+   * and naming it here keeps a profile from having to guess the platform's path.
+   */
+  tempRoot: Schema.boolean().default(false),
 })
 
 export interface Config {
   readonly mode?: SandboxMode
   readonly workspaceRoot?: string
   readonly extraWritableRoots?: readonly string[]
+  readonly tempRoot?: boolean
 }
 
 /**
@@ -80,22 +101,37 @@ export class SandboxService extends Service {
   readonly mode: SandboxMode
   readonly workspaceRoot: string
   readonly extraWritableRoots: readonly string[]
+  readonly tempRoot: string | undefined
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'sandbox')
     this.mode = config.mode ?? 'workspace-write'
     this.workspaceRoot = canonical(config.workspaceRoot ?? process.cwd())
     this.extraWritableRoots = (config.extraWritableRoots ?? []).map((root) => canonical(root))
+    this.tempRoot = config.tempRoot === true ? canonical(tmpdir()) : undefined
   }
 
   /** The policy a call runs under, so a caller can report it. */
   policy(): SandboxExecutionPolicy {
-    return { mode: this.mode, workspaceRoot: this.workspaceRoot, extraWritableRoots: this.extraWritableRoots }
+    return {
+      mode: this.mode,
+      workspaceRoot: this.workspaceRoot,
+      extraWritableRoots: this.extraWritableRoots,
+      ...(this.tempRoot !== undefined ? { tempRootPath: this.tempRoot } : {}),
+    }
   }
 
-  /** Resolve a caller-supplied path against the workspace. */
+  /**
+   * Resolve a caller-supplied path against the workspace, **and canonicalise it**.
+   *
+   * Canonicalising here rather than at each comparison is the whole fix for a measured bug: the
+   * workspace roots are canonical, so comparing a raw path against them made a policy that had
+   * admitted the temp directory refuse a write to it, because `/var/folders/...` is a symlink to
+   * `/private/var/folders/...` and only one side of the comparison had been resolved. A sandbox that
+   * compares a resolved path with an unresolved one is a sandbox that says no for the wrong reason.
+   */
   resolvePath(path: string): string {
-    return isAbsolute(path) ? resolve(path) : resolve(this.workspaceRoot, path)
+    return canonical(isAbsolute(path) ? resolve(path) : resolve(this.workspaceRoot, path))
   }
 
   /**
@@ -115,7 +151,7 @@ export class SandboxService extends Service {
         workspaceRoot: this.workspaceRoot,
       })
     }
-    const allowed = [this.workspaceRoot, ...this.extraWritableRoots, canonical(tmpdir())]
+    const allowed = [this.workspaceRoot, ...this.extraWritableRoots, ...(this.tempRoot !== undefined ? [this.tempRoot] : [])]
     if (allowed.some((root) => contains(root, target))) return target
     throw new SandboxDenial(
       `'${target}' is outside the sandbox root ${this.workspaceRoot}, so it cannot be written`,
@@ -127,7 +163,18 @@ export class SandboxService extends Service {
   assertReadable(path: string): string {
     const target = this.resolvePath(path)
     if (this.mode === 'danger-full-access') return target
-    const allowed = [this.workspaceRoot, ...this.extraWritableRoots, canonical(tmpdir()), join(homedir(), '.heddle')]
+    /**
+     * Reading is wider than writing in one respect only: the harness's own configuration directory
+     * is readable so a confined run can read the profile it was started from. Nothing else joins
+     * the list, and the temp directory is not special-cased here either — a read of arbitrary
+     * scratch data is not something a confined mode should quietly permit.
+     */
+    const allowed = [
+      this.workspaceRoot,
+      ...this.extraWritableRoots,
+      ...(this.tempRoot !== undefined ? [this.tempRoot] : []),
+      join(homedir(), '.heddle'),
+    ]
     if (allowed.some((root) => contains(root, target))) return target
     throw new SandboxDenial(
       `'${target}' is outside the sandbox root ${this.workspaceRoot}, so it cannot be read in '${this.mode}' mode`,
@@ -157,15 +204,28 @@ export class SandboxService extends Service {
  */
 export function canonical(path: string): string {
   const absolute = resolve(path)
+  /**
+   * Resolve the deepest ancestor that exists, then put the missing tail back.
+   *
+   * The tail is the whole point, and the first version of this got it wrong in a way that made a
+   * **new** file look like it was outside the workspace: measured, `canonical` returned the path
+   * unresolved whenever any parent was missing, so `/var/folders/.../scratch.txt` stayed
+   * `/var/folders/...` instead of becoming `/private/var/folders/...`, and a write the policy had
+   * admitted was refused. A tool's most common path is a file that does not exist yet, so this is the
+   * common case rather than an edge one.
+   *
+   * `realpath` on the existing prefix is what defeats a symlink inside the workspace pointing out of
+   * it; the tail needs no resolution because it does not exist.
+   */
+  const missing: string[] = []
   let current = absolute
-  const tail: string[] = []
   for (;;) {
     try {
-      return resolve(realpathSync(current), ...tail.reverse())
+      return join(realpathSync(current), ...missing.reverse())
     } catch {
-      const parent = resolve(current, '..')
+      const parent = dirname(current)
       if (parent === current) return absolute
-      tail.push(current.slice(parent.length + 1))
+      missing.push(basename(current))
       current = parent
     }
   }
@@ -192,5 +252,15 @@ declare module '@deepseek-ai/cordis' {
  * "cannot get property ... without inject" while the loader reported nothing,
  * because `ctx.set` does not go through the inject gate.
  */
-export default class SandboxServicePlugin extends SandboxService {}
+export default class SandboxServicePlugin extends SandboxService {
+  /**
+   * The schema has to be declared on the plugin, and its absence was invisible.
+   *
+   * Measured: without this, the loader accepted the row's config and passed it through unvalidated —
+   * so `tempRoot: true` never arrived, `workspace-write` kept refusing the temp directory, and every
+   * check of the mode passed because the mode itself was fine. A config schema that is exported but
+   * not declared is a config that is silently ignored.
+   */
+  static readonly Config = Config
+}
 

@@ -72,7 +72,23 @@ export function readOrCreateSecret(path = defaultSecretPath()): string {
   const target = expandHome(path)
   try {
     const existing = readFileSync(target, 'utf8').trim()
-    if (existing.length > 0) return existing
+    if (existing.length > 0) {
+      /**
+       * The mode is re-applied on every reuse, not only at creation.
+       *
+       * Measured: the first version set `mode: 0o600` when writing the file and never looked again,
+       * so a secret copied in, restored from a backup, or created by an older version stayed at
+       * whatever mode it arrived with — and a world-readable signing secret is the one failure here
+       * that is silent.
+       */
+      try {
+        chmodSync(target, 0o600)
+      } catch {
+        // A file we cannot chmod is still usable; the caller sees the failure through the file's
+        // own permissions rather than through a crash.
+      }
+      return existing
+    }
   } catch {
     // fall through and create it
   }

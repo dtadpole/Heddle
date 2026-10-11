@@ -118,5 +118,8 @@ declare module '@deepseek-ai/cordis' {
  * "cannot get property ... without inject" while the loader reported nothing,
  * because `ctx.set` does not go through the inject gate.
  */
-export default class ApprovalServicePlugin extends ApprovalService {}
+export default class ApprovalServicePlugin extends ApprovalService {
+  /** Declared on the plugin so the loader validates and applies the row's config. */
+  static readonly Config = Config
+}
 

@@ -426,6 +426,15 @@ export function defaultLayers(options: {
   const layers: NamedLayer[] = []
 
   if (options.profile !== undefined) {
+    /**
+     * A named profile must exist. There is deliberately **no fallback** to a profile found beside the
+     * working directory.
+     *
+     * Tried and reverted, on the evidence of a check: a fallback made `--profile nowhere` boot the
+     * repository's tree in silence, so a typo looked like success. A project's own profile is named
+     * by passing its directory — which `--profile` accepts — and the failure for an unknown name
+     * lists the names that do exist.
+     */
     const profile = resolveProfile(options.profile, env)
     for (const file of profile.layers) {
       const path = join(profile.dir, file)
@@ -435,7 +444,16 @@ export function defaultLayers(options: {
     const path = resolve(expandHome(options.base))
     layers.push({ layer: path, file: path, entries: readLayer(path, { env }) })
     if (options.includeProjectPatch === true) {
-      const projectPatch = resolve(options.configDir ?? process.cwd(), 'heddle.patch.yml')
+      /**
+       * The project patch sits beside the **base layer**, not beside the working directory.
+       *
+       * Measured: running with `--config /path/to/project/cordis.yml` from another directory booted
+       * an empty tree, because the patch was looked up in the caller's directory — so a named config
+       * was only usable from the project it named. A profile is a directory's worth of layers, and
+       * `--config` names one of them.
+       */
+      const anchor = dirname(path)
+      const projectPatch = join(anchor, 'heddle.patch.yml')
       if (existsSync(projectPatch)) {
         layers.push({ layer: projectPatch, file: projectPatch, entries: readLayer(projectPatch, { env }) })
       }

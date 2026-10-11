@@ -1,5 +1,5 @@
 import { Context, Service } from '@deepseek-ai/cordis'
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -233,8 +233,16 @@ export default class WorkspacePlugin extends WorkspaceService {
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, config)
-    if (existsSync(this.file)) return
-    // First run: derive the record from the sessions that already exist.
+    /**
+     * The record is reconciled with the sessions that exist **on every load**, not only on the
+     * first.
+     *
+     * Measured, and it is what "grouped under a folder" means for a real user: a session recorded by
+     * a run that started before its workspace existed — or by another process, or before this
+     * machine had a record at all — was invisible to `heddle workspaces` forever, because the
+     * bootstrap only ran when the file was absent. Reconciling each time is idempotent, adopts what
+     * is missing, and keeps the record derived from the store rather than maintained by hand.
+     */
     this.bootstrap(ctx.session.list())
   }
 }
