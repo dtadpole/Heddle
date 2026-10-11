@@ -29,6 +29,8 @@ interface Args {
   maxRounds?: number
   maxOutputTokens?: number
   sessionRoot?: string
+  port?: number
+  host?: string
   list: boolean
   json: boolean
   command?: string
@@ -60,6 +62,7 @@ commands:
   tools                      list the registered tools
   commands                   list the registered commands
   sessions                   list the sessions this store holds
+  web                        serve the Web UI on localhost
   transcript <id>            print a session's transcript
   config                     print the composed configuration tree
 
@@ -113,6 +116,12 @@ function parseArgs(argv: readonly string[]): Args {
       case '--session-root':
         args.sessionRoot = next()
         break
+      case '--port':
+        args.port = Number(next())
+        break
+      case '--host':
+        args.host = next()
+        break
       case '--list':
         args.list = true
         break
@@ -132,9 +141,14 @@ function parseArgs(argv: readonly string[]): Args {
       case 'commands':
       case 'sessions':
       case 'transcript':
+      case 'web':
       case 'config':
         args.command = arg
-        args.target = next() ?? undefined
+        // Only `transcript` takes a positional argument. Consuming the next token for
+        // every command is what made `heddle web --port 3099` fail with "unknown
+        // argument: 3099": the command ate the flag that followed it. Measured while
+        // first wiring the Web UI.
+        if (arg === 'transcript') args.target = next() ?? undefined
         break
       default:
         throw new Error(`unknown argument: ${arg}`)
@@ -234,6 +248,32 @@ function hasProfile(args: Args): boolean {
  * person checks a configuration without spending anything, and a harness whose
  * first usable command costs money is one nobody configures carefully.
  */
+async function runWeb(args: Args): Promise<void> {
+  const { startWebServer, DEFAULT_PORT } = await import('./server/web.ts')
+  const app = await bootFromArgs(args)
+  try {
+    const pending = await settle(app.ctx)
+    if (pending.length > 0) throw new Error(`${pending.length} entr(y/ies) are still pending: ${pending.join(', ')}`)
+    const server = await startWebServer(app.ctx, {
+      ...(args.port !== undefined ? { port: args.port } : { port: DEFAULT_PORT }),
+      ...(args.host !== undefined ? { host: args.host } : {}),
+    })
+    process.stdout.write(`heddle web: ${server.url}\n`)
+    process.stdout.write(`heddle web: serving on ${server.host}:${server.port}; pass --port to change it\n`)
+    if (args.json) process.stdout.write(`${JSON.stringify({ url: server.url, host: server.host, port: server.port, token: server.token })}\n`)
+    // Run until interrupted, which is the only honest lifetime for a server.
+    await new Promise<void>((resolvePromise) => {
+      const stop = () => {
+        void server.close().then(resolvePromise)
+      }
+      process.once('SIGINT', stop)
+      process.once('SIGTERM', stop)
+    })
+  } finally {
+    await app.dispose()
+  }
+}
+
 async function runCommand(command: string, target: string | undefined, json: boolean, args: Args): Promise<boolean> {
   const app = await bootFromArgs(args)
   try {
@@ -314,6 +354,11 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
     process.stdout.write(USAGE)
+    return
+  }
+
+  if (args.command === 'web') {
+    await runWeb(args)
     return
   }
 

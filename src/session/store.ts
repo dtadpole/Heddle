@@ -75,14 +75,24 @@ export function defaultSessionRoot(env: NodeJS.ProcessEnv = process.env): string
  * A session records under the directory its process ran in, and the record names
  * that directory, so the caller can decide whether a session belongs to them
  * rather than guessing from the store's shape.
+ *
+ * Every append is also handed to an `onEvent` listener, which is how the Web UI sees
+ * a turn **while it is happening**. Reading the file on a timer would have worked and
+ * would have been a second copy of the truth with its own lag; the listener fires from
+ * the one write path, so what a browser shows is what was just written.
  */
 export class SessionStore {
   readonly root: string
+  private readonly onEvent: ((handle: SessionHandle, event: SessionEvent) => void) | undefined
 
-  constructor(root: string = defaultSessionRoot()) {
+  constructor(
+    root: string = defaultSessionRoot(),
+    options: { readonly onEvent?: (handle: SessionHandle, event: SessionEvent) => void } = {},
+  ) {
     // `~` is expanded because the profile writes `~/.heddle/sessions` and a
     // literal `~` directory beside the project is the wrong place to put it.
     this.root = resolve(root.startsWith('~') ? join(homedir(), root.slice(1)) : root)
+    this.onEvent = options.onEvent
   }
 
   /** Create a session directory and its metadata. */
@@ -159,6 +169,9 @@ export class SessionStore {
     const seq = this.count(handle)
     const record: SessionEvent = { seq, at: new Date().toISOString(), ...event }
     appendFileSync(handle.transcript, `${JSON.stringify(record)}\n`)
+    // After the write, never before: a listener that saw an event the file does not
+    // have would be a second truth, which is the failure this ordering prevents.
+    this.onEvent?.(handle, record)
     return record
   }
 

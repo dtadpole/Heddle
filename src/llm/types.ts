@@ -134,3 +134,19 @@ export function textOf(parts: readonly ContentPart[]): string {
 export function userMessage(text: string): Message {
   return { role: 'user', content: [{ type: 'text', text }] }
 }
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * One event was appended to a session, after it reached the disk.
+     *
+     * The seam a live view listens on. Emitted rather than returned so a consumer can
+     * be a plugin, owned by its fiber and released with it, instead of a callback the
+     * writer has to hold.
+     *
+     * @param payload - the session id and the event as it was written.
+     * @mode emit
+     */
+    'session/event'(payload: { readonly session: string; readonly event: { readonly seq: number; readonly at: string; readonly type: string; readonly [key: string]: unknown } }): void
+  }
+}
