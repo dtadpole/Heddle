@@ -24,7 +24,7 @@ export interface Config {
 }
 
 /**
- * The first Heveld service.
+ * The first Heddle service.
  *
  * A service is an object registered on the context under a name, owned by the
  * fiber of the plugin that created it: when that fiber unloads the service

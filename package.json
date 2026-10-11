@@ -1,5 +1,5 @@
 {
-  "name": "heveld",
+  "name": "@dtadpole/heddle",
   "version": "0.0.1",
   "description": "A harness and agent framework built on Cordis, in TypeScript.",
   "license": "MIT",
@@ -9,7 +9,7 @@
     "node": ">=22.18"
   },
   "bin": {
-    "heveld": "./dist/cli.js"
+    "heddle": "./dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,11 +24,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dtadpole/heveld.git"
+    "url": "git+https://github.com/dtadpole/heddle.git"
   },
-  "homepage": "https://github.com/dtadpole/heveld",
+  "homepage": "https://github.com/dtadpole/heddle",
   "bugs": {
-    "url": "https://github.com/dtadpole/heveld/issues"
+    "url": "https://github.com/dtadpole/heddle/issues"
   },
   "keywords": [
     "cordis",

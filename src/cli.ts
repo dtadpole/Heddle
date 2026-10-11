@@ -14,13 +14,13 @@ interface Args {
   help: boolean
 }
 
-const USAGE = `heveld — a harness and agent framework built on Cordis
+const USAGE = `heddle — a harness and agent framework built on Cordis
 
-usage: heveld [options]
+usage: heddle [options]
 
 options:
   -p, --punctuation <mark>  punctuation the greeting service appends (default !)
-  -t, --target <name>       who the run is for (default heveld)
+  -t, --target <name>       who the run is for (default heddle)
   -q, --quiet               do not attach the console exporter
   -h, --help                show this message
 `
@@ -64,7 +64,7 @@ async function main(): Promise<void> {
   const app = await createApp(args)
   const { ctx } = app
 
-  process.stdout.write(`heveld: ${ctx.registry.size} plugin(s) loaded\n`)
+  process.stdout.write(`heddle: ${ctx.registry.size} plugin(s) loaded\n`)
   for (const [callback, runtime] of ctx.registry.entries()) {
     const fibers = [...runtime.fibers]
     const states = fibers.map((fiber) => STATES[fiber.state] ?? `unknown(${fiber.state})`).join(', ')
@@ -72,13 +72,13 @@ async function main(): Promise<void> {
     process.stdout.write(`  ${label.padEnd(16)} ${fibers.length} fiber(s)  ${states}\n`)
   }
 
-  ctx.emit('heveld/ready', app.target)
+  ctx.emit('heddle/ready', app.target)
   await app.dispose()
 }
 
 try {
   await main()
 } catch (error) {
-  process.stderr.write(`heveld: ${error instanceof Error ? error.message : String(error)}\n`)
+  process.stderr.write(`heddle: ${error instanceof Error ? error.message : String(error)}\n`)
   process.exitCode = 1
 }

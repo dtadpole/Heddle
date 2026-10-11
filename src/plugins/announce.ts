@@ -25,7 +25,7 @@ export interface Config {
  * @param config - the validated config, if any.
  */
 export function apply(ctx: Context, config: Config = {}): void {
-  ctx.on('heveld/ready', (target) => {
+  ctx.on('heddle/ready', (target) => {
     ctx.logger.info('announce %s', ctx.greeting.greet(config.target ?? target))
   })
 }

@@ -1,11 +1,12 @@
-# heveld
+# heddle
 
 A harness and agent framework built on [Cordis](https://github.com/cordiverse/cordis), in TypeScript.
 
-**The name.** *heveld* is the Middle English spelling of *heddle* — the part of a loom that raises the
-selected warp threads so the shuttle can pass. The lineage is `hefeld` (Old English) → `heveld`
-(Middle English) → `heald` / `heddle` (modern); `heveld` is the stage whose spelling agrees with how
-the word is said, `HEV-eld`. The bare npm name is free.
+**The name.** A *heddle* is the part of a loom that raises the selected warp threads so the shuttle can
+pass — the piece a harness is made of. The lineage is `hefeld` (Old English) → `heveld` (Middle
+English) → `heald` / `heddle` (modern); this project takes the modern word, the one a weaver
+recognises. Its bare npm name belongs to an unrelated package, so releases go out under the owner's
+scope as **`@dtadpole/heddle`** while the command stays `heddle`.
 
 **Status: a scaffold, not a harness.** What exists is the frame the rest hangs on — a root context, one
 service, one consumer of it, a console exporter, and tests that pin the framework's behaviour. Tools,
@@ -30,12 +31,12 @@ erasable syntax only so nothing needs a loader.
 ```
 src/
   app.ts                     createApp(): root context plus the plugins
-  cli.ts                     the `heveld` command
-  events.ts                  the events Heveld's plugins may emit
+  cli.ts                     the `heddle` command
+  events.ts                  the events Heddle's plugins may emit
   index.ts                   the public surface
   plugins/
     greeting.ts              a service: config, lifecycle, `greet()`
-    announce.ts              a consumer: inject-gated, listens for `heveld/ready`
+    announce.ts              a consumer: inject-gated, listens for `heddle/ready`
     console-exporter.ts      sends the built-in logger to the terminal
 test/
   boot.test.ts               what the framework is expected to guarantee
