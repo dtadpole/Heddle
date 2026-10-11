@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { chatDouble, fixtureDir, httpConfig, isolatedHome, removeDir, runCli, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
+import { browserAvailable, openBrowser } from '../../_tools_/check-helpers/browser.mjs'
 
 /**
  * Verifier 10 — the Web UI's token.
@@ -22,6 +23,19 @@ import { chatDouble, fixtureDir, httpConfig, isolatedHome, removeDir, runCli, sk
  */
 
 const CAPABILITY = 'a token that protects the Web UI and its event stream'
+
+/**
+ * Exchange a server's launch URL for the cookie heddle issues, the way a browser's first visit does.
+ *
+ * The launch token becomes a signed HttpOnly cookie on a 303; every later request carries the cookie and
+ * no token. A check that wants to act like an authenticated caller needs this and not the token.
+ */
+async function handshakeCookie(url) {
+  const response = await fetch(url, { redirect: 'manual' })
+  const set = response.headers.get('set-cookie')
+  if (set === null) throw new Error(`no cookie from ${url} (HTTP ${response.status})`)
+  return set.split(';')[0]
+}
 
 async function startServer(label) {
   const home = isolatedHome(`token-${label}`)
@@ -324,6 +338,109 @@ test('a stale launch token gets a page a person can recover from, not a dead end
     assert.equal(fresh.status, 303, 'a current token still exchanges for a cookie')
   } finally {
     server.kill()
+    await fixture.double.close()
+    removeDir(fixture.home)
+    removeDir(fixture.work)
+  }
+})
+
+test('a session\'s history is readable through the API, and a blank view is not the API\'s fault', async (context) => {
+  if (!skipUnless(context, await supportsWeb(), CAPABILITY)) return
+  /**
+   * The bug this closes was found in a browser: every endpoint answered `200` while the right side of the
+   * page stayed **empty** after a session was selected. The page's log region was written only by the live
+   * event stream, so it had no way to show turns that had already happened, and nothing at the API level
+   * was wrong to notice.
+   *
+   * So the API half is judged here: history exists, it is the *deltas* rather than the completed message
+   * (the log records both, and reading both prints every answer twice), reasoning keeps its own kind, and
+   * a request that is not a session id is refused rather than resolved as a path.
+   */
+  const fixture = await startServer('history')
+  const server = await startCli(fixture.args, fixture.env)
+  try {
+    // One real turn, so there is history to read.
+    const cookie = await handshakeCookie(server.url)
+    const turn = await fetch(`${new URL(server.url).origin}/api/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ prompt: 'remember the word loom' }),
+    })
+    assert.equal(turn.status, 200, 'the turn that creates the history succeeded')
+    await turn.text()
+
+    const sessions = await (await fetch(`${new URL(server.url).origin}/api/sessions`, { headers: { cookie } })).json()
+    assert.ok(Array.isArray(sessions) && sessions.length > 0, 'the session is listed')
+    const id = sessions[0].id
+
+    const history = await fetch(`${new URL(server.url).origin}/api/sessions/${id}`, { headers: { cookie } })
+    assert.equal(history.status, 200, 'its history is readable')
+    const body = await history.json()
+    assert.equal(body.id, id, 'and it is that session')
+    assert.ok(Array.isArray(body.turns) && body.turns.length > 0, `it holds turns\n${JSON.stringify(body).slice(0, 200)}`)
+    const kinds = new Set(body.turns.map((entry) => entry.kind))
+    assert.ok(kinds.has('user'), 'including what the person asked')
+    assert.ok(kinds.has('assistant') || kinds.has('reasoning'), 'and what the model produced')
+    assert.ok(
+      body.turns.some((entry) => entry.text.includes('remember the word loom')),
+      'with the user\'s words intact',
+    )
+
+    // A path that is not a session id must not be resolved against the store.
+    const refused = await fetch(`${new URL(server.url).origin}/api/sessions/..%2F..%2Fetc%2Fpasswd`, { headers: { cookie } })
+    assert.ok(refused.status === 400 || refused.status === 404, `a non-id is refused (HTTP ${refused.status})`)
+
+    // And an id that does not exist is a 404 rather than an empty transcript.
+    const missing = await fetch(`${new URL(server.url).origin}/api/sessions/session-00000000-0000-0000-0000-000000000000`, { headers: { cookie } })
+    assert.equal(missing.status, 404, 'an unknown session is not found')
+  } finally {
+    server.kill()
+    await fixture.double.close()
+    removeDir(fixture.home)
+    removeDir(fixture.work)
+  }
+})
+
+test('selecting a session shows its transcript in a real browser', async (context) => {
+  if (!skipUnless(context, await supportsWeb(), CAPABILITY)) return
+  if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
+  /**
+   * The check that would have caught the blank view, and the reason it is a browser check: the fault was
+   * entirely in the page's own script — it fetched nothing to show — so no amount of API judging sees it.
+   * Measured before the fix: 32 sessions listed and `#log` with a length of 0 after a click.
+   *
+   * `waitFor` is used rather than a fixed sleep, because a transcript that arrives late is working and a
+   * check that says otherwise is a flaky one.
+   */
+  const fixture = await startServer('browser-history')
+  const live = await startCli(fixture.args, fixture.env)
+  const browser = await openBrowser()
+  try {
+    const origin = new URL(live.url).origin
+    const cookie = await handshakeCookie(live.url)
+    await fetch(`${origin}/api/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ prompt: 'the loom question' }),
+    }).then((response) => response.text())
+
+    /**
+     * The browser is given the same cookie the handshake produced, which is the state a person is in after
+     * visiting the printed URL. Setting it through `document.cookie` cannot work — heddle's cookie is
+     * HttpOnly, which is the point of it — so the check navigates with the token once, exactly as the
+     * printed URL asks a person to.
+     */
+    await browser.goto(live.url)
+    assert.ok(await browser.waitFor('document.querySelectorAll("#sessions li").length > 0', 20_000), 'the session list rendered')
+
+    await browser.evaluate('document.querySelector("#sessions li").click()')
+    const shown = await browser.waitFor('document.getElementById("log").innerText.length > 0', 20_000)
+    const text = await browser.evaluate('document.getElementById("log").innerText')
+    assert.ok(shown, `selecting a session shows its transcript\nrendered: ${JSON.stringify(text.slice(0, 120))}`)
+    assert.match(text, /loom/, "and it is that session's content")
+  } finally {
+    browser.close()
+    live.kill()
     await fixture.double.close()
     removeDir(fixture.home)
     removeDir(fixture.work)

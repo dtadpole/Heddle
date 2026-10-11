@@ -293,6 +293,41 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
     return
   }
 
+  /**
+   * One session's history, in the same shape the live stream delivers.
+   *
+   * There was no such route, and the gap was visible as a **blank right side**: the page's log region is
+   * fed only by the `EventSource`, so clicking a session set the id it would filter on and then had
+   * nothing to show — every event of that session had already happened. Measured in a browser: 32
+   * sessions listed, `#log` empty after a click. A transcript view that only works for turns you watch
+   * live is not a transcript view.
+   *
+   * The fold is deliberately the same vocabulary as the live path — `user`, `assistant`, `reasoning`,
+   * `tool`, `denied` — so the client renders history and live deltas with one function instead of two
+   * that drift.
+   *
+   * The deltas are read, **not** `assistant/completed`: the log records both for one turn, so reading the
+   * completed event as well would print every answer twice.
+   */
+  if (url.pathname.startsWith('/api/sessions/') && request.method === 'GET') {
+    const id = decodeURIComponent(url.pathname.slice('/api/sessions/'.length))
+    /**
+     * The id is a directory name under the session root, so a traversal attempt must not reach the store.
+     * A real id is `session-<uuid>`; anything else is refused here rather than being resolved.
+     */
+    if (!/^session-[0-9a-f-]{36}$/i.test(id)) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'not a session id' })}\n`)
+      return
+    }
+    const handle = ctx.session.store.open(id)
+    if (handle === null) {
+      respond(response, 404, 'application/json', `${JSON.stringify({ error: `no session ${id}` })}\n`)
+      return
+    }
+    respond(response, 200, 'application/json', `${JSON.stringify({ id, turns: transcriptTurns(ctx.session.events(handle)) }, null, 2)}\n`)
+    return
+  }
+
   if (url.pathname === '/api/events' && request.method === 'GET') {
     respondSse(response)
     state.subscribers.add(response)
@@ -447,6 +482,35 @@ function respond(response: ServerResponse, status: number, contentType: string, 
 
 /** The page. One file, no build step, and no framework — the same choice DSH makes. */
 /**
+ * Fold a session's recorded events into the display turns the page renders.
+ *
+ * Read from the deltas rather than from `assistant/completed`, because one turn records both and reading
+ * the completion too would double every answer. Reasoning keeps its own kind, as it does live: it is the
+ * part a reader most wants separated from what the model said.
+ */
+function transcriptTurns(events: readonly { readonly type: string; readonly message?: unknown; readonly chunk?: unknown }[]): readonly { readonly kind: string; readonly text: string }[] {
+  const turns: { kind: string; text: string }[] = []
+  for (const event of events) {
+    if (event.type === 'message') {
+      const message = event.message as { role?: string; content?: readonly { type?: string; text?: string }[]; toolCallId?: string } | undefined
+      if (message === undefined) continue
+      const text = (message.content ?? []).map((part) => part.text ?? '').join('')
+      if (message.role === 'user') turns.push({ kind: 'user', text })
+      else if (message.role === 'tool') turns.push({ kind: /^error/i.test(text) ? 'denied' : 'tool', text })
+      else if (message.role === 'assistant') turns.push({ kind: 'assistant', text })
+      continue
+    }
+    if (event.type !== 'assistant/chunk') continue
+    const chunk = event.chunk as { type?: string; text?: string; name?: string; arguments?: string } | undefined
+    if (chunk === undefined) continue
+    if (chunk.type === 'text-delta' && chunk.text !== undefined) turns.push({ kind: 'assistant', text: chunk.text })
+    else if (chunk.type === 'reasoning-delta' && chunk.text !== undefined) turns.push({ kind: 'reasoning', text: chunk.text })
+    else if (chunk.type === 'tool-call' && chunk.name !== undefined) turns.push({ kind: 'tool', text: `→ ${chunk.name} ${chunk.arguments ?? '{}'}` })
+  }
+  return turns
+}
+
+/**
  * The page a refused request gets: the token form, and why it appeared when there is a reason.
  *
  * One helper for every refusal, so the recovery path cannot differ between them — the stale-token case
@@ -509,16 +573,41 @@ const log = document.getElementById('log')
 const list = document.getElementById('sessions')
 let current = null
 
-function add(kind, text) {
+function add(kind, text, merge = true) {
   if (text === '' || text === undefined) return
   const last = log.lastElementChild
-  if (last && last.dataset.kind === kind) { last.textContent += text; return }
+  // The merge flag is what the live stream wants: deltas of one answer belong in one block. Passing
+  // false is what history wants, where two consecutive entries of the same kind are two turns.
+  //
+  // No backticks and no em dashes in this script: the page is a template literal, so a backtick here
+  // ends it and the runtime then parses the rest as code. Measured, both ways.
+  if (merge && last && last.dataset.kind === kind) { last.textContent += text; return }
   const node = document.createElement('div')
   node.className = 'turn ' + kind
   node.dataset.kind = kind
   node.textContent = text
   log.append(node)
   log.scrollTop = log.scrollHeight
+}
+
+async function showSession(id) {
+  current = id
+  await refreshSessions()
+  /**
+   * The log is cleared and refilled from the session's own history.
+   *
+   * This is the half that was missing: selecting a session used to leave the right side empty, because
+   * the only thing that ever wrote to it was the live stream and those events had already happened.
+   */
+  log.replaceChildren()
+  try {
+    const response = await fetch('/api/sessions/' + encodeURIComponent(id))
+    if (!response.ok) return
+    const body = await response.json()
+    for (const turn of body.turns ?? []) add(turn.kind, turn.text, false)
+  } catch {
+    // A history that cannot be read must not empty the live view as well; the stream keeps appending.
+  }
 }
 
 async function refreshSessions() {
@@ -529,7 +618,7 @@ async function refreshSessions() {
     const item = document.createElement('li')
     item.innerHTML = '<div>' + (session.title ?? session.id) + '</div><div class="meta">' + session.turns + ' turn(s) · ' + session.created + '</div>'
     if (session.id === current) item.setAttribute('aria-current', 'true')
-    item.onclick = () => { current = session.id; refreshSessions() }
+    item.onclick = () => { showSession(session.id) }
     return item
   }))
 }

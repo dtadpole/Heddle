@@ -72,7 +72,7 @@ wording. Correcting the statement is the owner's act; correcting the *state* is 
 evidence.
 
 **Every part is judged, and every check passes.** Measured on 2026-10-11, after `npm run build`:
-twelve parts, seventy checks, no failures and nothing left unjudged — except the one check that is
+twelve parts, seventy-two checks, no failures and nothing left unjudged — except the one check that is
 allowed to be, the real-backend probe in part 1, which reports unjudged when the machine has no
 reachable endpoint configured. That is the shape the set was built for, and the two counts that matter
 are kept apart: *unjudged* is a part whose mechanism is missing, and *failed* is a part that does not

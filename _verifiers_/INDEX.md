@@ -31,7 +31,7 @@ deliberately does not.
 
 ## Where each stands, 2026-10-11
 
-Every part is judged and every check passes: **70 checks, 0 failures, 0 unjudged**, measured after
+Every part is judged and every check passes: **72 checks, 0 failures, 0 unjudged**, measured after
 `npm run build`. The only check allowed to report unjudged is part 1's real-backend probe, and it does so
 only when the machine has no reachable endpoint configured — a check that passed by not testing would be
 worse than one that admits it did not run.
@@ -48,7 +48,7 @@ worse than one that admits it did not run.
 | 7 | 7 | `0` — the transcript, resume, append-only, grouping by folder, subdirectories, finding a session |
 | 8 | 5 | `0` — the three modes, the sibling prefix, and the temp directory only when admitted |
 | 9 | 4 | `0` — port, page, API, and the live stream |
-| 10 | 7 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode, a stale token's recovery page |
+| 10 | 9 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode, a stale token's recovery page, session history over the API and in a browser |
 | 11 | 3 | `0` — a complete definition, the port answering with the service's name, and a kill it recovers from |
 
 ## The verdict contract
