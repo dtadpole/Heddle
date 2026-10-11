@@ -39,9 +39,9 @@ in `@deepseek-ai/dsh-*`:
   and one replacement, the shadowed events stay readable, `heddle transcript` still shows everything,
   a cut never separates a tool call from its result, the system prompt is never shadowed, and a
   summary that does not shrink is refused and recorded.
-- **The instruction baseline** — one durable user message, `<system-reminder>` framed, with broader
-  files dropped whole before the nearest one is truncated and the omissions named. It is re-sent only
-  when its digest changes.
+- **The instruction baseline** — one durable user-role message, `<system-reminder>` framed, with
+  broader files dropped whole before the nearest one is truncated and the omissions named. It is
+  re-sent only when its digest changes.
 
 ## The numbers, and where each came from
 
@@ -54,6 +54,15 @@ in `@deepseek-ai/dsh-*`:
 | `PRUNE_THRESHOLD_CHARS` | 8192 | DSH's pruner |
 | `PRUNE_HEAD_CHARS`, `PRUNE_TAIL_CHARS` | 4096, 1024 | DSH's pruner |
 | `INSTRUCTIONS_MAX_BYTES` | 65536 | DSH's instruction budget |
+
+## What the harness writes is not what a person said
+
+The system prompt, the instruction baseline and a compaction checkpoint are all model-visible
+messages, and all three are written as **`context/note`** events rather than `message` ones. That is
+a claim about authorship, and it is load-bearing: a view of the conversation renders `message` and
+chunk events, so a note cannot appear in one by accident. Measured the other way — with the
+checkpoint and the baseline written as user messages, the Web UI showed a project's instructions and
+a compaction to the reader as though they had typed them.
 
 ## Not implemented, deliberately
 

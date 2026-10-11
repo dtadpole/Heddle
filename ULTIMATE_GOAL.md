@@ -72,7 +72,7 @@ wording. Correcting the statement is the owner's act; correcting the *state* is 
 evidence.
 
 **Every part is judged; one of them does not pass yet, and says so.** Measured on 2026-10-11 by running
-every verifier: **87 checks, 0 failures, 14 unjudged**. The fourteen are part 7's tree checks, written
+every verifier: **88 checks, 0 failures, 14 unjudged**. The fourteen are part 7's tree checks, written
 ahead of the mechanism they judge because the owner asked for the checks first — an unjudged claim is not
 a passing one, so part 7 reads `3` rather than `0`, and that is the state until the tree is built. The
 other checks allowed to report unjudged are part 1's real-backend probe, when the machine has no reachable
@@ -80,7 +80,7 @@ endpoint configured, and part 11's daemon check, when no agent is installed. The
 are kept apart: *unjudged* is a mechanism that does not exist, and *failed* is one that does not work.
 
 That measurement was taken while **another session was working in the same checkout**, so it is a reading
-of a moving tree: part 3 had grown to seven checks and part 10 to ten, and a folder named
+of a moving tree: part 3 has since grown to eight checks and part 10 to ten, and a folder named
 `_verifiers_/85-trajectory-view/` now holds an entry point and no check file, so nothing in it is judged
 and it is not counted here.
 

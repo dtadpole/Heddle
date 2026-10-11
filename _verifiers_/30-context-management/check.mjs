@@ -152,6 +152,18 @@ async function derived(h, session) {
   return parseJson(run.stdout)
 }
 
+/**
+ * The page's display fold, which is what a reader is shown.
+ *
+ * Imported from the build rather than re-implemented here: the claim is about *the panel*, and a
+ * check that folded the log itself would only be judging its own idea of the panel.
+ */
+let panelFold
+async function transcriptTurns(events) {
+  panelFold ??= (await import(pathToFileURL(join(repoRoot, 'dist', 'server', 'web.js')).href)).transcriptTurns
+  return panelFold(events)
+}
+
 /** The built module a check reads, and an unjudged verdict when there is no build. */
 async function built(context, relativePath) {
   const url = pathToFileURL(join(repoRoot, 'dist', relativePath)).href
@@ -195,12 +207,14 @@ test('a compaction shadows a span, the log keeps it, and the model reads the sum
     const events = eventsOf(h.home, session)
     assert.ok(events.some((event) => event.type === 'compaction/summary'), 'the summary was recorded')
     assert.ok(events.some((event) => event.type === 'compaction/end'), 'and the transaction closed')
-    const replacements = events.filter((event) => event.type === 'message' && event.surfaceOp?.op === 'replace')
+    // The checkpoint and the notes the harness writes are `context/note` events, not messages: a
+    // transcript is a view of what a person said, and this is where that distinction is judged.
+    const replacements = events.filter((event) => event.type === 'context/note' && event.surfaceOp?.op === 'replace')
     assert.equal(replacements.length, 1, 'exactly one replacement landed, which is the whole rewrite')
 
     // The log still holds what the model can no longer see.
     assert.ok(
-      events.some((event) => event.type === 'message' && JSON.stringify(event.message ?? {}).includes('yyyy')),
+      events.some((event) => JSON.stringify(event.message ?? '').includes('yyyy')),
       'the shadowed span is still readable in the log',
     )
 
@@ -492,16 +506,66 @@ test('instructions are one durable baseline that follows an edit', async (contex
 
     const events = eventsOf(h.home, session)
     assert.ok(
-      events.some((event) => event.type === 'message' && event.origin === 'instructions' && event.surfaceOp?.op === 'replace'),
+      events.some((event) => event.type === 'context/note' && event.origin === 'instructions' && event.surfaceOp?.op === 'replace'),
       'the refresh landed as a replacement',
     )
     assert.ok(
-      events.some((event) => event.type === 'message' && JSON.stringify(event.message ?? {}).includes('ALPHA')),
+      events.some((event) => event.type === 'context/note' && JSON.stringify(event.message ?? {}).includes('ALPHA')),
       'while the log keeps the baseline it replaced',
     )
   } finally {
     removeDir(h.home)
     removeDir(workspace)
+  }
+})
+
+test('a long conversation can be compacted more than once, and the reader still sees the conversation', async (context) => {
+  if (!skipUnless(context, await supportsContext(), CAPABILITY)) return
+  /**
+   * Repeated compaction is its own capability, and it is the one a tuned fixture hides.
+   *
+   * A replacement is written later than what it shadows, so the second compaction of a session
+   * shadows a span that **contains** one: its seqs are not in order, and the first version of this
+   * harness refused exactly that — every session could be compacted once and never again. The
+   * scripted endpoint is only here to make four turns fit a small window.
+   */
+  const h = harness('repeat', {
+    contextWindow: 1200,
+    instructions: false,
+    steps: [{ text: 'answer one' }, { text: 'answer two' }, { text: 'answer three' }, { text: 'answer four' }, { purpose: 'compaction', text: 'a briefing' }],
+  })
+  try {
+    let session
+    for (const index of [1, 2, 3, 4]) {
+      const args = ['--profile', h.profileDir, '--endpoint', 'scripted', '--turn', `turn ${index} ${'p'.repeat(2500)}`]
+      if (session !== undefined) args.push('--resume', session)
+      const run = await runCli(args, { env: h.env })
+      assert.equal(run.code, 0, `turn ${index} ran\n${run.stdout}${run.stderr}`)
+      session = sessionOf(h.home)
+    }
+
+    const events = eventsOf(h.home, session)
+    const ended = events.filter((event) => event.type === 'compaction/end')
+    assert.ok(ended.length >= 2, `the session compacted more than once (${ended.length})`)
+    assert.equal(
+      events.filter((event) => String(event.type).startsWith('compaction/start')).length,
+      ended.length,
+      'every transaction that opened also closed',
+    )
+
+    const view = await derived(h, session)
+    const checkpoints = view.messages.filter((message) => (message.text ?? '').includes('<compacted-summary>'))
+    assert.equal(checkpoints.length, 1, 'the model reads the newest checkpoint, not a pile of them')
+
+    // And the reader's view is the conversation: the harness's own notes are not turns.
+    const panel = await transcriptTurns(events)
+    assert.equal(panel.filter((turn) => turn.kind === 'user').length, 4, 'the four prompts are the four user turns')
+    assert.ok(
+      !panel.some((turn) => (turn.text ?? '').includes('<compacted-summary>') || (turn.text ?? '').includes('<system-reminder>')),
+      'and no checkpoint or instruction baseline is shown as something a person said',
+    )
+  } finally {
+    removeDir(h.home)
   }
 })
 

@@ -31,14 +31,14 @@ deliberately does not.
 
 ## Where each stands, 2026-10-11
 
-**87 checks, 0 failures, 14 unjudged**, measured by running every verifier. The fourteen are part 7's
+**88 checks, 0 failures, 14 unjudged**, measured by running every verifier. The fourteen are part 7's
 tree checks, written ahead of the mechanism they judge because the owner asked for the checks first, and
 that is why part 7 reads `3` rather than `0` — an unjudged claim is not a passing one. The checks
 otherwise allowed to report unjudged are part 1's real-backend probe, when the machine has no reachable
 endpoint configured, and part 12's daemon check, when no agent is installed.
 
 Two things about that measurement are worth stating. It was taken while **another session was working in
-the same checkout**, so the counts moved underneath it: part 3 had grown to seven checks and part 10 to
+the same checkout**, so the counts moved underneath it: part 3 has since grown to eight checks and part 10 to
 ten since the previous run, and `85-trajectory-view` appeared as a folder with an entry point and no
 check file yet — it therefore has no row in the table below and nothing in it is judged, which the walk
 over `_verifiers_/*/verify.sh` reports as a missing entry point rather than as a pass. And the numbers
@@ -49,7 +49,7 @@ are counts of checks, not of parts.
 | 0 | 10 | `0` — profiles, layers, includes, references, validation, provenance |
 | 1 | 6 | `0` — both wire shapes, the configured default, listing costs nothing, one real endpoint |
 | 2 | 5 | `0` — deltas before completion, with no browser, on every turn of a resumed session |
-| 3 | 7 | `0` — the surface and its shadowing, the endpoint's window, prune-before-summarise, a balanced cut, a refused summary, overflow recovery, and the instruction baseline |
+| 3 | 8 | `0` — the surface and its shadowing, the endpoint's window, prune-before-summarise, a balanced cut, a refused summary, overflow recovery, the instruction baseline, and compacting a long conversation more than once |
 | 4 | 6 | `0` — allow list, an out-of-repository tool, a replacement, a malformed spec refused |
 | 5 | 6 | `0` — multi-round tasks, results fed back, the limit reported, resume, a failed tool |
 | 6 | 6 | `0` — the hook points, retarget, refusal, replacement, a refusal that stops, a broken hook named |

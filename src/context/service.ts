@@ -212,7 +212,12 @@ export class ContextService extends Service {
    * Two things live here rather than in the loop, because both are context policy: the **system
    * prompt** is written as the surface's first node (the paradigm's shape — a prompt is a message
    * the model reads, not a field beside the messages), and the **instruction baseline** is one
-   * durable user message that is re-sent only when its digest changes.
+   * durable user-role message that is re-sent only when its digest changes.
+   *
+   * Both are written as `context/note` events rather than `message` ones, and that is a claim about
+   * who wrote them: a view of the conversation is a view of what a person and a model said, and a
+   * note the harness composed is neither. Writing them as messages made the Web UI show a project's
+   * instructions — and later a compaction — as though the user had typed them.
    *
    * Called at the start of every round, so a file edited by a tool is picked up on the next round
    * through a digest comparison rather than a message.
@@ -229,7 +234,7 @@ export class ContextService extends Service {
     if (system !== undefined && system.length > 0 && head?.role !== 'system') {
       systemSeq = this.store.append(
         handle,
-        { type: 'message', message: { role: 'system', content: [{ type: 'text', text: system }] }, origin: 'system-prompt' },
+        { type: 'context/note', message: { role: 'system', content: [{ type: 'text', text: system }] }, origin: 'system-prompt' },
         { surfaceOp: 'append' },
       ).seq
     }
@@ -249,7 +254,7 @@ export class ContextService extends Service {
         instructionsSeq = this.store.append(
           handle,
           {
-            type: 'message',
+            type: 'context/note',
             message: { role: 'user', content: [{ type: 'text', text: rendered.text }] },
             origin: 'instructions',
             identity: rendered.identity,
@@ -267,7 +272,7 @@ export class ContextService extends Service {
         instructionsSeq = this.store.append(
           handle,
           {
-            type: 'message',
+            type: 'context/note',
             message: { role: 'user', content: [{ type: 'text', text: rendered.text }] },
             origin: 'instructions',
             identity: rendered.identity,

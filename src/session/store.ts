@@ -83,11 +83,18 @@ export function defaultSessionRoot(env: NodeJS.ProcessEnv = process.env): string
  * - **Only message-producing events take a position.** Everything else — the rest of a streamed
  *   run, a request record, a compaction marker — is log-only, which is what lets the log carry the
  *   record of a rewrite without the rewrite becoming conversation.
+ * - **What the harness wrote is not what a person said.** A system prompt, an instruction baseline
+ *   and a compaction checkpoint are all model-visible messages, but none of them is a turn somebody
+ *   took, so they are `context/note` events rather than `message` ones. That distinction is what
+ *   keeps a transcript honest *by construction*: a view of the conversation shows `message` and
+ *   chunk events, and a note cannot leak into it because it never claimed to be one. Measured the
+ *   other way: with the checkpoint written as a user `message`, the Web UI showed a compaction to
+ *   the reader as though they had typed it.
  * - **A replacement names positions, not a new history.** The replacement event is written later,
  *   so its `seq` is higher than everything it shadows; it splices the positions it covers and
  *   records which seqs it found there, so a replay is exact.
  */
-export const SURFACE_EVENT_TYPES: ReadonlySet<string> = new Set(['message', 'assistant/chunk'])
+export const SURFACE_EVENT_TYPES: ReadonlySet<string> = new Set(['message', 'context/note', 'assistant/chunk'])
 
 /** How an event entered the surface. An event with no marker in an older log is an append. */
 export type SurfaceOp = 'append' | { readonly op: 'replace'; readonly startSeq: number; readonly endSeq: number }
@@ -156,7 +163,9 @@ export function foldSurface(events: readonly SessionEvent[]): SurfaceState {
       openChunk = undefined
       continue
     }
-    if (event.type === 'message') {
+    if (isSurfaceEligible(event.type) && event.type !== 'assistant/chunk') {
+      // A `message` the person or the model produced, or a `context/note` the harness wrote: both
+      // take a position, and neither is a chunk run.
       nodes.push(event.seq)
       contentGeneration += 1
       openChunk = undefined
@@ -180,7 +189,7 @@ export function foldSurface(events: readonly SessionEvent[]): SurfaceState {
 export function deriveMessage(bySeq: ReadonlyMap<number, SessionEvent>, seq: number): Message | null {
   const event = bySeq.get(seq)
   if (event === undefined) return null
-  if (event.type === 'message') {
+  if (event.type === 'message' || event.type === 'context/note') {
     const message = event.message as Message | undefined
     if (message === undefined || message.content.length === 0) return null
     return message
@@ -367,13 +376,21 @@ export class SessionStore {
       throw new Error(`session ${handle.id}: replacement range ${op.startSeq}..${op.endSeq} is not a span of the surface`)
     }
     const shadowedSeqs = state.nodes.slice(startIdx, endIdx + 1)
-    if (shadowedSeqs.some((seq) => seq < op.startSeq || seq > op.endSeq)) {
-      throw new Error(
-        `session ${handle.id}: replacement range ${op.startSeq}..${op.endSeq} would leave a node inside the span on the surface`,
-      )
-    }
+    /**
+     * The span is **positional**, and its seqs need not be ordered.
+     *
+     * This is the trap this validation used to fall into. A replacement is written later than what
+     * it shadows, so it carries a high seq while sitting at an older position — and any span that
+     * contains it therefore holds a seq *below* `startSeq`. Checking the seqs form a numeric
+     * interval read that as "a node would be left inside the span" and refused it, which made
+     * **every second compaction of a session** fail: measured, `shadowedSeqs: [5, 2, 9]` with
+     * `fromSeq: 5, throughSeq: 9` is an ordinary span after one replacement, and DSH documents the
+     * same shape (`start` may be greater than `end`). Taking the positions between the two
+     * endpoints *is* the validation; there is no hole to check for, because the slice defines the
+     * span rather than assuming it.
+     */
     const events = this.read(handle)
-    const replacement = event.type === 'message' ? (event.message as Message | undefined) : undefined
+    const replacement = isSurfaceEligible(event.type) ? (event.message as Message | undefined) : undefined
     const head = shadowedSeqs[0]
     const headMessage = head === undefined ? null : deriveNodeMessage(events, head)
     if (startIdx === 0 && headMessage?.role === 'system') {

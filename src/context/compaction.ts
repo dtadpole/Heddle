@@ -264,7 +264,13 @@ export class CompactionEngine {
      */
     const replacement = this.store.append(
       handle,
-      { type: 'message', message: checkpoint, origin: 'compaction' },
+      /**
+       * A note, not a message: the checkpoint is something the harness wrote.
+       *
+       * Its role is `user` because that is where a model reads a briefing best, but a transcript is a
+       * view of what a person said, and this was not said by one.
+       */
+      { type: 'context/note', message: checkpoint, origin: 'compaction' },
       {
         surfaceOp: { op: 'replace', startSeq: plan.fromSeq, endSeq: plan.throughSeq },
         sourceEventSeqs: [startEvent.seq, summaryEvent.seq, ...plan.shadowedSeqs],

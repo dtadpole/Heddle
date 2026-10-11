@@ -130,6 +130,63 @@ test('the surface refuses a rewrite it could not fold or must not allow', () => 
   )
 })
 
+test('a second replacement may shadow a span whose seqs are not in order', () => {
+  /**
+   * The trap: a replacement is written later than what it shadows, so it carries a high seq while
+   * sitting at an older position. A span that contains it therefore holds a seq **below** its own
+   * `startSeq`, and a validation that expected a numeric interval refused every such span — which
+   * meant the second compaction of any session failed. DSH documents the same shape: the range is a
+   * surface position span, and `start` may be greater than `end`.
+   */
+  const { store, handle } = session()
+  const one = store.message(handle, { role: 'user', content: [{ type: 'text', text: 'one' }] })
+  const two = store.message(handle, { role: 'assistant', content: [{ type: 'text', text: 'two' }] })
+  const three = store.message(handle, { role: 'user', content: [{ type: 'text', text: 'three' }] })
+
+  const first = store.append(
+    handle,
+    { type: 'context/note', message: { role: 'user', content: [{ type: 'text', text: 'first summary' }] }, origin: 'compaction' },
+    { surfaceOp: { op: 'replace', startSeq: one.seq, endSeq: two.seq } },
+  )
+  assert.deepEqual(store.surface(handle).nodes, [first.seq, three.seq])
+
+  const second = store.append(
+    handle,
+    { type: 'context/note', message: { role: 'user', content: [{ type: 'text', text: 'second summary' }] }, origin: 'compaction' },
+    { surfaceOp: { op: 'replace', startSeq: first.seq, endSeq: three.seq } },
+  )
+
+  assert.deepEqual(store.surface(handle).nodes, [second.seq], 'the whole span is one node now')
+  assert.deepEqual(
+    store.deriveMessages(handle).map((message) => (message.content[0]?.type === 'text' ? message.content[0].text : '')),
+    ['second summary'],
+    'and the model reads the newer checkpoint rather than both',
+  )
+  assert.deepEqual(store.surface(handle).replacements[1]?.shadowedSeqs, [first.seq, three.seq], 'the span is recorded as positions')
+})
+
+test('a note the harness wrote is a surface node without being a message', () => {
+  const { store, handle } = session()
+  store.message(handle, { role: 'user', content: [{ type: 'text', text: 'what the person said' }] })
+  const note = store.append(handle, {
+    type: 'context/note',
+    message: { role: 'user', content: [{ type: 'text', text: '<system-reminder>the project rules</system-reminder>' }] },
+    origin: 'instructions',
+  })
+
+  assert.deepEqual(
+    store.deriveMessages(handle).map((message) => (message.content[0]?.type === 'text' ? message.content[0].text : '')),
+    ['what the person said', '<system-reminder>the project rules</system-reminder>'],
+    'the model reads it, in position',
+  )
+  assert.equal(
+    store.read(handle).filter((event) => event.type === 'message').length,
+    1,
+    'and a view of the conversation still sees only what the person said',
+  )
+  assert.deepEqual(store.surface(handle).nodes, [1, note.seq], 'a note takes a position like any surface event')
+})
+
 test('the folded surface is cached until the log grows, and a rewrite is visible at once', () => {
   const { store, handle } = session()
   store.message(handle, { role: 'user', content: [{ type: 'text', text: 'one' }] })
