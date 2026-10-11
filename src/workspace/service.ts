@@ -1,43 +1,47 @@
 import { Context, Service } from '@deepseek-ai/cordis'
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import Schema from '@deepseek-ai/schemastery'
 
+import { canonicalPath, depthOf, isUnder } from '../paths.ts'
 import type { SessionMeta } from '../session/store.ts'
 
 /**
- * Workspaces: a folder, and the record that says it is one.
+ * Workspaces: a **target folder**, and the record that says it is one.
  *
- * Modelled on DSH's `dsh-workspace`, and the three decisions worth copying are:
+ * Modelled on DSH's `dsh-workspace` with one deliberate divergence, and the divergence is the
+ * owner's decision of 2026-10-11 (stated in full in `SESSION_TREE.md`):
  *
  * - **A workspace is both a record and a folder.** The record carries
- *   `{ id, path, title, sessionIds, createdAt, updatedAt }`; the folder is the path.
- *   Neither alone is a workspace.
- * - **Association is an equality, not a prefix.** A session belongs to a workspace
- *   when its canonical working directory **equals** the record's path. A session started
- *   in a subdirectory is not a member of its parent — it is a different folder, and DSH
- *   gives it its own bucket and lets it become its own workspace. That is stricter than
- *   it first looks and it is right: a parent's sessions would otherwise silently
- *   include an unrelated project nested inside it.
- * - **Order lives in arrays, not in a field on the record.** The workspace list is one
- *   ordered array and each record's `sessionIds` is another, so ordering is a
- *   property of the collection rather than a number on each item, and attaching a
- *   session is a prepend rather than a rewrite of every neighbour.
+ *   `{ id, path, title, createdAt, updatedAt }`; the folder is the path. Neither alone is a
+ *   workspace. The path is the *root* — the target folder — and a session bound to any folder at or
+ *   below it is a member.
+ * - **Association is containment, compared by path segment.** DSH's rule is equality: a session
+ *   belongs to the workspace whose path equals its working directory, so a subdirectory becomes a
+ *   workspace of its own. Heddle's is containment, because its navigation is a tree of *folders*
+ *   rather than of workspaces, and every folder that held a conversation would otherwise become a
+ *   registration. `/a/b-sibling` is still not inside `/a/b`: the comparison is by segment, never by
+ *   string.
+ * - **The nearest root owns a session.** Roots may nest — `~/reflection` and
+ *   `~/reflection/_projects_/x` can both be registered — and the deepest one above a folder is the
+ *   one that accounts for it. DSH resolves the same way for display (`owningParentFolder`).
+ * - **Order lives in an array, not in a field on the record.** The workspace list is one ordered
+ *   array, so a new root is a prepend rather than a rewrite of every neighbour.
  *
- * The one simplification: DSH stores this behind its storage/credentials machinery.
- * Here it is one JSON file, which is what a single-process harness needs and what
- * makes the record something a person can read.
+ * The simplification DSH does not make: the record stores **no session account**. A session's
+ * `cwd` already says which folder it is bound to, and membership is the containment rule applied to
+ * it, so `sessionIds` was a second statement of one fact — and, worse, a statement the folder tree
+ * cannot be built from. It is derived on every read instead. A version-1 file that still carries
+ * the field is read without it and written back without it.
  */
 
 export interface WorkspaceRecord {
   readonly id: string
-  /** Canonical absolute path; the folder, and the association key. */
+  /** Canonical absolute path of the target folder. The root, and the association key. */
   readonly path: string
   readonly title: string
-  /** Session ids in the workspace's own order, newest first. */
-  readonly sessionIds: readonly string[]
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -49,67 +53,90 @@ export interface WorkspaceStoreShape {
   readonly workspaces: Record<string, WorkspaceRecord>
 }
 
+/** What `add` reports: the record, and whether this call is what created it. */
+export interface WorkspaceAddition {
+  readonly record: WorkspaceRecord
+  readonly created: boolean
+}
+
 /** Where the record lives. One file, outside every repository. */
 export function defaultWorkspaceFile(env: NodeJS.ProcessEnv = process.env): string {
   const home = env.HEDDLE_HOME ?? join(homedir(), '.heddle')
   return join(home, 'workspaces.json')
 }
 
-/** A canonical path: `realpath` when the directory exists, `resolve` when it does not. */
-export function canonicalPath(path: string): string {
-  const absolute = resolve(path)
-  try {
-    return realpathSync(absolute)
-  } catch {
-    return absolute
-  }
-}
-
 export const Config = Schema.object({
   /** Where the workspace record is kept. */
   file: Schema.string().default(defaultWorkspaceFile()),
+  /**
+   * Folder names a tool writes.
+   *
+   * The folder tree names these rather than pretending they are content, and the names come from
+   * configuration because nothing on disk distinguishes generated from authored — the same reason
+   * the conventions linter takes `--generated <path>`.
+   */
+  generated: Schema.array(Schema.string()).default([]),
 })
 
 export interface Config {
   readonly file?: string
+  readonly generated?: readonly string[]
 }
 
 /**
  * The workspace service.
  *
- * `ensure` is idempotent per path and is what makes the model self-healing: a session
- * whose directory has no workspace gets one the moment it is asked about, so the
- * record is derived from what exists rather than maintained by hand.
+ * Every read reconciles the record with the sessions that exist, which is what makes the model
+ * self-healing: a session whose folder has no root above it gets one the moment it is looked at, so
+ * the record is derived from what exists rather than maintained by hand.
  */
 export class WorkspaceService extends Service {
   static readonly provide = 'workspace'
 
   readonly file: string
+  /** Folder names the tree should call generated. */
+  readonly generated: readonly string[]
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'workspace')
     this.file = (config.file ?? defaultWorkspaceFile()).startsWith('~')
       ? join(homedir(), (config.file ?? '').slice(1))
       : (config.file ?? defaultWorkspaceFile())
+    this.generated = config.generated ?? []
   }
 
   /** The whole record, read from disk each time rather than cached. */
   read(): WorkspaceStoreShape {
     try {
-      const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as WorkspaceStoreShape
-      return {
-        version: parsed.version ?? 1,
-        workspaceIds: parsed.workspaceIds ?? [],
-        workspaces: parsed.workspaces ?? {},
+      const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as {
+        version?: number
+        workspaceIds?: string[]
+        workspaces?: Record<string, Partial<WorkspaceRecord> & { sessionIds?: unknown }>
       }
+      const workspaces: Record<string, WorkspaceRecord> = {}
+      for (const [id, record] of Object.entries(parsed.workspaces ?? {})) {
+        if (typeof record?.path !== 'string' || typeof record?.title !== 'string') continue
+        /**
+         * Rebuilt field by field rather than spread, so a version-1 file's `sessionIds` is dropped
+         * on the way in as well as on the way out. A spread would carry it forward forever.
+         */
+        workspaces[id] = {
+          id: typeof record.id === 'string' ? record.id : id,
+          path: record.path,
+          title: record.title,
+          createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date(0).toISOString(),
+          updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : new Date(0).toISOString(),
+        }
+      }
+      return { version: 2, workspaceIds: parsed.workspaceIds ?? [], workspaces }
     } catch {
-      return { version: 1, workspaceIds: [], workspaces: {} }
+      return { version: 2, workspaceIds: [], workspaces: {} }
     }
   }
 
   private write(shape: WorkspaceStoreShape): void {
     mkdirSync(dirname(this.file), { recursive: true })
-    writeFileSync(this.file, `${JSON.stringify(shape, null, 2)}\n`)
+    writeFileSync(this.file, `${JSON.stringify({ ...shape, version: 2 }, null, 2)}\n`)
   }
 
   /** Every workspace, in the collection's order. */
@@ -130,7 +157,6 @@ export class WorkspaceService extends Service {
       id: randomUUID(),
       path: canonical,
       title: title ?? canonical.split('/').filter(Boolean).pop() ?? canonical,
-      sessionIds: [],
       createdAt: now,
       updatedAt: now,
     }
@@ -138,6 +164,13 @@ export class WorkspaceService extends Service {
     // Newest first, which is how DSH orders its workspace list.
     this.write({ ...shape, workspaceIds: [record.id, ...shape.workspaceIds] })
     return record
+  }
+
+  /** Register a target folder, reporting whether this call is what created the record. */
+  add(path: string, title?: string): WorkspaceAddition {
+    const before = this.find(path)
+    const record = this.ensure(path, title)
+    return { record, created: before === undefined }
   }
 
   /** One workspace by id or by path. */
@@ -149,72 +182,63 @@ export class WorkspaceService extends Service {
   }
 
   /**
-   * Attach a session to the workspace whose path equals its working directory.
+   * The root that owns a folder: the **nearest** registered root at or above it.
    *
-   * Returns the workspace it was attached to, or `undefined` when the session's
-   * directory is not a workspace — which is the equality rule doing its job rather than
-   * a failure.
+   * `undefined` when no root is above the folder, which is a fact rather than a failure — the caller
+   * decides whether to register one (see {@link ensureOwner}).
    */
-  attach(meta: SessionMeta): WorkspaceRecord | undefined {
-    const canonical = canonicalPath(meta.cwd)
-    const shape = this.read()
-    const record = Object.values(shape.workspaces).find((entry) => entry.path === canonical)
-    if (record === undefined) return undefined
-    if (record.sessionIds.includes(meta.id)) return record
-
-    const updated: WorkspaceRecord = {
-      ...record,
-      sessionIds: [meta.id, ...record.sessionIds],
-      updatedAt: new Date().toISOString(),
-    }
-    shape.workspaces[record.id] = updated
-    this.write(shape)
-    return updated
-  }
-
-  /** The sessions a workspace holds, in its own order, looked up by id. */
-  sessions(record: WorkspaceRecord, all: readonly SessionMeta[]): readonly SessionMeta[] {
-    const byId = new Map(all.map((meta) => [meta.id, meta]))
-    return record.sessionIds.map((id) => byId.get(id)).filter((meta): meta is SessionMeta => meta !== undefined)
+  owner(path: string, records: readonly WorkspaceRecord[] = this.list()): WorkspaceRecord | undefined {
+    const canonical = canonicalPath(path)
+    return [...records]
+      .sort((left, right) => depthOf(right.path) - depthOf(left.path))
+      .find((record) => isUnder(record.path, canonical))
   }
 
   /**
-   * Group every session under the workspace its directory names.
+   * The sessions a root accounts for: those bound to a folder at or below it, minus the ones a
+   * **nearer** root owns.
    *
-   * This is what makes the model self-healing: a session recorded before the workspace
-   * existed, or by an older run, is adopted on the next look rather than being invisible
-   * forever. DSH does the same at startup by grouping stored headers by canonical cwd.
+   * Derived, never stored. `all` is newest first, as the store returns it, and the order is kept so
+   * a listing reads newest-first within a workspace too.
    */
-  bootstrap(all: readonly SessionMeta[]): { readonly workspaces: number; readonly attached: number; readonly orphans: number } {
-    const shape = this.read()
-    const byPath = new Map(Object.values(shape.workspaces).map((record) => [record.path, record]))
+  sessions(record: WorkspaceRecord, all: readonly SessionMeta[]): readonly SessionMeta[] {
+    const records = this.list()
+    return all.filter((meta) => {
+      const canonical = canonicalPath(meta.cwd)
+      if (!isUnder(record.path, canonical)) return false
+      return this.owner(canonical, records)?.id === record.id
+    })
+  }
+
+  /**
+   * The root that owns a folder, registering the folder itself when nothing above it does.
+   *
+   * This is what keeps "a session always has a workspace" true without a hand-maintained record: the
+   * run that creates a session in an unregistered folder registers that folder as a root.
+   */
+  ensureOwner(path: string): WorkspaceRecord {
+    const canonical = canonicalPath(path)
+    return this.owner(canonical) ?? this.ensure(canonical)
+  }
+
+  /**
+   * Group every session under the nearest root above it, creating a root where there is none.
+   *
+   * DSH does the same at startup by grouping stored headers by canonical cwd. Idempotent: a session
+   * already accounted for creates nothing.
+   */
+  bootstrap(all: readonly SessionMeta[]): { readonly workspaces: number; readonly attached: number; readonly created: number } {
     let attached = 0
-    let orphans = 0
+    let created = 0
     for (const meta of all) {
       const canonical = canonicalPath(meta.cwd)
-      const record = byPath.get(canonical)
-      if (record === undefined) {
-        // A directory with no workspace becomes one; DSH creates it on demand the same way.
-        const created = this.ensure(canonical)
-        byPath.set(created.path, created)
+      if (this.owner(canonical) === undefined) {
+        this.ensure(canonical)
+        created += 1
       }
-      const current = byPath.get(canonical)
-      if (current === undefined) {
-        orphans += 1
-        continue
-      }
-      if (current.sessionIds.includes(meta.id)) continue
-      const updated: WorkspaceRecord = {
-        ...current,
-        sessionIds: [...current.sessionIds, meta.id],
-      }
-      const fresh = this.read()
-      fresh.workspaces[updated.id] = updated
-      this.write(fresh)
-      byPath.set(canonical, updated)
       attached += 1
     }
-    return { workspaces: byPath.size, attached, orphans }
+    return { workspaces: this.list().length, attached, created }
   }
 }
 

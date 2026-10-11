@@ -22,22 +22,20 @@ rejected, in [`../../SESSION_TREE.md`](../../SESSION_TREE.md).
 
 ## What decides it
 
-`check.mjs` — one file, nineteen checks in three groups:
+`check.mjs` — one file, twenty checks in three groups:
 
 | Group | Checks | What it judges |
 |---|---|---|
 | the transcript | 4 | a session outlives its run, resumes, is readable on disk, and is appended to rather than rewritten |
 | the association | 3 | a session is grouped under the folder it ran in, a subdirectory is a member of the root above it, and one folder's prompts continue one session |
-| the tree | 12 | containment, the segment-wise trap, the nearest root, `--new` and history, one level at a time, type and instance classification, badges, recursion, plain containers, plumbing and generated folders, the folder name as the session name, an empty type folder, and a folder outside every root |
+| the tree | 13 | containment, the segment-wise trap, the nearest root, `--new` and history, one level at a time, type and instance classification, badges, recursion, plain containers, plumbing and generated folders, **the boundary that only an instance carries a session**, the folder name as the session name, an empty type folder, and a folder outside every root |
 
 ## Where it stands, 2026-10-11
 
-**5 pass, 14 unjudged, verdict `3`.** The tree group is written and reports **unjudged** rather than
-failing, because the mechanism it judges was not built when the checks were written — the owner asked
-for the checks first. `3` is the honest verdict for that, and it is not a pass: the part does not
-claim to hold until the mechanism exists. Two of the three association checks changed in the same pass
-and say so in their own comments, because the owner reversed the equality rule this part used to
-assert.
+**20 checks, all passing — verdict `0`.** The tree group was written **before** the mechanism it judges,
+because the owner asked for the checks first; both then landed in one session, and the checks went from
+unjudged to passing without being bent: the two assertions that had to change are the ones whose rule the
+owner reversed, and each says so in its own comment.
 
 ## Running it
 
@@ -58,11 +56,13 @@ whole reason for existing — see [`_tools_/verify-runner/`](../../_tools_/verif
 - **Anything it has to spend to see.** Every fixture here is a scripted endpoint and a local
   directory tree, so the run is free and offline.
 - **A rendered page.** The tree is judged as a **derivation**, one level at a time, through the CLI —
-  which is where the mechanism lives and where a browser is not needed. The pixels, the icons and the
-  `+` / `−` control are not judged here; the roadmap's "a browser check" is still open.
+  which is where the mechanism lives and where a browser is not needed. The pixels, the kind icons, the
+  type badges and the `+` / `−` control are not judged by any check here. They were read back from a
+  real browser by hand against a fixture shaped like the conventions repository, which is evidence but
+  not a check; the roadmap's "a browser check" is still open.
 
 ## Read next
 
-[`../../SESSION_TREE.md`](../../SESSION_TREE.md) for the model these checks judge, and
-[`../INDEX.md`](../INDEX.md) for the twelve verifications, and
+[`../../SESSION_TREE.md`](../../SESSION_TREE.md) for the model these checks judge,
+[`../INDEX.md`](../INDEX.md) for every verification, and
 [`../../ULTIMATE_GOAL.md`](../../ULTIMATE_GOAL.md) for the part this one decides.

@@ -8,8 +8,8 @@ grounded_in:
 
 # `test`
 
-The project's unit suite, run by `npm test` through Node's own runner over `test/*.test.ts`. Two files,
-with two jobs:
+The project's unit suite, run by `npm test` through Node's own runner over `test/*.test.ts`. One file
+per primitive, each with one job; the two the framework itself is built on come first:
 
 - `boot.test.ts` pins the **framework primitives** the harness is built on — that a Cordis plugin whose
   `inject` is missing stays pending, that a config schema is validated before a plugin body runs, that
@@ -18,6 +18,11 @@ with two jobs:
   turns, and which refusal a caller is shown. Both have rules that are easy to get subtly wrong and cheap
   to state in isolation — that the fold reads the deltas rather than the settled completion, so an answer
   is never printed twice, and that a caller with no token and a caller with a stale one are told apart.
+- `tree.test.ts` pins the folder tree's three rules without a store or a CLI: the type badge that has to
+  keep the three `_con…_` types apart, the classification that depends on a folder's **parent** (one word
+  is not an instance name), and the containment compared by path segment rather than by string. The rest
+  — `ledger.test.ts`, `meter.test.ts`, `prune.test.ts`, `surface.test.ts` — arrived with the mechanisms
+  they pin.
 
 ## What belongs in it, and what does not
 

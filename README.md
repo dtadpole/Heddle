@@ -20,10 +20,11 @@ scope as **`@dtadpole/heddle`** while the command stays `heddle`.
 
 **Status: a harness, and a small one.** It loads its plugin tree from configuration, talks to real
 model backends and streams their reasoning and answers as they arrive, keeps sessions as append-only
-event logs grouped under workspaces, runs an agentic loop over registered tools, composes its context
-with a token budget and compaction, offers hook points around a model and a tool call, confines file
-effects with a permission sandbox, and serves a token-protected Web UI on localhost. What completes it
-is stated part by part in [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md), and decided by
+event logs bound to the folder that ran them and grouped under workspace roots, navigates those folders
+as a recursive tree whose nodes the conventions classify, runs an agentic loop over registered tools,
+composes its context with a token budget and compaction, offers hook points around a model and a tool
+call, confines file effects with a permission sandbox, and serves a token-protected Web UI on localhost.
+What completes it is stated part by part in [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md), and decided by
 [`_verifiers_/`](_verifiers_/INDEX.md) — one folder per part, where the count and every verdict are kept
 rather than restated here.
 

@@ -2,6 +2,7 @@ import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 
+import { canonicalPath } from '../paths.ts'
 import type { Message } from '../llm/types.ts'
 
 import { SessionStore, defaultSessionRoot, type RecordedMessage, type SessionHandle, type SessionId, type SessionMeta, type SurfaceState } from './store.ts'
@@ -58,6 +59,47 @@ export class SessionService extends Service {
   /** Record a user turn and return once it is on disk. */
   user(handle: SessionHandle, text: string): void {
     this.store.message(handle, { role: 'user', content: [{ type: 'text', text }] })
+  }
+
+  /**
+   * The folder's current session: the newest session whose working directory is exactly this folder.
+   *
+   * This is the whole of "one folder, one session". A folder's session is not a stored pointer but a
+   * question with an answer — the newest log bound to that folder — so a session created by another
+   * process, or by an older build, is the folder's session the moment it is the newest one there.
+   * Sessions that are no longer current are still in the store, still listed, still readable by id;
+   * they simply are not what the folder points at.
+   */
+  current(folder: string): SessionMeta | null {
+    const canonical = canonicalPath(folder)
+    return this.list().find((meta) => canonicalPath(meta.cwd) === canonical) ?? null
+  }
+
+  /**
+   * Open the session **bound to a folder**, creating one when the folder has none.
+   *
+   * `fresh` starts a new session regardless of what the folder holds, which then becomes the
+   * folder's current session — the `--new` path. The old one is untouched: nothing is rewritten, and
+   * the folder simply points somewhere else afterwards.
+   */
+  openAt(
+    folder: string,
+    options: { readonly fresh?: boolean; readonly endpoint?: string; readonly model?: string; readonly title?: string } = {},
+  ): SessionHandle {
+    const canonical = canonicalPath(folder)
+    if (options.fresh !== true) {
+      const existing = this.current(canonical)
+      if (existing !== null) {
+        const handle = this.store.open(existing.id)
+        if (handle !== null) return handle
+      }
+    }
+    return this.store.create({
+      cwd: canonical,
+      ...(options.endpoint !== undefined ? { endpoint: options.endpoint } : {}),
+      ...(options.model !== undefined ? { model: options.model } : {}),
+      ...(options.title !== undefined ? { title: options.title } : {}),
+    })
   }
 
   /** The messages a resumed session would send, which is what "carries" means. */

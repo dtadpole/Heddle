@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
-import { fixtureDir, isolatedHome, parseJson, readTranscript, removeDir, repoRoot, runCli, scriptedConfig, sessionsUnder, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
+import { fixtureDir, isolatedHome, parseJson, readTranscript, removeDir, repoRoot, runCli, scriptedConfig, sessionsUnder, skipUnless, transcriptFile } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
  * Verifier 7 — workspaces and sessions.
@@ -104,8 +104,13 @@ function entry(path, text = '') {
  * only its index and its instances, `_monitors_` is left empty on purpose — an empty type folder is
  * valid in the conventions and must render as such — and the two folders that must **not** appear are
  * a plumbing directory and a generated one.
+ *
+ * It **registers its own root** as well, because a tree is a view of the folders a person registered:
+ * asking for the tree of an unregistered directory is refused on purpose, and a fixture that skipped
+ * the registration would be judging the refusal rather than the classification.
  */
-function conventionsFixture(work) {
+async function conventionsFixture(h) {
+  const work = h.work
   entry(join(work, 'AGENTS.md'), '# entry point of the root\n')
   entry(join(work, 'README.md'), '# read me\n')
   for (const type of ['_tools_', '_verifiers_', '_monitors_', '_projects_']) {
@@ -118,7 +123,7 @@ function conventionsFixture(work) {
   entry(join(work, '_projects_', 'a-project', 'INDEX.md'), '# a-project\n')
   entry(join(work, '_projects_', 'a-project', 'ULTIMATE_GOAL.md'), '# the goal\n')
   entry(join(work, '_projects_', 'a-project', '_context_', 'INDEX.md'), '# gathered\n')
-  entry(join(work, '_projects_', 'a-project', '_context_', 'material', 'INDEX.md'), '# material\n')
+  entry(join(work, '_projects_', 'a-project', '_context_', 'source-material', 'INDEX.md'), '# the material\n')
   entry(join(work, 'shared', 'INDEX.md'), '# shared\n')
   entry(join(work, 'shared', '_skills_', 'INDEX.md'), '# _skills_\n')
   entry(join(work, 'shared', '_skills_', 'a-skill', 'INDEX.md'), '# a-skill\n')
@@ -126,6 +131,10 @@ function conventionsFixture(work) {
   entry(join(work, 'dist', 'index.html'), '<!doctype html>\n')
   entry(join(work, 'node_modules', 'left-pad', 'package.json'), '{}\n')
   entry(join(work, '.git', 'HEAD'), 'ref: refs/heads/main\n')
+
+  const added = await runCli(adminArgs(h, ['workspace', 'add', work]), { env: h.env, cwd: work })
+  assert.equal(added.code, 0, `the fixture registered its own root\n${added.stdout}${added.stderr}`)
+  return work
 }
 
 /** One level of the tree, read through the CLI. */
@@ -177,7 +186,7 @@ test('the transcript is readable on disk and holds the turn', async (context) =>
   try {
     const result = await runCli([...h.args, '--turn', 'remember the word loom'], { env: h.env })
     assert.equal(result.code, 0, `the turn succeeded\n${result.stdout}${result.stderr}`)
-    const transcript = join(h.home, 'sessions', sessionsUnder(join(h.home, 'sessions'))[0] ?? '', 'session.jsonl')
+    const transcript = transcriptFile(join(h.home, 'sessions', sessionsUnder(join(h.home, 'sessions'))[0] ?? ''))
     assert.ok(existsSync(transcript), `the transcript exists at ${transcript}`)
 
     const events = readTranscript(transcript)
@@ -207,7 +216,7 @@ test('a resumed session carries the earlier turns', async (context) => {
     const second = await runCli([...h.args, '--turn', 'what did I ask you to remember', '--resume', id], { env: h.env })
     assert.equal(second.code, 0, `the resumed turn ran\n${second.stdout}${second.stderr}`)
 
-    const texts = readTranscript(join(h.home, 'sessions', id, 'session.jsonl'))
+    const texts = readTranscript(join(h.home, 'sessions', id))
       .filter((event) => event.type === 'message')
       .flatMap((event) => (event.message?.content ?? []).map((part) => part.text ?? ''))
     assert.ok(texts.includes('remember the word loom'), 'the first turn is still in the resumed session')
@@ -225,12 +234,20 @@ test('the record is appended to, never rewritten', async (context) => {
   try {
     await runCli([...h.args, '--turn', 'first'], { env: h.env })
     const id = sessionsUnder(join(h.home, 'sessions'))[0] ?? ''
-    const transcript = join(h.home, 'sessions', id, 'session.jsonl')
-    const before = readFileSync(transcript, 'utf8')
+    const transcript = transcriptFile(join(h.home, 'sessions', id))
+    /**
+     * Compared as **bytes**, because a transcript is now a sequence of zstd frames.
+     *
+     * Decoding it as UTF-8 and comparing strings would mostly work and occasionally fail: a frame
+     * boundary can land in the middle of a multi-byte character, and the shorter read would end in a
+     * replacement character where the longer one has the real one. The claim is about bytes anyway —
+     * an append leaves everything before it untouched — so bytes are what is compared.
+     */
+    const before = readFileSync(transcript)
     await runCli([...h.args, '--turn', 'second', '--resume', id], { env: h.env })
-    const after = readFileSync(transcript, 'utf8')
-    assert.ok(after.startsWith(before), 'the earlier bytes are still the beginning of the file')
+    const after = readFileSync(transcript)
     assert.ok(after.length > before.length, 'the second turn was appended')
+    assert.ok(after.subarray(0, before.length).equals(before), 'the earlier bytes are still the beginning of the file')
   } finally {
     removeDir(h.home)
     removeDir(h.work)
@@ -323,7 +340,7 @@ test('asking one folder twice continues one session, and both turns are in it', 
     )
     assert.ok(typeof sessions[0].created === 'string' && sessions[0].created.length > 0, 'and when it was created')
 
-    const texts = readTranscript(join(h.home, 'sessions', sessions[0].id, 'session.jsonl'))
+    const texts = readTranscript(join(h.home, 'sessions', sessions[0].id))
       .filter((event) => event.type === 'message')
       .flatMap((event) => (event.message?.content ?? []).map((part) => part.text ?? ''))
     assert.ok(texts.includes('the first conversation'), 'the first prompt is in the one session')
@@ -349,7 +366,7 @@ test('starting a new session in a folder moves the folder to it, and the old one
   const h = harness('rotate')
   const folder = join(h.work, '_tools_', 'some-tool')
   try {
-    conventionsFixture(h.work)
+    await conventionsFixture(h)
     assert.equal((await runCli([...h.args, '--turn', 'the old conversation'], { env: h.env, cwd: folder })).code, 0, 'the first turn ran')
     const before = await sessionsOf(h)
     assert.equal(before.length, 1, 'the first prompt made one session')
@@ -443,7 +460,7 @@ test('the tree lists one folder level at a time, and a file is not a node', asyn
   if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
   const h = harness('levels')
   try {
-    conventionsFixture(h.work)
+    await conventionsFixture(h)
     const { result, tree } = await treeAt(h, h.work)
     assert.equal(result.code, 0, `the tree ran\n${result.stdout}${result.stderr}`)
 
@@ -465,7 +482,7 @@ test('a type folder is a type, and its badge names it without the underscores', 
   if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
   const h = harness('type')
   try {
-    conventionsFixture(h.work)
+    await conventionsFixture(h)
     const { tree } = await treeAt(h, h.work)
     for (const [label, badge] of [
       ['_tools_', 'TLS'],
@@ -488,7 +505,7 @@ test('an instance inside a type is an instance and keeps the folder name', async
   if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
   const h = harness('instance')
   try {
-    conventionsFixture(h.work)
+    await conventionsFixture(h)
     const { tree } = await treeAt(h, join(h.work, '_tools_'))
     const node = childOf(tree, 'some-tool')
     assert.ok(node, `the instance is listed\nsaw: ${(tree.children ?? []).map((child) => child.label).join(', ')}`)
@@ -506,7 +523,7 @@ test('a type inside an instance is a type again', async (context) => {
   if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
   const h = harness('recursive-type')
   try {
-    conventionsFixture(h.work)
+    await conventionsFixture(h)
     const project = join(h.work, '_projects_', 'a-project')
     const { tree } = await treeAt(h, project)
     const context_ = childOf(tree, '_context_')
@@ -514,7 +531,7 @@ test('a type inside an instance is a type again', async (context) => {
     assert.equal(context_?.badge, 'CNT', 'badged from its own name, which keeps it apart from _conventions_')
 
     const deeper = await treeAt(h, join(project, '_context_'))
-    assert.equal(childOf(deeper.tree, 'material')?.kind, 'instance', 'and its own instance is an instance, four levels down')
+    assert.equal(childOf(deeper.tree, 'source-material')?.kind, 'instance', 'and its own instance is an instance, four levels down')
   } finally {
     removeDir(h.home)
     removeDir(h.work)
@@ -526,7 +543,7 @@ test('a plain container folder is a folder, and a type inside it is still a type
   if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
   const h = harness('container')
   try {
-    conventionsFixture(h.work)
+    await conventionsFixture(h)
     const { tree } = await treeAt(h, h.work)
     const shared = childOf(tree, 'shared')
     assert.equal(shared?.kind, 'folder', 'a plain-named folder is neither a type nor an instance')
@@ -543,19 +560,77 @@ test('plumbing is hidden and a declared generated folder is named as one', async
   if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
   const h = harness('hidden')
   try {
-    conventionsFixture(h.work)
+    await conventionsFixture(h)
     const { tree } = await treeAt(h, h.work)
     const labels = (tree.children ?? []).map((node) => node.label)
     assert.ok(!labels.includes('.git'), 'a dot-directory is plumbing, not content')
     assert.ok(!labels.includes('node_modules'), 'and neither are installed dependencies')
 
     /**
-     * A generated folder is invisible on disk, which is why the caller names it — the same words the
-     * convention linter takes (`--generated dist`), so one vocabulary decides it in both tools.
+     * A generated folder is invisible on disk, which is why the caller names it — the same word the
+     * conventions linter takes (`--generated dist`), so one vocabulary decides it in both tools.
+     *
+     * Two directions are judged with two names, and the second name is the reason: `dist` is declared
+     * by **heddle's own profile** (`heddle.patch.yml`, `generated: [dist]`), and this check runs that
+     * profile — so `dist` must come back generated without any flag. Measured the hard way: the check
+     * first asserted that undeclared `dist` is an ordinary folder, which stopped being true the moment
+     * the project declared its own build output, and the failure was the check being wrong rather than
+     * the tree.
      */
-    const declared = await treeAt(h, h.work, { extra: ['--generated', 'dist'] })
-    assert.equal(childOf(declared.tree, 'dist')?.kind, 'generated', 'a declared folder is marked generated')
-    assert.equal(childOf(tree, 'dist')?.kind, 'folder', 'and undeclared it is an ordinary folder rather than being hidden')
+    assert.equal(childOf(tree, 'dist')?.kind, 'generated', 'the project profile declares dist, so the tree names it')
+
+    entry(join(h.work, 'build', 'INDEX.md'), '# a folder nothing declares\n')
+    const undeclared = await treeAt(h, h.work)
+    assert.equal(childOf(undeclared.tree, 'build')?.kind, 'folder', 'an undeclared folder is an ordinary folder rather than hidden')
+
+    const declared = await treeAt(h, h.work, { extra: ['--generated', 'build'] })
+    assert.equal(childOf(declared.tree, 'build')?.kind, 'generated', 'and naming it marks it')
+  } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+  }
+})
+
+test('only an instance carries a session, and nested plain folders do not', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
+  const h = harness('boundary')
+  try {
+    await conventionsFixture(h)
+    const instance = join(h.work, '_tools_', 'some-tool')
+    const deep = join(instance, 'src', 'deep')
+    mkdirSync(deep, { recursive: true })
+
+    /**
+     * The owner's rule of 2026-10-11, and the fixture is built to break the obvious wrong version of
+     * it: **a `_type_` folder is the boundary, and a session node exists only for an instance of
+     * one.** A tree that showed a session on every folder holding one would put a session on the
+     * workspace root, on `shared` and on `_tools_` itself — and on this deep plain folder, which is
+     * the case the rule is really about: several levels of ordinary structure may sit inside an
+     * instance, and none of them is a place to work.
+     */
+    for (const folder of [h.work, join(h.work, 'shared'), instance, deep]) {
+      const label = folder === h.work ? 'the root' : folder.slice(h.work.length + 1)
+      const run = await runCli([...h.args, '--turn', `from ${label}`], { env: h.env, cwd: folder })
+      assert.equal(run.code, 0, `the turn in ${folder} ran\n${run.stdout}${run.stderr}`)
+    }
+    const stored = await sessionsOf(h)
+    assert.equal(stored.length, 4, `four folders hold four sessions\n${JSON.stringify(stored.map((meta) => meta.cwd))}`)
+
+    const { tree } = await treeAt(h, h.work)
+    assert.equal(tree.session, null, 'the workspace root is a boundary, not an instance, so it carries no session')
+    assert.equal(childOf(tree, 'shared')?.session, null, 'a plain container folder carries none either')
+
+    const tools = await treeAt(h, join(h.work, '_tools_'))
+    assert.equal(tools.tree.session, null, 'a type folder is the boundary itself, so it carries no session')
+    const tool = childOf(tools.tree, 'some-tool')
+    assert.ok(tool, 'the instance is listed under its type')
+    assert.equal(tool.session?.turns, 1, 'and the instance carries the session that ran in it')
+
+    const inside = await treeAt(h, instance)
+    assert.equal(childOf(inside.tree, 'src')?.session, null, 'a plain folder inside an instance carries no session')
+    const src = await treeAt(h, join(instance, 'src'))
+    assert.equal(childOf(src.tree, 'deep')?.session, null, 'and neither does a folder nested two levels inside it')
   } finally {
     removeDir(h.home)
     removeDir(h.work)
@@ -568,7 +643,7 @@ test('the folder name is the session name, not the first prompt', async (context
   const h = harness('label')
   const folder = join(h.work, '_tools_', 'some-tool')
   try {
-    conventionsFixture(h.work)
+    await conventionsFixture(h)
     assert.equal((await runCli([...h.args, '--turn', 'remember the word loom'], { env: h.env, cwd: folder })).code, 0, 'the turn ran')
 
     const { tree } = await treeAt(h, join(h.work, '_tools_'))
@@ -590,7 +665,7 @@ test('an empty type folder is a type with no children rather than an error', asy
   if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
   const h = harness('empty-type')
   try {
-    conventionsFixture(h.work)
+    await conventionsFixture(h)
     const { result, tree } = await treeAt(h, join(h.work, '_monitors_'))
     assert.equal(result.code, 0, `an empty type folder is not an error\n${result.stdout}${result.stderr}`)
     assert.equal(tree.kind, 'type', 'it is still a type folder')

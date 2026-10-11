@@ -1,11 +1,12 @@
 ---
 title: Heddle Session Tree
 level: L2
-version: 1.0.0
+version: 1.1.0
 description: How a workspace names a target folder, how a session is bound to a folder, and how that becomes a recursive tree in the Web UI's left column.
 status: unverified
 grounded_in:
   - source: owner statement in the dsh session, 2026-10-11, choosing containment, one session per folder, every folder in the tree, kind icons with type badges, and verifier 7 as the owner of the claim
+  - source: owner statement in the dsh session, 2026-10-11, that a type folder is the boundary and a session node exists only where the type plus instance pattern matches
   - source: the installed DSH 0.2.0-rc.2 packages, read 2026-10-11 for the sidebar node model, the workspace-tree mode, and the lazy directory tree
   - source: the reflection conventions repository, read 2026-10-11 for the type and instance rules this tree renders
 ---
@@ -69,6 +70,15 @@ label is the folder's name, and a marker on the trailing side says whether a ses
 many turns it holds. This is what "the session name is the instance name" means in practice, and it
 is why a folder can never show two rows with the same name.
 
+**A session row exists only for an instance.** The owner's rule of 2026-10-11: a `_type_` folder is
+the **boundary**, and a folder is a place to work only where the `_type_` plus `<instance>` pattern
+matches. A workspace root, a plain container (`shared/`, `src/`) and a type folder itself carry no
+session row, and neither does a folder nested inside an instance — several levels of ordinary
+structure may sit between a boundary and the `_type_` that follows it, and none of them is a place to
+work. A session bound to such a folder is not lost: it is in the store, in `heddle sessions`, and in
+its workspace's account; it is simply not a node of this tree, because the tree is a view of the
+conventions' structure rather than a list of every conversation.
+
 **A new root is still self-healing.** A run in a folder with no registered root above it registers
 that folder as a root, so the existing bootstrap property survives: the record is derived from what
 exists rather than maintained by hand.
@@ -84,8 +94,8 @@ has a session — the session's id, turn count and running flag.
 | kind | What it is | How it is recognised |
 |---|---|---|
 | `workspace` | a registered root | present in `workspaces.json` |
-| `type` | a type folder | the name matches `^_[a-z0-9]+(_[a-z0-9]+)*_$` |
-| `instance` | an instance inside a type folder | its parent is a `type`, and the name matches `^[a-z0-9]+(-[a-z0-9]+){1,3}$` |
+| `type` | a type folder, and a **boundary** | the name matches `^_[a-z0-9]+(_[a-z0-9]+)*_$` |
+| `instance` | an instance inside a type folder — **the only kind that carries a session** | its parent is a `type`, and the name matches `^[a-z0-9]+(-[a-z0-9]+){1,3}$` |
 | `folder` | a plain content folder | anything else that carries an `INDEX.md` |
 | `generated` | a folder a tool writes | named by the caller, exactly as the convention linter's `--generated` names it |
 
@@ -193,7 +203,8 @@ creates it.
 ## 7. What judges it
 
 [`_verifiers_/70-workspaces-sessions/`](_verifiers_/70-workspaces-sessions/INDEX.md) owns the claim,
-per the owner's choice on 2026-10-11. Three of its checks change and thirteen are added:
+per the owner's choice on 2026-10-11. Three of its checks changed and thirteen are added, for twenty
+in the part:
 
 - **Changed.** *a session in a subdirectory is not a member of its parent workspace* asserted the
   equality rule, which the owner reversed, so it now asserts containment and says why. *a session can
@@ -204,18 +215,23 @@ per the owner's choice on 2026-10-11. Three of its checks change and thirteen ar
   the same folder twice returns the same session; `--new` moves the folder's current session and
   keeps the old one readable; the tree lists one level; a type and its badge; an instance and its
   label; a type inside an instance; a plain container folder; plumbing hidden and generated named;
-  the folder's name is the session's label rather than its first prompt; an empty type folder.
+  **only an instance carries a session, and nested plain folders do not**; the folder's name is the
+  session's label rather than its first prompt; an empty type folder.
 
-Each added check reports **unjudged** (`3`) until the mechanism exists, which is the honest verdict
-for a claim whose subject is not built. The part's verdict is therefore `3` — never `0` — until the
-work lands, and `ULTIMATE_GOAL.md`'s "every check passes" stops being true until then. That is
-intended: the owner asked for the checks first.
+**Built, 2026-10-11, in the session that wrote this document.** The mechanism landed with the design:
+`heddle tree`, `heddle workspace add`, `--new`, the folder-bound session, the `/api/tree` and
+`/api/folders/session` routes, and the left column itself. Part 7 reports `0` with twenty checks and
+the other eleven verifiers stayed green; the rendering was read back from a real browser against a
+fixture shaped like the conventions repository, rather than assumed from the code.
 
 ## 8. What this document does not decide
 
 - The visual design of the icons, beyond "one per kind, 16px, currentColor".
-- Whether the tree replaces the flat session list or sits beside it. The tree is the left column;
-  where a flat, searchable list lives is a later decision.
+- Where a flat, searchable list lives. The tree is the left column, and the sessions that are not on an
+  instance — history, and a conversation started outside the conventions' structure — are reached
+  through `heddle sessions`, `heddle transcript <id>` and the `/api/sessions` route. The page carries
+  them in a collapsed **All sessions** disclosure under the tree so nothing vanishes from the UI; a
+  search over them is still a later decision.
 - How a browser check would judge the rendered tree. The roadmap's "a browser check" is still open,
   and every check here judges the derivation, which is where the mechanism lives.
 - Renaming, deleting and reordering roots and folders; today a root can be added and sessions can be

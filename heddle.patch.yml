@@ -32,10 +32,15 @@
       config:
         contextWindow: 1048576
 
-    # Workspaces: the folder records sessions are grouped under.
+    # Workspaces: the target folder records, and the folder tree sessions are found in.
+    # `generated` names the folders a tool writes, so the tree marks them rather than
+    # presenting build output as content — the same declaration the conventions linter
+    # takes as `--generated dist`.
     - id: workspace
       name: ./src/workspace/service.ts
       inject: [session]
+      config:
+        generated: [dist]
 
     # The sandbox: where a file effect may land.
     - id: sandbox

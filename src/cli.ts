@@ -6,7 +6,10 @@ import { createApp } from './app.ts'
 import { boot, failedEntries, settle } from './boot.ts'
 import { runTurn } from './agent/loop.ts'
 import { describeEndpoint } from './endpoints.ts'
+import { canonicalPath } from './paths.ts'
 import { defaultSessionRoot } from './session/store.ts'
+import { tree, type TreeNode } from './session/tree.ts'
+import type { WorkspaceService } from './workspace/service.ts'
 import { printStream } from './stream/printer.ts'
 import { heddleHome } from './config/schema.ts'
 
@@ -42,6 +45,12 @@ interface Args {
   origins: boolean
   list: boolean
   json: boolean
+  /** Start a new session in the folder rather than continuing the one it already has. */
+  fresh: boolean
+  /** Folder names a tool writes, so the tree names them instead of calling them content. */
+  generated: string[]
+  /** The word after a two-part command, such as `add` in `workspace add`. */
+  subcommand?: string
   command?: string
 }
 
@@ -57,6 +66,8 @@ options:
       --sandbox-root <path>  confine file effects to this directory instead of the working one
       --turn <text>          run one agent turn and print the answer
       --resume <id>          continue an existing session rather than starting one
+      --new                  start a new session in this folder instead of continuing its own
+      --generated <name>     a folder a tool writes, so the tree names it as generated (repeatable)
       --endpoint <name>      which configured endpoint answers (default: the first)
       --model <id>           override the endpoint's model for this turn
       --system <text>        system prompt, recorded when the session is new
@@ -76,6 +87,8 @@ commands:
   commands                   list the registered commands
   sessions                   list the sessions this store holds
   workspaces                 list the workspaces and their sessions
+  workspace add <path>       register a target folder as a workspace root
+  tree [<path>]              print one level of the folder tree the left column shows
   context                    show the assembled context for a session, without calling a model
   hooks                      list the hook points this build emits
   web                        serve the Web UI on localhost
@@ -91,7 +104,7 @@ credential of its own.
 `
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { quiet: false, help: false, patch: [], list: false, json: false, stream: false, validate: false, origins: false, dryRun: false }
+  const args: Args = { quiet: false, help: false, patch: [], list: false, json: false, stream: false, validate: false, origins: false, dryRun: false, fresh: false, generated: [] }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? ''
     const next = () => argv[++index]
@@ -131,6 +144,12 @@ function parseArgs(argv: readonly string[]): Args {
         break
       case '--resume':
         args.resume = next()
+        break
+      case '--new':
+        args.fresh = true
+        break
+      case '--generated':
+        args.generated.push(next() ?? '')
         break
       case '--endpoint':
         args.endpoint = next()
@@ -207,6 +226,38 @@ function parseArgs(argv: readonly string[]): Args {
          */
         if (arg === 'transcript' || arg === 'context') args.target = next() ?? undefined
         break
+      case 'workspace': {
+        /**
+         * `workspace add <path>` is two words, and the subcommand is checked rather than assumed.
+         *
+         * A one-word `workspace` that silently did nothing would be the worst of both: a person types
+         * `heddle workspace ~/x`, sees no complaint, and believes the folder is registered.
+         */
+        args.command = 'workspace'
+        const subcommand = next() ?? ''
+        if (subcommand !== 'add' && subcommand !== 'list') {
+          throw new Error(`unknown workspace subcommand '${subcommand}'; try 'heddle workspace add <path>' or 'heddle workspace list'`)
+        }
+        args.subcommand = subcommand
+        if (subcommand === 'add') {
+          const path = next()
+          if (path === undefined || path.startsWith('-')) throw new Error('workspace add needs a path')
+          args.target = path
+        }
+        break
+      }
+      case 'tree': {
+        /**
+         * `tree [<path>]`, and the path is optional because asking for no path asks for the roots.
+         *
+         * The next token is taken only when it is not a flag: `heddle tree --json` must not read
+         * `--json` as a folder, which is the same trap the comment above records for `web --port`.
+         */
+        args.command = 'tree'
+        const candidate = argv[index + 1]
+        if (candidate !== undefined && !candidate.startsWith('-')) args.target = next()
+        break
+      }
       default:
         throw new Error(`unknown argument: ${arg}`)
     }
@@ -270,8 +321,20 @@ function printTree(ctx: RegistryView & { loader?: LoaderLike }): void {
   }
 }
 
-/** The base layer a run uses: the flag if given, else the profile beside the project. */
-function baseLayer(args: Args): { readonly base?: string; readonly patches: readonly string[]; readonly includeProjectPatch: boolean } {
+/** One level of the tree, printed the way the left column draws it: kind, name, badge, session. */
+function describeTree(node: TreeNode): string[] {
+  const lines = [`heddle: ${node.children?.length ?? 0} node(s) under ${node.path === '' ? 'the workspace level' : node.path}`]
+  const walk = (current: TreeNode, depth: number): void => {
+    const badge = current.badge === null ? '' : ` [${current.badge}]`
+    const session = current.session === null ? '' : `  session ${current.session.id} (${current.session.turns} turn(s))`
+    lines.push(`  ${'  '.repeat(depth)}${current.kind.padEnd(9)} ${current.label}${badge}${session}`)
+    for (const child of current.children ?? []) walk(child, depth + 1)
+  }
+  walk(node, 0)
+  return lines
+}
+
+/** The base layer a run uses: the flag if given, else the profile beside the project. */function baseLayer(args: Args): { readonly base?: string; readonly patches: readonly string[]; readonly includeProjectPatch: boolean } {
   /**
    * A named profile **excludes** the project's own base layer.
    *
@@ -542,25 +605,55 @@ async function runCommand(command: string, target: string | undefined, json: boo
       for (const event of app.ctx.session.events(handle)) process.stdout.write(`${JSON.stringify(event)}\n`)
       return true
     }
-    if (command === 'workspaces') {
-      const records = app.ctx.workspace.list()
+    if (command === 'workspaces' || (command === 'workspace' && args.subcommand === 'list')) {
+      const workspaces = requireWorkspace(app.ctx)
+      const records = workspaces.list()
       const all = app.ctx.session.list()
       if (json) {
         process.stdout.write(
           `${JSON.stringify(
-            records.map((record) => ({ ...record, sessions: app.ctx.workspace.sessions(record, all).map((meta) => meta.id) })),
+            records.map((record) => ({ ...record, sessions: workspaces.sessions(record, all).map((meta) => meta.id) })),
             null,
             2,
           )}\n`,
         )
       } else {
-        process.stdout.write(`heddle: ${records.length} workspace(s) in ${app.ctx.workspace.file}\n`)
+        process.stdout.write(`heddle: ${records.length} workspace(s) in ${workspaces.file}\n`)
         for (const record of records) {
-          const sessions = app.ctx.workspace.sessions(record, all)
+          const sessions = workspaces.sessions(record, all)
           process.stdout.write(`  ${record.title}  ${record.path}  ${sessions.length} session(s)\n`)
           for (const meta of sessions.slice(0, 5)) process.stdout.write(`    ${meta.id}  turns=${meta.turns}\n`)
         }
       }
+      return true
+    }
+    if (command === 'workspace') {
+      if (target === undefined) throw new Error('workspace add needs a path')
+      const { record, created } = requireWorkspace(app.ctx).add(target)
+      if (json) process.stdout.write(`${JSON.stringify({ ...record, created }, null, 2)}\n`)
+      else process.stdout.write(`heddle: ${created ? 'registered' : 'already registered'} ${record.title}  ${record.path}\n`)
+      return true
+    }
+    if (command === 'tree') {
+      const wanted = target !== undefined && target.length > 0 ? canonicalPath(target) : null
+      /**
+       * A path outside every root is refused rather than walked.
+       *
+       * The tree is a view of the folders a person registered; answering for an arbitrary directory
+       * would make `heddle tree /` a listing of the whole machine, and the Web UI's route must not be
+       * a general directory browser behind a token.
+       */
+      const workspaces = requireWorkspace(app.ctx)
+      if (wanted !== null && workspaces.owner(wanted) === undefined) {
+        throw new Error(`${wanted} is not under any workspace root; register it with 'heddle workspace add ${wanted}'`)
+      }
+      const node = tree(wanted, {
+        roots: workspaces.list().map((record) => ({ path: record.path, title: record.title })),
+        sessions: app.ctx.session.list(),
+        generated: [...workspaces.generated, ...args.generated],
+      })
+      if (json) process.stdout.write(`${JSON.stringify(node, null, 2)}\n`)
+      else process.stdout.write(`${describeTree(node).join('\n')}\n`)
       return true
     }
     if (command === 'hooks') {
@@ -650,6 +743,21 @@ function emptyArgs(args: Args): Args {
   return { ...args, command: undefined }
 }
 
+/**
+ * The workspace service, or a sentence saying the profile does not load it.
+ *
+ * `ctx.workspace` is a **proxy lookup**, so a profile that leaves the plugin out answers `undefined`
+ * rather than throwing at boot, and `undefined.list()` is a diagnosis a person has to
+ * reverse-engineer. The three workspace-facing commands are meaningless without the service, so they
+ * say which row is missing instead.
+ */
+function requireWorkspace(ctx: { workspace?: WorkspaceService }): WorkspaceService {
+  if (ctx.workspace === undefined) {
+    throw new Error('this profile does not load the workspace plugin, so it keeps no workspace records')
+  }
+  return ctx.workspace
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
@@ -726,13 +834,41 @@ async function main(): Promise<void> {
     if (endpoint === undefined) throw new Error('no endpoint is configured; write ~/.heddle/heddle.json or pass --endpoint after configuring one')
     if (!endpoints.includes(endpoint)) throw new Error(`no endpoint named '${endpoint}'; configured: ${endpoints.join(', ')}`)
 
-    const handle = app.ctx.session.start({
-      ...(args.resume !== undefined ? { resume: args.resume } : {}),
-      cwd: process.cwd(),
-      endpoint,
-      ...(args.model !== undefined ? { model: args.model } : {}),
-      title: args.turn.slice(0, 60),
-    })
+    /**
+     * A turn asks **this folder's session**, which is the whole of "one folder, one session".
+     *
+     * Measured against the old behaviour: a second `--turn` in one directory started a second
+     * session, so the folder accumulated conversations and the left column had no way to say which
+     * one a person meant. Now the folder is the identity: the first turn creates its session, later
+     * turns continue it, and `--new` is the explicit way to start another (which then becomes the
+     * folder's current one, with the old log left untouched).
+     *
+     * `--resume` still addresses a session by id from anywhere, because a person who has an id is
+     * asking about that session rather than about this folder.
+     */
+    const folder = canonicalPath(process.cwd())
+    const handle =
+      args.resume !== undefined
+        ? app.ctx.session.start({ resume: args.resume })
+        : app.ctx.session.openAt(folder, {
+            fresh: args.fresh,
+            endpoint,
+            ...(args.model !== undefined ? { model: args.model } : {}),
+            title: args.turn.slice(0, 60),
+          })
+
+    /**
+     * A session always has a workspace — **when the profile has one at all**.
+     *
+     * The folder a session is bound to registers itself when no root is above it, so the record is
+     * never something a person has to maintain, and the registration is immediate rather than waiting
+     * for the next boot's bootstrap. The service is asked for rather than assumed: a profile may
+     * leave the workspace plugin out and still run turns, and an unconditional call is what made
+     * every turn in three verifiers' own minimal profiles fail — measured, five checks at once, with
+     * the failure reading as a sandbox bug rather than as a missing service.
+     */
+    const bound = app.ctx.session.list().find((meta) => meta.id === handle.id)?.cwd ?? folder
+    app.ctx.workspace?.ensureOwner(bound)
     // The live view, started before the turn so nothing that arrives is missed.
     const printer = args.stream ? printStream(app.ctx, { session: handle.id }) : null
     const result = await runTurn(app.ctx, {
