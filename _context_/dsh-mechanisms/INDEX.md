@@ -42,6 +42,8 @@ the frontmatter every authored artifact carries.
   exchanged for a cookie, and the Host and Origin fence that runs before any secret is compared.
 - [`dsh-workspaces.md`](dsh-workspaces.md) — the workspace record, the bucket-naming rule, the
   equality that decides membership, and the session tree.
+- [`dsh-conversation-views.md`](dsh-conversation-views.md) — the view ring over one session, and the
+  Trajectory ledger as a pure projection of the session window.
 
 ## The check that keeps the context reading honest
 
