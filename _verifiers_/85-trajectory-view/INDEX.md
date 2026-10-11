@@ -40,6 +40,9 @@ retried step, and `assistant/completed` holds the settled message.
 | 5 | a record opens to its full input and output | the point of the ledger is the detail the chat view collapses |
 | 6 | the view opens at the **tail**, and following stops when a reader scrolls up | otherwise streaming yanks the reader away from what they are reading |
 | 7 | both views read one session through one route | two fetches that disagree is how a projection drifts from its source |
+| 8 | a **timeline** above the ledger projects the session's recorded span, one pickable segment per turn, and picking one takes the ledger to that turn | a long ledger is otherwise navigated by scrolling and hoping |
+| 9 | a record with no timing contributes no timeline span, and a running record's span is marked running | a bar drawn from a guessed start is a bar that lies |
+| 10 | every row carries its kind as an annotation, and a row is one line that opens on click | a kind that is only a word in a long line cannot be scanned for |
 
 ## How it is judged
 
@@ -64,8 +67,11 @@ is the `3` case.
 - **The virtualised window.** DSH mounts only the visible rows and loads earlier pages on demand. Heddle's
   ledgers are small enough that this is not yet a claim, and judging it would freeze an implementation detail
   rather than a behaviour. It becomes one when a session is long enough to need it.
-- **The timing overview's gestures** — drag-to-focus, wheel-to-zoom, right-button-to-clear. A gesture is a
-  convenience over the ledger; the ledger is what has to be right first.
+- **The timing overview's gestures** — drag-to-focus, wheel-to-zoom, right-button-to-clear. DSH has them and
+  heddle's band does not: a click per turn is the navigation, and gestures are a convenience over a band that
+  has to be right first.
+- **Selecting a range of records.** DSH lets an interval focus the ledger on every record active inside it.
+  Heddle's band picks a turn, which is the granularity a session this size needs.
 - **Attachment inspection.** Heddle records no images or files today, so there is nothing to judge.
 
 ## Read next

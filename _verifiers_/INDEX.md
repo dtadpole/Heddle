@@ -1,6 +1,6 @@
 ---
 title: Verifiers
-version: 2.3.0
+version: 2.4.0
 description: The ultimate verifications — one folder each, named after the capability the owner named, every one keeping the project's 0/1/3 verdict contract.
 grounded_in:
   - source: owner statement in the dsh session, 2026-10-11, listing the ten verifiers
@@ -27,22 +27,22 @@ deliberately does not.
 | 8 | [`75-permission-sandbox/`](75-permission-sandbox/INDEX.md) | a permission sandbox distinguishes read-only, workspace write and full access |
 | 9 | [`80-web-ui/`](80-web-ui/INDEX.md) | a Web UI on localhost, on a documented default port, carrying the live stream |
 | 10 | [`90-web-ui-token/`](90-web-ui-token/INDEX.md) | the Web UI and its event stream are protected by a token |
-| 11 | [`95-web-daemon/`](95-web-daemon/INDEX.md) | a launchd agent keeps the Web UI running at the documented port |
+| 11 | [`85-trajectory-view/`](85-trajectory-view/INDEX.md) | one session read two ways: the conversation, and the ledger of what the harness did |
+| 12 | [`95-web-daemon/`](95-web-daemon/INDEX.md) | a launchd agent keeps the Web UI running at the documented port |
 
 ## Where each stands, 2026-10-11
 
-**88 checks, 0 failures, 14 unjudged**, measured by running every verifier. The fourteen are part 7's
-tree checks, written ahead of the mechanism they judge because the owner asked for the checks first, and
-that is why part 7 reads `3` rather than `0` — an unjudged claim is not a passing one. The checks
-otherwise allowed to report unjudged are part 1's real-backend probe, when the machine has no reachable
-endpoint configured, and part 12's daemon check, when no agent is installed.
+**91 checks, 0 failures, 0 unjudged**, measured by running every verifier after `npm run build` on
+2026-10-11. Nothing is left unjudged: the fourteen checks that were waiting on part 7's mechanism —
+written ahead of it because the owner asked for the checks first — now pass, and the two that are
+allowed to report unjudged (part 1's real-backend probe and part 12's daemon check) both found their
+subject on this machine.
 
-Two things about that measurement are worth stating. It was taken while **another session was working in
-the same checkout**, so the counts moved underneath it: part 3 has since grown to eight checks and part 10 to
-ten since the previous run, and `85-trajectory-view` appeared as a folder with an entry point and no
-check file yet — it therefore has no row in the table below and nothing in it is judged, which the walk
-over `_verifiers_/*/verify.sh` reports as a missing entry point rather than as a pass. And the numbers
-are counts of checks, not of parts.
+This measurement was taken while **another session was working in the same checkout**, so the counts
+have moved under it twice: part 3 grew from five checks to eight, part 10 from nine to ten, and
+`85-trajectory-view` arrived as a new part with two checks of its own. The numbers are counts of
+checks rather than of parts, and the rows below are the current shape rather than a diff against the
+previous measurement.
 
 | # | Checks | Verdict |
 |---|---|---|
@@ -53,11 +53,12 @@ are counts of checks, not of parts.
 | 4 | 6 | `0` — allow list, an out-of-repository tool, a replacement, a malformed spec refused |
 | 5 | 6 | `0` — multi-round tasks, results fed back, the limit reported, resume, a failed tool |
 | 6 | 6 | `0` — the hook points, retarget, refusal, replacement, a refusal that stops, a broken hook named |
-| 7 | 19 | `3` — five pass; fourteen unjudged, judging the folder-bound tree: containment, the nearest root, one session per folder, classification, badges, laziness |
+| 7 | 20 | `0` — the transcript and resume; containment, the segment-wise trap and the nearest root; one session per folder and `--new`; the tree's one level, kinds, badges, laziness and plumbing; and the boundary that only an instance carries a session |
 | 8 | 5 | `0` — the three modes, the sibling prefix, and the temp directory only when admitted |
 | 9 | 4 | `0` — port, page, API, and the live stream |
 | 10 | 10 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode, a stale token's recovery page, session history over the API and in a browser |
-| 11 | 3 | `0` — a complete definition, the port answering with the service's name, and a kill it recovers from |
+| 11 | 2 | `0` — the ledger's fields and rules over the API, and a browser drawing both views with a timeline |
+| 12 | 3 | `0` — a complete definition, the port answering with the service's name, and a kill it recovers from |
 
 ## The verdict contract
 
