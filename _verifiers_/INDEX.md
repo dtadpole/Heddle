@@ -34,7 +34,7 @@ deliberately does not.
 
 ## Where each stands, 2026-10-11
 
-**110 checks, 0 failures, 0 unjudged**, measured by running every verifier after `npm run build` on
+**112 checks, 0 failures, 0 unjudged**, measured by running every verifier after `npm run build` on
 2026-10-11. Nothing is left unjudged: the fourteen checks that were waiting on part 7's mechanism —
 written ahead of it because the owner asked for the checks first — now pass, and the two that are
 allowed to report unjudged (part 1's real-backend probe and the daemon check) both found their subject
