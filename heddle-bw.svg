@@ -1,35 +1,35 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="560" height="560" viewBox="0 0 560 560" role="img" aria-labelledby="title desc">
   <title id="title">Heddle woven HD icon, black and white</title>
-  <desc id="desc">Black H and D on a transparent background with uniform 14-unit separation cuts. The D has a constant 72-unit ribbon width and a centered horizontal cut.</desc>
+  <desc id="desc">Black H and D on a transparent background with uniform 16-unit separation cuts. The D has a constant 72-unit ribbon width and a centered horizontal cut.</desc>
   <metadata>
     Color: black #000000. Background and cuts: transparent.
     D outer radius: 152; inner radius: 80; center: (312,216).
     H vertical stroke width: 80; horizontal stroke width: 64 (y=184..248).
-    D ribbon width: 72 throughout. All cuts: 14 units. Center cut: y=209..223.
+    D ribbon width: 72 throughout. All cuts: 16 units. Center cut: y=208..224.
     D inner bottom: y=296, aligned to the lower edge of the shared H cut.
-    H-to-D vertical separation: x=280..294. Crossbar-to-stem separation: x=186..200.
+    H-to-D vertical separation: x=280..296. Crossbar-to-stem separation: x=184..200.
     All visible geometry is vertically symmetric about y=216 (canvas y=280).
     Coordinates above precede the common 64-unit vertical translation.
   </metadata>
   <defs>
     <mask id="left-cuts" maskUnits="userSpaceOnUse" x="0" y="0" width="560" height="432" style="mask-type:luminance">
       <rect width="560" height="432" fill="white"/>
-      <path d="M56 170h96v14H56z M56 248h96v14H56z" fill="black"/>
+      <path d="M56 168h96v16H56z M56 248h96v16H56z" fill="black"/>
     </mask>
     <mask id="shared-cuts" maskUnits="userSpaceOnUse" x="0" y="0" width="560" height="432" style="mask-type:luminance">
       <rect width="560" height="432" fill="white"/>
-      <path d="M192 136h96v14h-96z M192 282h96v14h-96z" fill="black"/>
+      <path d="M192 136h96v16h-96z M192 280h96v16h-96z" fill="black"/>
     </mask>
     <mask id="d-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="560" height="432" style="mask-type:luminance">
       <rect width="560" height="432" fill="white"/>
-      <rect x="368" y="209" width="112" height="14" fill="black"/>
+      <rect x="368" y="208" width="112" height="16" fill="black"/>
     </mask>
   </defs>
   <g transform="translate(0 64)">
     <rect x="64" y="56" width="80" height="320" rx="20" fill="#000000" mask="url(#left-cuts)"/>
     <rect x="200" y="56" width="80" height="320" rx="20" fill="#000000" mask="url(#shared-cuts)"/>
-    <rect x="64" y="184" width="122" height="64" fill="#000000"/>
-    <path d="M294 64H312A152 152 0 0 1 312 368H294V296H312A80 80 0 0 0 312 136H294Z"
+    <rect x="64" y="184" width="120" height="64" fill="#000000"/>
+    <path d="M296 64H312A152 152 0 0 1 312 368H296V296H312A80 80 0 0 0 312 136H296Z"
           fill="#000000" mask="url(#d-cut)"/>
   </g>
 </svg>
