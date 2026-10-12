@@ -109,7 +109,8 @@ The owner's ruling of 2026-10-11, and it settles what the rest of this document 
 
 | The fact | Where it lives | Tracked? |
 |---|---|---|
-| the **log** — every event, in order | `~/.heddle/sessions/<workspace>/<session-id>.jsonl` | no, it is machine state |
+| the **log** — every event, in order | `~/.heddle/sessions/<workspace>/<session-id>.jsonl` (compressed as `<session-id>.v2.jsonl.zstd`, which is what the format writes) | no, it is machine state |
+| the log's **metadata** | beside it, as `<session-id>.json` | no, a cache of the definition and the counters |
 | the **session definition** — the log it references, how to compose its context, which tools it may use, its endpoint and preset | `<target folder>/<…>/<instance>/_sessions_/<session>/` | **yes, committed to GitHub** |
 | the **label** a person reads | the session's own `_sessions_` instance, with `meta.json` as the local cache | yes, in the instance |
 
@@ -121,6 +122,14 @@ with no tracked definition could not be reviewed, diffed or pointed at by a fold
 `_sessions_` is a registered type in the reflection vocabulary as of the same day, so the instance follows
 the conventions like any other: a kebab-case instance folder, its own `INDEX.md`, and the metadata the
 harness reads beside it. Two things it settles and two it leaves open:
+
+**Implemented 2026-10-11.** The store files a new session under the workspace it belongs to —
+`<root>/<workspace>/<id>.v2.jsonl.zstd` with `<id>.json` beside it — where `<workspace>` is the folder's
+path with its separators turned into dashes and wrapped in `--…--`, DSH's own rule, so a person opening the
+store sees the folders they worked in. Two layouts are read and only one is written: a session created
+before this keeps its own directory and its `meta.json`, because a session keeps the shape it was born
+with. The key is **lossy on purpose** — two paths can share one — which is why it is a filing decision and
+never an identity: the session id is the identity and the canonical `cwd` is recorded beside it.
 
 - **Settled: the tree and the store now have one anchor each, and they meet at the instance.** The tree
   finds a session because `<instance>/_sessions_/<session>/` exists; the store finds one because its log

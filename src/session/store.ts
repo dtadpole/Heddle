@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, truncateSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { zstdCompressSync } from 'node:zlib'
 
 import type { Chunk, ContentPart, Message } from '../llm/types.ts'
+import { workspaceKey } from './layout.ts'
 import { decodeTranscript, encodeFrame } from './transcript.ts'
 
 /**
@@ -58,9 +59,12 @@ export interface SessionEvent {
 /** What a caller gets back when it opens a session. */
 export interface SessionHandle {
   readonly id: SessionId
+  /** The folder this session's files are in: its workspace folder, or its own directory in the old layout. */
   readonly dir: string
   /** Where the transcript is; a caller may cite it. */
   readonly transcript: string
+  /** Where the metadata is: `<id>.json` beside the log, or `meta.json` inside the old session directory. */
+  readonly meta: string
 }
 
 /** A message as it is recorded, which is the shape a request needs too. */
@@ -99,9 +103,37 @@ export function defaultSessionRoot(env: NodeJS.ProcessEnv = process.env): string
 export const TRANSCRIPT_NAME = 'session.v2.jsonl.zstd'
 export const LEGACY_TRANSCRIPT_NAME = 'session.jsonl'
 
+/**
+ * Whether a transcript path is one of the **zstd-framed** ones.
+ *
+ * Asked of the suffix rather than of the whole legacy file name, because the layout changed the name: a log
+ * is now `<session-id>.v2.jsonl.zstd` inside its workspace folder, and a test for `session.v2.jsonl.zstd`
+ * silently answered "plain JSONL" for every session written since — which, after a repair, would have
+ * appended lines to a framed file.
+ */
+export function isFramed(path: string): boolean {
+  return path.endsWith('.v2.jsonl.zstd')
+}
+
 /** Whether this build can compress. Node gained zstd in 22.15; older runtimes write plain JSONL. */
 export function canCompress(): boolean {
   return typeof zstdCompressSync === 'function'
+}
+
+/**
+ * The log's file name for one session id, in the **workspace folder** layout.
+ *
+ * The id is the file's name, so a log can be cited, copied or deleted without a directory of its own; the
+ * format's suffix is the one the store already used, which is why a compressed log reads
+ * `<id>.v2.jsonl.zstd` and an uncompressed one reads exactly `<id>.jsonl`.
+ */
+export function logName(id: string): string {
+  return `${id}${canCompress() ? '.v2.jsonl.zstd' : '.jsonl'}`
+}
+
+/** The metadata's file name for one session id, beside its log in the workspace folder. */
+export function metaName(id: string): string {
+  return `${id}.json`
 }
 
 /** The transcript a session directory holds, preferring the current format. */
@@ -315,19 +347,25 @@ export class SessionStore {
     this.onEvent = options.onEvent
   }
 
-  /** Create a session directory and its metadata. */
+  /**
+   * Create a session, filed under the workspace it belongs to.
+   *
+   * The owner's layout of 2026-10-11: one folder per workspace and one file per session inside it, so the
+   * store reads as a list of the folders a person worked in rather than as a list of opaque directories.
+   */
   create(options: { readonly cwd?: string; readonly endpoint?: string; readonly model?: string; readonly title?: string } = {}): SessionHandle {
     const id = `session-${randomUUID()}`
-    const dir = join(this.root, id)
+    const cwd = options.cwd ?? process.cwd()
+    const dir = join(this.root, workspaceKey(cwd))
     mkdirSync(dir, { recursive: true })
-    const handle: SessionHandle = { id, dir, transcript: transcriptIn(dir) }
+    const handle: SessionHandle = { id, dir, transcript: join(dir, logName(id)), meta: join(dir, metaName(id)) }
     writeFileSync(
-      join(dir, 'meta.json'),
+      handle.meta,
       `${JSON.stringify(
         {
           id,
           created: new Date().toISOString(),
-          cwd: options.cwd ?? process.cwd(),
+          cwd,
           ...(options.endpoint !== undefined ? { endpoint: options.endpoint } : {}),
           ...(options.model !== undefined ? { model: options.model } : {}),
           ...(options.title !== undefined ? { title: options.title } : {}),
@@ -338,7 +376,7 @@ export class SessionStore {
       )}\n`,
     )
     appendFileSync(handle.transcript, '')
-    this.append(handle, { type: 'session/created', cwd: options.cwd ?? process.cwd() })
+    this.append(handle, { type: 'session/created', cwd })
     return handle
   }
 
@@ -358,26 +396,53 @@ export class SessionStore {
       ...(trimmed.length > 0 ? { title: trimmed } : {}),
     }
     if (trimmed.length === 0) delete (next as { title?: string }).title
-    writeFileSync(join(this.root, id, 'meta.json'), `${JSON.stringify(next, null, 2)}\n`)
+    const meta = this.metaFile(id)
+    if (meta === null) return null
+    writeFileSync(meta, `${JSON.stringify(next, null, 2)}\n`)
     return next
+  }
+
+  /**
+   * Where a session's metadata is, in whichever layout it was written in.
+   *
+   * Two layouts are read and only one is written: a session created before the workspace folders existed
+   * lives in `<root>/<id>/meta.json` and keeps its own directory, because a session keeps the shape it was
+   * born with — the same rule the transcript format already follows. A new one lives at
+   * `<root>/<workspace>/<id>.json`.
+   */
+  private metaFile(id: SessionId): string | null {
+    const legacy = join(this.root, id, 'meta.json')
+    if (existsSync(legacy)) return legacy
+    try {
+      for (const name of readdirSync(this.root)) {
+        const candidate = join(this.root, name, metaName(id))
+        if (existsSync(candidate)) return candidate
+      }
+    } catch {
+      return null
+    }
+    return null
   }
 
   /** Open an existing session by id, or by the newest one when `id` is omitted. */
   open(id?: SessionId): SessionHandle | null {
     if (id !== undefined) {
-      const dir = join(this.root, id)
-      try {
-        readFileSync(join(dir, 'meta.json'), 'utf8')
-      } catch {
-        return null
-      }
-      return { id, dir, transcript: transcriptIn(dir) }
+      const meta = this.metaFile(id)
+      if (meta === null) return null
+      const dir = dirname(meta)
+      const transcript = existsSync(join(dir, logName(id))) ? join(dir, logName(id)) : transcriptIn(dir)
+      return { id, dir, transcript, meta }
     }
     const newest = this.list()[0]
     return newest === undefined ? null : this.open(newest.id)
   }
 
-  /** Sessions newest first, from the directory names and their metadata. */
+  /**
+   * Sessions newest first, from both layouts.
+   *
+   * The walk reads a session's own directory (the old shape) and every workspace folder's `<id>.json` (the
+   * current one), so a store that holds both answers with all of its sessions and none of them twice.
+   */
   list(): readonly SessionMeta[] {
     let names: string[]
     try {
@@ -385,16 +450,41 @@ export class SessionStore {
     } catch {
       return []
     }
-    const metas: SessionMeta[] = []
-    for (const name of names) {
-      if (!name.startsWith('session-')) continue
+    const metas = new Map<string, SessionMeta>()
+    const remember = (text: string): void => {
       try {
-        metas.push(JSON.parse(readFileSync(join(this.root, name, 'meta.json'), 'utf8')) as SessionMeta)
+        const meta = JSON.parse(text) as SessionMeta
+        if (typeof meta?.id === 'string' && !metas.has(meta.id)) metas.set(meta.id, meta)
+      } catch {
+        // A file that is not metadata is not a reason to lose the sessions that are.
+      }
+    }
+    for (const name of names) {
+      const at = join(this.root, name)
+      if (name.startsWith('session-')) {
+        try {
+          remember(readFileSync(join(at, 'meta.json'), 'utf8'))
+        } catch {
+          // A session directory without readable metadata is skipped, as it always was.
+        }
+        continue
+      }
+      let entries: string[]
+      try {
+        entries = readdirSync(at)
       } catch {
         continue
       }
+      for (const entry of entries) {
+        if (!entry.startsWith('session-') || !entry.endsWith('.json')) continue
+        try {
+          remember(readFileSync(join(at, entry), 'utf8'))
+        } catch {
+          continue
+        }
+      }
     }
-    return metas.sort((left, right) => (left.created < right.created ? 1 : -1))
+    return [...metas.values()].sort((left, right) => (left.created < right.created ? 1 : -1))
   }
 
   /**
@@ -491,8 +581,7 @@ export class SessionStore {
         throw new Error(`${handle.transcript}:${index + 1} is not valid JSON — ${(error as Error).message}`)
       }
     }
-    const framed =
-      decoded.format === 'zstd-frames' || (dropped > 0 && handle.transcript.endsWith(TRANSCRIPT_NAME)) || (decoded.lines.length === 0 && handle.transcript.endsWith(TRANSCRIPT_NAME))
+    const framed = decoded.format === 'zstd-frames' || ((dropped > 0 || decoded.lines.length === 0) && isFramed(handle.transcript))
     const entry = { events, framed }
     this.loaded.set(handle.id, entry)
     if (dropped > 0) this.append(handle, { type: 'transcript/repaired', droppedBytes: dropped })
@@ -699,7 +788,7 @@ export class SessionStore {
   }
 
   private bumpTurns(handle: SessionHandle): void {
-    const path = join(handle.dir, 'meta.json')
+    const path = handle.meta
     try {
       const meta = JSON.parse(readFileSync(path, 'utf8')) as SessionMeta
       const updated: SessionMeta = { ...meta, turns: (meta.turns ?? 0) + 1 }

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
@@ -351,11 +351,37 @@ export function tempDir(prefix = 'heddle-check-') {
 
 /** Every session directory under a store root. */
 export function sessionsUnder(root) {
+  /**
+   * Every session id the store holds, in **either** layout.
+   *
+   * Two layouts exist because the store changed where it files a log: a session's own directory (the old
+   * shape) and a folder per workspace with one file per session (the current one, the owner's ruling of
+   * 2026-10-11). A check asks the root for sessions and gets ids, rather than getting whatever the current
+   * layout happens to name its directories.
+   */
+  const ids = new Set()
+  let names
   try {
-    return readdirSync(root).filter((name) => name.startsWith('session-'))
+    names = readdirSync(root)
   } catch {
     return []
   }
+  for (const name of names) {
+    if (name.startsWith('session-')) {
+      ids.add(name)
+      continue
+    }
+    let entries
+    try {
+      entries = readdirSync(join(root, name))
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (entry.startsWith('session-') && entry.endsWith('.json')) ids.add(entry.slice(0, -'.json'.length))
+    }
+  }
+  return [...ids]
 }
 
 /**
@@ -367,9 +393,27 @@ export function sessionsUnder(root) {
  * naming a format it does not own.
  */
 export function transcriptFile(dir) {
+  /**
+   * The log a session actually has, asked for as `<root>/<id>` whatever layout the store used.
+   *
+   * The old layout keeps `session.v2.jsonl.zstd` or `session.jsonl` **inside** the session's directory; the
+   * current one keeps `<id>.v2.jsonl.zstd` or `<id>.jsonl` in the session's **workspace folder**. A check
+   * that names a session by root and id therefore does not have to know which of the two it is looking at —
+   * which is the point, because the layout is the store's business and not the check's.
+   */
   for (const name of ['session.v2.jsonl.zstd', 'session.jsonl']) {
     const candidate = join(dir, name)
     if (existsSync(candidate)) return candidate
+  }
+  const id = basename(dir)
+  if (id.startsWith('session-')) {
+    const root = dirname(dir)
+    for (const folder of [root, ...readdirSync(root).map((name) => join(root, name))]) {
+      for (const name of [`${id}.v2.jsonl.zstd`, `${id}.jsonl`]) {
+        const candidate = join(folder, name)
+        if (existsSync(candidate)) return candidate
+      }
+    }
   }
   return join(dir, 'session.v2.jsonl.zstd')
 }

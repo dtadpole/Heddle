@@ -1486,3 +1486,51 @@ test('New session here, on an instance row, starts a session and writes its defi
     removeDir(h.work)
   }
 })
+
+test('a new session is filed under its workspace, and an old one keeps the shape it was born with', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
+  const h = harness('layout')
+  try {
+    await conventionsFixture(h)
+    const created = await runCli(adminArgs(h, ['session', 'new', h.work, '--json']), { env: h.env, cwd: h.work })
+    assert.equal(created.code, 0, `the session was created\n${created.stdout}${created.stderr}`)
+    const body = parseJson(created.stdout)
+
+    /**
+     * The owner's layout of 2026-10-11: `~/.heddle/sessions/<workspace>/<session-id>.jsonl`. The workspace
+     * folder is the target folder's path with its separators turned into dashes and wrapped in `--…--`, so
+     * a person opening the store sees the folders they worked in rather than a wall of opaque ids.
+     */
+    const workspaceFolder = join(h.home, 'sessions', `--${h.work.split('/').filter(Boolean).join('-')}--`)
+    assert.ok(
+      String(body.log).startsWith(`${workspaceFolder}/`),
+      `the log is filed under its workspace\nsaw: ${body.log}\nwanted a path under: ${workspaceFolder}`,
+    )
+    assert.match(String(body.log), /\.v2\.jsonl\.zstd$|\.jsonl$/, 'and named for the session, with the format suffix the store writes')
+    assert.ok(existsSync(`${workspaceFolder}/${body.session}.json`), 'the metadata sits beside it, named for the session')
+    assert.ok(existsSync(String(body.log)), 'and the log itself exists')
+
+    // Both layouts are read: a session written the old way is still a session.
+    const legacy = join(h.home, 'sessions', 'session-00000000-0000-4000-8000-000000000001')
+    mkdirSync(legacy, { recursive: true })
+    writeFileSync(
+      join(legacy, 'meta.json'),
+      `${JSON.stringify({ id: 'session-00000000-0000-4000-8000-000000000001', created: '2026-01-01T00:00:00.000Z', cwd: h.work, turns: 0 }, null, 2)}\n`,
+    )
+    writeFileSync(join(legacy, 'session.jsonl'), `${JSON.stringify({ seq: 0, at: '2026-01-01T00:00:00.000Z', type: 'session/created', cwd: h.work })}\n`)
+
+    const listed = await sessionsOf(h)
+    assert.ok(
+      listed.some((meta) => meta.id === 'session-00000000-0000-4000-8000-000000000001'),
+      `a session in the old layout is still listed\nsaw: ${listed.map((meta) => meta.id).join(', ')}`,
+    )
+    assert.ok(listed.some((meta) => meta.id === body.session), 'alongside the new one')
+    const read = await runCli(adminArgs(h, ['transcript', 'session-00000000-0000-4000-8000-000000000001']), { env: h.env, cwd: h.work })
+    assert.equal(read.code, 0, `and it still reads\n${read.stdout}${read.stderr}`)
+    assert.match(read.stdout, /session\/created/, 'with its own log')
+  } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+  }
+})

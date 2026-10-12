@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 
-import { LEGACY_TRANSCRIPT_NAME, SessionStore, TRANSCRIPT_NAME, transcriptIn } from '../src/session/store.ts'
+import { isFramed, LEGACY_TRANSCRIPT_NAME, SessionStore, TRANSCRIPT_NAME, transcriptIn } from '../src/session/store.ts'
 import { decodeTranscript, isCompressed } from '../src/session/transcript.ts'
 
 /**
@@ -32,7 +32,13 @@ test('a new session writes versioned frames, and reads them back', () => {
   const handle = sessions.create({ cwd: scratch })
   sessions.message(handle, { role: 'user', content: [{ type: 'text', text: 'hello' }] })
 
-  assert.ok(handle.transcript.endsWith(TRANSCRIPT_NAME), `a new session uses the versioned name (${handle.transcript})`)
+  /**
+   * The **suffix** rather than the legacy full name: since 2026-10-11 a log is `<session-id>.v2.jsonl.zstd`
+   * inside its workspace folder, so a test for `session.v2.jsonl.zstd` would fail on a file that is exactly
+   * the format it means to check. What the claim is about is the version marker and the framing.
+   */
+  assert.ok(handle.transcript.endsWith('.v2.jsonl.zstd'), `a new session uses the versioned name (${handle.transcript})`)
+  assert.ok(isFramed(handle.transcript), 'and the store knows it is a framed log by its suffix')
   const bytes = readFileSync(handle.transcript)
   assert.ok(isCompressed(bytes), 'the file is a sequence of zstd frames')
   const decoded = decodeTranscript(bytes)

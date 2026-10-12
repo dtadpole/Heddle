@@ -10,7 +10,7 @@ grounded_in:
 
 The session store and its service — an append-only event log per session.
 
-Three things live here and they are deliberately together, because each is a property of the log. The
+Four things live here and they are deliberately together, because each is a property of the log. The
 **log** is append-only: every event a run produces, in order, on disk before the thing
 it describes happens. The **surface** is the positional view of that log which a model request is
 derived from — only message-producing events take a position — a `message` a person or a
@@ -22,7 +22,11 @@ what the model sees while `heddle transcript` still shows everything that happen
 ([`tree.ts`](tree.ts)) is what a store of sessions looks like as folders: it classifies each folder by
 the conventions' own rules — a type folder, an instance of one, a plain container, a generated folder —
 and answers one level at a time, with a session row only where the type-plus-instance pattern matches.
-[`../../SESSION_TREE.md`](../../SESSION_TREE.md) states that model and the owner's decisions behind it.
+[`../../SESSION_TREE.md`](../../SESSION_TREE.md) states that model and the owner's decisions behind it. The
+fourth is where a log is **filed**: [`layout.ts`](layout.ts) turns a working directory into the workspace
+folder a session's log lives under — `~/.heddle/sessions/<workspace>/<session-id>.v2.jsonl.zstd`, the
+owner's ruling of 2026-10-11 — and the store reads that layout and the one before it, writing only the new
+one, because a session keeps the shape it was born with.
 
 Everything built on top of it — the meter, the pruner, the compaction, `heddle context` — reads
 `deriveMessages()` rather than filtering the log, and [`../context/INDEX.md`](../context/INDEX.md) is
