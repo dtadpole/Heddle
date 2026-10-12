@@ -3,7 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>heddle</title>
+<title>Heddle</title>
+<!--
+  The tab's icon, in DSH's own shape: an SVG, declared as one. DSH ships a **pair** of these, chosen by
+  `prefers-color-scheme`, and this project has the files for only one of them — `heddle.svg` is the grey-and-orange
+  mark, which reads on a light or a dark tab bar, while `heddle-bw.svg` is all black and would vanish on a dark
+  one. A link to an invisible icon is worse than no link, so the pair waits for a light-on-dark variant.
+-->
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
   :root { color-scheme: light dark; --line: color-mix(in oklab, currentColor 20%, transparent); }
   * { box-sizing: border-box; }
@@ -422,12 +429,33 @@
    * document, so a keyword is coloured the same whether it is in a file or in a document — and the rules for the
    * shared names live with the markdown rules above, on the `.markdown` class both panes carry.
    */
+  /**
+   * The brand, and the one place in this page that chooses a face rather than inheriting the UI's.
+   *
+   * A serif, because the name is a word rather than a control and the page's own font is the UI's; a stack rather
+   * than a download, because this server answers on loopback and a webfont would either be a new asset to ship or
+   * a request to the network. Every family named is one a reader already has: Palatino and Iowan on macOS, Georgia
+   * everywhere else.
+   */
+  #brand { display: flex; align-items: center; gap: .55rem; height: 60px; padding: 0 .75rem; border-bottom: 1px solid var(--line); margin-bottom: .4rem; }
+  #brand-mark { width: 24px; height: 24px; display: block; }
+  #brand-name { font-family: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif; font-size: 1.06rem; font-weight: 600; letter-spacing: .01em; }
   .untwisty { font: inherit; padding: 0 .3rem; opacity: .55; }
   .untwisty:hover { opacity: 1; }
 </style>
 </head>
 <body>
 <aside>
+  <!--
+    The brand row, above the workspaces — DSH's `logoRow`, and its measurements are why this is shaped the way it
+    is: a 60-pixel row with the mark inset 12 pixels from the left, sitting above the nav rather than inside it.
+    DSH draws its wordmark as part of the logo; here it is text, in a stack chosen for it, so the name is readable
+    and selectable rather than baked into a picture.
+  -->
+  <header id="brand">
+    <img id="brand-mark" src="/favicon.svg" alt="" width="24" height="24">
+    <span id="brand-name">Heddle</span>
+  </header>
   <h1>Workspaces <button id="add-workspace" type="button" title="register a folder as a workspace root" aria-label="register a folder">+</button></h1>
   <ul id="tree" role="tree" aria-label="workspace folders"></ul>
   <p id="tree-note" class="meta" hidden></p>
@@ -1298,6 +1326,82 @@ async function showFile(node) {
 }
 
 /**
+ * Follow a link inside a document, **in the panel**, rather than navigating the page away from it.
+ *
+ * Measured: a markdown link to a sibling file asked the browser for `/DEPLOY.md`, which answered `404`, so the reader
+ * lost the document they were reading to reach a blank page. The server marks a link that names a file with
+ * `data-heddle-path`, and a plain click on one opens that file here. A modified click is left alone, so
+ * open-in-new-tab still does what it says.
+ */
+fileBody.addEventListener('click', async (clickEvent) => {
+  const anchor = clickEvent.target instanceof Element ? clickEvent.target.closest('a') : null
+  if (anchor === null) return
+  /** A remote link, or one already marked to open beside the document, is left to the browser. */
+  if (anchor.getAttribute('target') !== null) return
+  if (clickEvent.metaKey || clickEvent.ctrlKey || clickEvent.shiftKey || clickEvent.button !== 0) return
+  /**
+   * Two shapes mean "a file in this workspace": the attribute a markdown link carries, and the address a raw HTML one
+   * is given. Measured: a hand-written `<a href="README.md">` arrives only as the address, because the sanitizer
+   * answers for an attribute's **value** and cannot add one to the tag — so a handler that read only the attribute
+   * followed markdown links and navigated away on HTML ones.
+   */
+  const attribute = anchor.getAttribute('data-heddle-path')
+  const addressed = anchor.getAttribute('href') ?? ''
+  const path = attribute !== null && attribute.length > 0 ? attribute : decodeRawPath(addressed)
+  if (path === null || path.length === 0) return
+  clickEvent.preventDefault()
+  const at = (anchor.getAttribute('href') ?? '').split('#')[1] ?? ''
+  await openPath(path)
+  if (at.length > 0) scrollToHeading(at)
+  else fileBody.scrollTop = 0
+})
+
+/**
+ * The file a raw address names, or `null` when the address is not this server's raw route.
+ *
+ * The page reads the path out of the address rather than being told it, which is the only way a raw HTML link can be
+ * followed: the sanitizer decides one attribute's value and cannot add a second to the tag.
+ */
+function decodeRawPath(href) {
+  const at = href.indexOf('/api/raw?path=')
+  if (at === -1) return null
+  const encoded = href.slice(at + '/api/raw?path='.length).split('#')[0]
+  try {
+    return decodeURIComponent(encoded)
+  } catch {
+    return null
+  }
+}
+
+/** Open a file by its path, which is what a link names and what a tree row carries. */
+async function openPath(path) {
+  await showFile({ path, label: path.split('/').pop() ?? path, kind: 'file' })
+}
+
+/**
+ * Take the reader to the heading a link's `#fragment` names.
+ *
+ * The fragments are matched by their text rather than by an `id`, because the renderer does not write ids and a
+ * document written for GitHub relies on GitHub's own heading slugs. A reference that matches nothing does nothing,
+ * which is the honest outcome: a jump to the top would be a lie about where the fragment is.
+ */
+function scrollToHeading(fragment) {
+  const wanted = slug(fragment)
+  const heading = [...fileBody.querySelectorAll('h1, h2, h3, h4, h5, h6')].find((element) => slug(element.textContent ?? '') === wanted)
+  if (heading === undefined) return
+  heading.scrollIntoView({ block: 'start' })
+}
+
+/** The same shape a heading's slug takes: lowercase, punctuation dropped, spaces as dashes. */
+function slug(text) {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+}
+
+/**
  * Select a session row: show its conversation, and offer its two views.
  *
  * The prompt box keeps working because the session's **branch** — the folder its definition sits under — is
@@ -1728,8 +1832,34 @@ document.getElementById('views').addEventListener('click', (clickEvent) => {
   if (button) showView(button.dataset.view)
 })
 
+/**
+ * The `+` opens the **platform's** folder chooser and mounts what it returns.
+ *
+ * The dialog is opened by the server, not by this page, and that is not a shortcut: a page runs
+ * sandboxed, so a file input yields relative paths and `showDirectoryPicker` yields an opaque handle —
+ * neither carries the absolute path a mount needs. The server runs on the machine the folder is on, so
+ * it can ask the platform and hand the answer back.
+ *
+ * A cancel is nothing to do. A host with no usable dialog answers `501` with the reason, and this falls
+ * back to typing a path rather than leaving a person with a button that does nothing.
+ */
 document.getElementById('add-workspace').onclick = async () => {
-  const path = prompt('Folder to register as a workspace root')
+  let path = null
+  try {
+    const picked = await fetch('/api/workspaces/pick', { method: 'POST' })
+    const body = await picked.json().catch(() => ({}))
+    if (picked.ok) {
+      if (body.kind === 'cancelled') return
+      if (typeof body.path === 'string' && body.path.length > 0) path = body.path
+    } else {
+      setNote(body.error ?? 'this host has no folder dialog')
+      path = prompt('Folder to register as a workspace root')
+    }
+  } catch (error) {
+    // The route is unreachable, which is a host problem rather than a canvas problem: type it instead.
+    setNote('could not open a folder dialog: ' + (error && error.message))
+    path = prompt('Folder to register as a workspace root')
+  }
   if (path === null || path.trim() === '') return
   const response = await fetch('/api/workspaces', {
     method: 'POST',
@@ -1741,6 +1871,7 @@ document.getElementById('add-workspace').onclick = async () => {
     setNote(body.error ?? 'could not register that folder')
     return
   }
+  setNote('')
   await renderTree()
 }
 

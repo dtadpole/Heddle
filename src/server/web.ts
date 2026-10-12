@@ -7,6 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
 
 import { runTurn } from '../agent/loop.ts'
 import { renderSource } from './code.ts'
+import { pickFolder } from './picker.ts'
 import { projectLedger, projectTimeline } from './ledger.ts'
 import { renderMarkdown } from './markdown.ts'
 import { expandHome } from '../config/schema.ts'
@@ -242,6 +243,26 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
    * It is also the one route reachable without a token, which is why it says nothing: no sessions, no
    * counts, no version.
    */
+  /**
+   * The tab's icon, served from the project's own asset.
+   *
+   * One source of truth: the route reads `heddle.svg` where the repository keeps it rather than a second copy
+   * beside the page. It is also reachable **without a token**, like `/healthz`, and for the same kind of reason —
+   * the browser asks for a favicon as a request of its own, before anyone has authenticated, and the picture says
+   * nothing about this machine's work. A copy installed without the asset answers `404` and the page keeps its
+   * default tab.
+   */
+  if ((url.pathname === '/favicon.svg' || url.pathname === '/favicon.ico') && request.method === 'GET') {
+    try {
+      const icon = readFileSync(join(import.meta.dirname, '..', '..', 'heddle.svg'))
+      response.writeHead(200, { 'content-type': 'image/svg+xml', 'content-length': String(icon.length), 'cache-control': 'no-store' })
+      response.end(icon)
+    } catch {
+      respond(response, 404, 'text/plain', 'no icon beside this installation\n')
+    }
+    return
+  }
+
   if (url.pathname === '/healthz' && request.method === 'GET') {
     respond(response, 200, 'application/json', `${JSON.stringify({ ok: true, service: 'heddle-web', port: state.port })}\n`)
     return
@@ -560,6 +581,24 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
         2,
       )}\n`,
     )
+    return
+  }
+
+  /**
+   * Ask the **server's** platform for a folder, which is the only way a page can get an absolute path.
+   *
+   * A cancel is `200` with `cancelled`, because a person saying no is an answer rather than an error;
+   * a host with no usable dialog is `501` with the sentence that names what to install, so the page can
+   * offer to type the path instead of looking broken. Nothing is mounted here: the answer travels back
+   * to the page, which registers it through the route below. One dialog, one decision.
+   */
+  if (url.pathname === '/api/workspaces/pick' && request.method === 'POST') {
+    const outcome = await pickFolder()
+    if (outcome.kind === 'unavailable') {
+      respond(response, 501, 'application/json', `${JSON.stringify({ error: outcome.reason })}\n`)
+      return
+    }
+    respond(response, 200, 'application/json', `${JSON.stringify(outcome, null, 2)}\n`)
     return
   }
 
