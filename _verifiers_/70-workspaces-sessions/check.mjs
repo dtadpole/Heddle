@@ -777,6 +777,13 @@ test('a session can be created at the top-level workspace, and its definition is
     assert.equal(definition.cwd, h.work, 'and the folder the session is bound to')
     assert.equal(definition.log, body.log, 'and the log it references')
     assert.ok(existsSync(join(String(body.definition).replace('/session.json', ''), 'INDEX.md')), 'the instance carries an entry point, like every content folder')
+    /**
+     * And so does the **type folder** heddle created. Measured by the convention linter on this very
+     * repository: the first version wrote only the session's own folder, so a repository in which a session
+     * had been started failed with `_sessions_: no entry point`. A folder a tool creates is a folder the tool
+     * has to finish.
+     */
+    assert.ok(existsSync(join(h.work, '_sessions_', 'INDEX.md')), 'and so does the _sessions_ folder heddle had to create')
 
     // The tree shows it under the branch that owns it, first, and never the folder it sits in.
     const tree = await treeAt(h, h.work)

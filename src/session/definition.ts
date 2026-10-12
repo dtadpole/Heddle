@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { canonicalPath } from '../paths.ts'
@@ -89,6 +89,42 @@ commit — which log the session is, and how it is run.
 }
 
 /**
+ * The entry point of a branch's `_sessions_` folder, written once.
+ *
+ * A type folder is a content folder, so the conventions require it to carry an `INDEX.md` — and heddle
+ * writes it, because the folder is created by heddle. Measured: the first version created only the session's
+ * own folder, so a repository in which a session had been started failed the convention linter with
+ * ``_sessions_: no entry point``. A folder that a tool creates is a folder the tool has to finish.
+ */
+const SESSIONS_INDEX = `---
+title: Sessions
+version: 1.0.0
+description: One instance per agentic session of this branch — the log it references, and how it is run.
+grounded_in:
+  - source: heddle session definitions
+---
+
+# \`_sessions_\`
+
+Type folder. One instance per session of the branch it sits in, written by heddle when a session is started
+there. An instance names the **log** it references and how the session is run; the transcript itself is
+machine state and lives outside this repository, under \`~/.heddle/sessions\`.
+
+The tree does not draw this folder. It shows each session directly under the branch, first, because the
+folder is a filing decision rather than something to navigate — and the branch is what a person is looking
+for, not the drawer the session is kept in.
+`
+
+/** Create a branch's `_sessions_` folder and its entry point when they are not there yet. */
+export function ensureSessionsFolder(branch: string): string {
+  const dir = join(canonicalPath(branch), SESSIONS_FOLDER)
+  mkdirSync(dir, { recursive: true })
+  const index = join(dir, 'INDEX.md')
+  if (!existsSync(index)) writeFileSync(index, SESSIONS_INDEX)
+  return dir
+}
+
+/**
  * Write a session's definition under a branch, and answer with where it went.
  *
  * `taken` is the list of names already in the branch's `_sessions_` folder, so two sessions created in one
@@ -102,7 +138,7 @@ export function writeSessionDefinition(
 ): SessionDefinition {
   const canonical = canonicalPath(branch)
   const name = sessionName(new Date(options.createdAt), options.taken ?? [])
-  const dir = join(canonical, SESSIONS_FOLDER, name)
+  const dir = join(ensureSessionsFolder(canonical), name)
   mkdirSync(dir, { recursive: true })
 
   const fields: SessionDefinitionFields = {

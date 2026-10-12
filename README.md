@@ -1,5 +1,5 @@
 ---
-title: heddle
+title: Heddle
 version: 0.3.0
 description: A harness and agent framework built on Cordis, in TypeScript, with a verifier deciding each part of what completes it.
 level: L2
@@ -8,7 +8,7 @@ grounded_in:
   - source: human-authored
 ---
 
-# heddle
+# Heddle
 
 A harness and agent framework built on [Cordis](https://github.com/cordiverse/cordis), in TypeScript.
 
