@@ -118,8 +118,10 @@ which is exactly what a person wants before they know which instance the work be
 **A branch shows its sessions first, and never shows the folder that holds them.** The owner's rule of
 2026-10-11: `_sessions_` is a **filing** folder rather than something a person navigates, so the tree does
 not draw it at all — each session inside it becomes a `session` node directly under the branch it belongs
-to, ahead of that branch's own folders and files. A `_sessions_` folder with no session in it therefore
-leaves no trace, which is right: there is nothing to show. Asked for **by name** (`heddle tree
+to, ahead of that branch's own folders and files, **newest name first** — the names are chronological by
+construction, so a descending name order is a descending time order, and the session a person just started
+is the one at the top. A `_sessions_` folder with no session in it therefore leaves no trace, which is
+right: there is nothing to show. Asked for **by name** (`heddle tree
 <branch>/_sessions_`), it still answers, and answers with sessions — the folder keeps its meaning even
 where the tree declines to draw it.
 

@@ -258,8 +258,8 @@ test('a _sessions_ folder is not a node, and its sessions come first in the bran
     const instance = tree(join(root, '_tools_', 'some-tool'), input)
     assert.deepEqual(
       (instance.children ?? []).map((node) => `${node.kind}:${node.label}`),
-      ['session:first-conversation', 'session:second-conversation', 'folder:src', 'file:INDEX.md'],
-      'the sessions are hoisted above the branch’s own files and folders',
+      ['session:second-conversation', 'session:first-conversation', 'folder:src', 'file:INDEX.md'],
+      'the sessions are hoisted above the branch’s own files and folders, newest name first',
     )
     assert.ok(
       !(instance.children ?? []).some((node) => node.label === '_sessions_'),

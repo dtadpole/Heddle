@@ -1341,13 +1341,20 @@ function menuItemsFor(node) {
     })
   }
   if (node.kind === 'instance') {
+    /**
+     * `New session here` is the branch case, not a special one: it goes through the same route as the
+     * workspace row's item, because what makes a session findable is its **definition** and a store session
+     * without one is invisible to the tree. Measured: the first version called `/api/folders/session`, which
+     * only starts a transcript — so the menu item created a session nobody could see, which is precisely
+     * what "make sure it works" found.
+     */
     items.push({
       label: 'New session here',
       run: async () => {
-        const response = await fetch('/api/folders/session', {
+        const response = await fetch('/api/sessions', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ folder: node.path, new: true }),
+          body: JSON.stringify({ branch: node.path }),
         })
         const body = await response.json().catch(() => ({}))
         if (!response.ok) {
@@ -1355,7 +1362,7 @@ function menuItemsFor(node) {
           return
         }
         setNote('')
-        await showSession(body.session.id)
+        await showSession(body.session)
         await renderTree()
       },
     })

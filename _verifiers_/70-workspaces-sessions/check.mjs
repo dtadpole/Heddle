@@ -815,8 +815,8 @@ test('a branch shows its sessions first, and never the folder that holds them', 
      */
     assert.deepEqual(
       labels.filter((entry) => entry.startsWith('session:')),
-      ['session:first-conversation', 'session:second-conversation'],
-      `the branch's sessions are drawn, in name order\nsaw: ${labels.join(', ')}`,
+      ['session:second-conversation', 'session:first-conversation'],
+      `the branch's sessions are drawn, newest name first, because the names are chronological\nsaw: ${labels.join(', ')}`,
     )
     assert.equal(
       children.findIndex((node) => node.kind !== 'session'),
@@ -1417,5 +1417,72 @@ test('a workspace is unregistered, and a root that still holds sessions is refus
     removeDir(empty)
     removeDir(busy)
     removeDir(parent)
+  }
+})
+
+test('New session here, on an instance row, starts a session and writes its definition', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
+  if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
+  const h = harness('new-session-here')
+  let live
+  let browser
+  try {
+    await conventionsFixture(h)
+    live = await startServer(
+      ['web', '--host', '127.0.0.1', '--port', '0', '--config', join(repoRoot, 'cordis.yml'), '--session-root', join(h.home, 'sessions')],
+      { ...h.env, HOME: h.home },
+    )
+    browser = await openBrowser()
+    await browser.goto(live.url)
+    await browser.waitFor(`document.querySelectorAll('#tree .row').length > 0`, 20_000)
+
+    /**
+     * The owner asked whether this menu item works, and it did not: it called the route that starts a
+     * transcript, so the click created a session with **no definition** — invisible in the tree, because
+     * the tree finds a session by the `_sessions_` instance that names it. This is the whole user action,
+     * judged as a user performs it: open the row's menu, click the item, and look for what appeared.
+     */
+    const clicked = await browser.evaluate(`(async () => {
+      const wait = (ms) => new Promise((done) => setTimeout(done, ms))
+      const rowFor = (label) => [...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label')?.textContent === label)
+      const root = [...document.querySelectorAll('#tree .row')][0]
+      root.click()
+      await wait(600)
+      rowFor('_tools_').click()
+      await wait(700)
+      const instance = rowFor('some-tool')
+      const menu = [...instance.querySelectorAll('button')].find((button) => button.textContent === '…')
+      if (menu === undefined) return JSON.stringify({ error: 'the instance row carries no menu' })
+      menu.click()
+      await wait(200)
+      const item = [...document.querySelectorAll('#tree .menu:not([hidden]) button')].find((button) => button.textContent === 'New session here')
+      if (item === undefined) return JSON.stringify({ error: 'the menu carries no New session here item' })
+      item.click()
+      await wait(1800)
+      const reopened = rowFor('some-tool')
+      if (reopened.parentElement.dataset.open !== 'true') {
+        reopened.click()
+        await wait(800)
+      }
+      const rows = [...reopened.parentElement.querySelectorAll(':scope > ul[role=group] > li')].map((child) => (child.dataset.kind === 'session' ? 'session' : child.dataset.kind) + ':' + child.querySelector('.label')?.textContent)
+      return JSON.stringify({ rows })
+    })()`)
+    const outcome = JSON.parse(clicked)
+    assert.equal(outcome.error, undefined, `the menu opened and the item was there\\nsaw: ${clicked}`)
+    assert.equal(outcome.rows[0]?.startsWith('session:'), true, `the session appears first in the branch it belongs to\\nsaw: ${outcome.rows.join(', ')}`)
+    const name = String(outcome.rows[0]).slice('session:'.length)
+    assert.match(name, /^session-\d{8}-\d{4}$/, `named for the clock, as the convention requires\nsaw: ${name}`)
+
+    const definition = join(h.work, '_tools_', 'some-tool', '_sessions_', name, 'session.json')
+    assert.ok(existsSync(definition), `and its definition is on disk at ${definition}`)
+    const fields = JSON.parse(readFileSync(definition, 'utf8'))
+    assert.equal(fields.cwd, join(h.work, '_tools_', 'some-tool'), 'the definition names the folder the session is bound to')
+    assert.ok(!isUnder(h.work, String(fields.log)), `while the transcript stays outside the repository\\nsaw: ${fields.log}`)
+  } finally {
+    browser?.close()
+    live?.kill()
+    removeDir(h.home)
+    removeDir(h.work)
   }
 })

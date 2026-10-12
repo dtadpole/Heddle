@@ -289,7 +289,12 @@ function childrenOf(dir: string, kind: NodeKind, context: Context): TreeNode[] {
      * therefore leaves no trace at all, which is right: there is nothing to show.
      */
     if (entry.directory && entry.name === SESSIONS_FOLDER) {
-      for (const session of entries(path)) {
+      /**
+       * **Newest first.** The names are chronological by construction (`session-<yyyymmdd>-<hhmm>`), so a
+       * descending name order is a descending time order — and the session a person just started is the one
+       * they are looking for, which is what "at the top of the branch" means once the group is there.
+       */
+      for (const session of entries(path).sort((left, right) => collator.compare(right.name, left.name))) {
         if (!session.directory) continue
         const sessionPath = canonicalPath(join(path, session.name))
         sessions.push({ ...row(sessionPath, 'session', session.name, context), children: null })
