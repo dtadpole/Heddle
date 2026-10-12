@@ -195,3 +195,34 @@ test('a document\'s frontmatter is shown as metadata, not read as prose', () => 
   /** And a `---` that is a thematic break rather than an opening fence is still a rule. */
   assert.match(renderMarkdown('text\n\n---\n\nmore'), /<hr>/, 'a rule later in the document is still a rule')
 })
+
+test('a name that begins and ends with an underscore keeps its underscores', () => {
+  /**
+   * The defect this pins was measured against this repository, where it was everywhere: `# _tools_` rendered as
+   * `<em>tools</em>`, so `_tools_`, `_verifiers_`, `_context_` and `_projects_` — the folder names the project is
+   * made of — **lost their underscores** in every document that named one. `snake_case` inside a word survived,
+   * which is why it took a document with a folder name in it to see.
+   */
+  assert.match(renderMarkdown('# _tools_'), /<h1>_tools_<\/h1>/, 'a heading keeps the name')
+  assert.match(renderMarkdown('See _verifiers_ for that.'), /_verifiers_/, 'and so does a sentence')
+  assert.ok(!renderMarkdown('_tools_').includes('<em>'), 'nothing is emphasised')
+})
+
+test('underscore emphasis is given up for names, and asterisks still emphasise', () => {
+  /** The trade is stated rather than hidden: `_name_` is a name here, so italics are written with asterisks. */
+  assert.match(renderMarkdown('*italic* and **bold**'), /<em>italic<\/em>.*<strong>bold<\/strong>/, 'asterisks work')
+  assert.match(renderMarkdown('a_b_c'), /a_b_c/, 'and an underscore inside a word was never at risk')
+})
+
+test('an escape for a name never becomes visible inside code', () => {
+  /**
+   * A backslash inside code **is** visible — measured, a fence holding `_a_b_` rendered as `\_a_b_`. An escape that
+   * changes the text of code is worse than the emphasis it prevents, so fences and code spans are skipped.
+   */
+  const fenced = renderMarkdown('```python\nx = _a_b_\n```')
+  assert.ok(!fenced.includes('\\_'), 'no backslash reaches the fence')
+  assert.match(fenced, /_a_b_/, 'and the code is exact')
+  const span = renderMarkdown('the `_tools_` folder')
+  assert.ok(!span.includes('\\_'), 'nor a code span')
+  assert.match(span, /<code>_tools_<\/code>/, 'which keeps its underscores without help')
+})

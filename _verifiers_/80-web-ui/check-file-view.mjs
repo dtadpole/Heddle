@@ -182,8 +182,12 @@ test('the browser shows a Python file as source, and does not run what a file sa
     await browser.goto(server.url)
     await browser.waitFor('document.getElementById("tree") !== null', 10_000)
     // Open the workspace root, so its files are drawn.
-    await browser.waitFor('document.querySelector("#tree .row .twisty") !== null', 10_000)
-    await browser.evaluate('document.querySelector("#tree .row .twisty").click()')
+    /**
+     * The row is the control now: the owner removed the `+` / `−` box once clicking a folder began to open and
+     * close it, so this clicks the row rather than a control that no longer exists.
+     */
+    await browser.waitFor('document.querySelector("#tree .row") !== null', 10_000)
+    await browser.evaluate('document.querySelector("#tree .row").click()')
     await browser.waitFor(`Array.from(document.querySelectorAll('#tree .row')).some((row) => row.dataset.path.endsWith('tool.py'))`, 10_000)
     await browser.evaluate(`Array.from(document.querySelectorAll('#tree .row')).find((row) => row.dataset.path.endsWith('tool.py')).click()`)
     await browser.waitFor('document.querySelectorAll("#file-body .line").length > 0', 10_000)

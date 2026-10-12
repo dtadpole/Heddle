@@ -52,7 +52,8 @@ test('a fence is coloured in the rendered document, and its class survives the a
    * The interaction that has to hold: the highlighter's spans are only visible if the sanitizer keeps `span` and
    * `class`, and loses nothing else. This is the end-to-end claim for the pair.
    */
-  const html = renderMarkdown('```python\ndef f(x):\n    return x\n```')
+  /** The snippet holds a keyword on purpose: `def f(x): return x` has none, so it coloured nothing to assert. */
+  const html = renderMarkdown('```python\ndef f(x):\n    return x if x else None\n```')
   assert.match(html, /<pre><code class="language-python">/, 'the fence keeps its language')
   assert.match(html, /hljs-keyword/, "the highlighter's spans survive the allow-list")
   assert.ok(!html.includes('<span onclick'), 'and nothing the allow-list forbids gets through with them')

@@ -61,11 +61,58 @@ export function safeUrl(url: string): string | null {
 const marked = new Marked({ gfm: true, breaks: false })
 
 /**
- * Colour the code, through the marked plugin for the two libraries.
+ * A leading `_` is escaped, so a name is a name.
  *
- * Both are zero-dependency, and the plugin is what lets a fence keep its language while the highlighter colours it —
- * `class="language-ts"` on the `<code>`, and the highlighter's own `hljs-` spans inside. The allow-list accepts both
- * because it permits `span`, `class` and `pre`, and **nothing else** the highlighter could emit.
+ * Measured, and it is a defect this repository hits everywhere: `# _tools_` rendered as `<em>tools</em>`, so the
+ * folder names this project is made of — `_tools_`, `_verifiers_`, `_context_`, `_projects_` — **lost their
+ * underscores** in every document that named one. `snake_case` inside a word survives, because that case flanks a
+ * word on both sides; a lone `_name_` does not, and CommonMark's rule about intraword underscores says nothing
+ * about a name standing alone.
+ *
+ * The escape is markdown's own: a backslash makes the character literal, which is what a document that wanted a
+ * literal underscore would have written. Asterisks still make emphasis, so `*italics*` and `**bold**` are
+ * unaffected — only the leading `_` of an underscore-run is touched, and `_` is still allowed to mean `_` in the
+ * middle of a word, which is where it was already safe.
+ */
+function escapeLeadingUnderscores(markdown: string): string {
+  /**
+   * Code is left alone, because a backslash **inside code is visible** — measured: a fence containing `_a_b_`
+   * rendered as `\_a_b_`, and an escape that changes the text of code is worse than the emphasis it prevents. Code
+   * spans keep their underscores without help, since emphasis does not run inside them.
+   */
+  const lines = markdown.split('\n')
+  const out: string[] = []
+  let fence: string | null = null
+  for (const line of lines) {
+    const marker = /^\s*(```|~~~)/.exec(line)
+    if (marker !== null) {
+      const character = marker[1] ?? '```'
+      if (fence === null) fence = character
+      else if (fence === character) fence = null
+      out.push(line)
+      continue
+    }
+    if (fence !== null) {
+      out.push(line)
+      continue
+    }
+    /** A code span is `...`; the escape is applied to the parts that are not inside one. */
+    out.push(
+      line
+        .split(/(`[^`]*`)/)
+        .map((piece) => (piece.startsWith('`') ? piece : piece.replace(/(^|\s)_(?=[^\s_])/g, '$1\\_')))
+        .join(''),
+    )
+  }
+  return out.join('\n')
+}
+
+/**
+ * Colour the code, through the marked plugin that pairs the two libraries.
+ *
+ * A fence keeps its language while the highlighter colours it: `class="language-ts"` on the `<code>`, and the
+ * highlighter's own `hljs-` spans inside. The allow-list accepts both because it permits `span`, `class` and `pre`,
+ * and nothing else the highlighter could emit.
  */
 marked.use(
   markedHighlight({
@@ -103,7 +150,7 @@ marked.use({
  * code spans rather than two that can disagree.
  */
 export function renderInline(text: string): string {
-  return sanitizeHtml(marked.parseInline(String(text ?? '')) as string, { url: safeUrl })
+  return sanitizeHtml(marked.parseInline(escapeLeadingUnderscores(String(text ?? ''))) as string, { url: safeUrl })
 }
 
 /**
@@ -120,5 +167,5 @@ export function renderMarkdown(source: string): string {
     front === null
       ? ''
       : `<section class="frontmatter"><h2>frontmatter</h2><pre><code>${escapeHtml((front[1] ?? '').trim())}</code></pre></section>\n`
-  return sanitizeHtml(frontHtml + (marked.parse(body) as string), { url: safeUrl })
+  return sanitizeHtml(frontHtml + (marked.parse(escapeLeadingUnderscores(body)) as string), { url: safeUrl })
 }
