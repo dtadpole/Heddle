@@ -103,10 +103,25 @@ has a session — the session's id, turn count and running flag.
 | `folder` | a plain content folder | anything else that carries an `INDEX.md` |
 | `generated` | a folder a tool writes | named by the caller, exactly as the convention linter's `--generated` names it |
 | `file` | a leaf, and the only kind that opens a **panel** rather than a conversation | not a directory; carries its size and no children |
+| `session` | one session of the branch it sits in — a **hoisted** node, never a folder of its own | an instance inside a `_sessions_` folder, drawn as a child of that folder's parent |
 
 A `type` may appear at any depth, including inside an instance (`_projects_/a-project/_context_/`),
 and an `instance` may hold content and further type folders — the conventions place no depth limit,
 and the observed maximum is four.
+
+**A session can be created at any branch, the workspace root included.** The owner's rule of
+2026-10-11: `heddle session new [<branch>]`, the `New session` item on a workspace or instance row, and
+`POST /api/sessions` all start a session and write its **definition** into that branch, leaving the
+transcript where logs live. A session created at the root is a session about the repository as a whole,
+which is exactly what a person wants before they know which instance the work belongs to.
+
+**A branch shows its sessions first, and never shows the folder that holds them.** The owner's rule of
+2026-10-11: `_sessions_` is a **filing** folder rather than something a person navigates, so the tree does
+not draw it at all — each session inside it becomes a `session` node directly under the branch it belongs
+to, ahead of that branch's own folders and files. A `_sessions_` folder with no session in it therefore
+leaves no trace, which is right: there is nothing to show. Asked for **by name** (`heddle tree
+<branch>/_sessions_`), it still answers, and answers with sessions — the folder keeps its meaning even
+where the tree declines to draw it.
 
 **A row reads left to right as "what it is" then "what you can do".** The left carries the kind's
 icon, the type's badge and the name, then the session marker and turn count; the right carries the

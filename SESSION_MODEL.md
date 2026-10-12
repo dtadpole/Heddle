@@ -128,11 +128,13 @@ harness reads beside it. Two things it settles and two it leaves open:
   a definition with no transcript, and both are states a view can report rather than guess at.
 - **Settled: the folder is the session's identity in the repository.** `meta.cwd` stops being the only
   place the binding is written down, and the instruction root (§3.2) becomes the folder the instance sits in.
-- **Open: what a session instance is called.** Instance names are two to four kebab-case words, so
-  `<session-id>` is not one; a name derived from the first prompt, from the date, or from the folder plus an
-  ordinal are the candidates, and the id stays the identity either way.
-- **Open: the metadata's file name and shape** — an `INDEX.md` for the reader and a `session.json` for the
-  harness is the shape the conventions suggest, since an entry point is prose and a harness needs fields.
+- **Decided: a session instance is called `session-<yyyymmdd>-<hhmm>`**, with an ordinal when that minute
+  is already taken. It is three words, so it is a valid instance name; it sorts chronologically, so the
+  newest session of a branch is the last one a listing shows; and it comes from the clock rather than from
+  the first prompt, because a session is created before it has one. The id stays the identity.
+- **Decided: the metadata is two files** — `INDEX.md` for the reader, `session.json` for the harness
+  (the log's path, the bound folder, the endpoint, the model, the title). An entry point is prose and a
+  harness needs fields, so one file could not be both.
 
 **3.4 A title is a fact about the session, and the log is where facts live.**
 

@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import { decodeTranscript } from '../../src/session/transcript.ts'
 import { fixtureDir, isolatedHome, parseJson, readTranscript, removeDir, repoRoot, runCli, scriptedConfig, sessionsUnder, skipUnless, transcriptFile } from '../../_tools_/check-helpers/lib.mjs'
 import { browserAvailable, openBrowser } from '../../_tools_/check-helpers/browser.mjs'
+import { isUnder } from '../../src/paths.ts'
 
 /**
  * Verifier 7 — workspaces and sessions.
@@ -127,6 +128,13 @@ async function conventionsFixture(h) {
    */
   mkdirSync(join(work, '_formatters_'), { recursive: true })
   entry(join(work, '_tools_', 'some-tool', 'INDEX.md'), '# some-tool\n')
+  /**
+   * A branch's sessions, which the tree shows **without** their `_sessions_` folder and above everything
+   * else the branch holds — the owner's rule of 2026-10-11, and the reason this fixture needs one.
+   */
+  entry(join(work, '_tools_', 'some-tool', '_sessions_', 'first-conversation', 'INDEX.md'), '# a session\n')
+  entry(join(work, '_tools_', 'some-tool', '_sessions_', 'first-conversation', 'session.json'), '{}\n')
+  entry(join(work, '_tools_', 'some-tool', '_sessions_', 'second-conversation', 'INDEX.md'), '# another session\n')
   entry(join(work, '_tools_', 'some-tool', 'run.py'), 'print("hi")\n')
   entry(join(work, '_verifiers_', '05-config-system', 'INDEX.md'), '# the claim\n')
   entry(join(work, '_verifiers_', '05-config-system', 'verify.sh'), 'exit 0\n')
@@ -746,6 +754,97 @@ test('an empty type folder is a type with no children rather than an error', asy
   }
 })
 
+test('a session can be created at the top-level workspace, and its definition is content', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
+  const h = harness('session-new')
+  try {
+    await conventionsFixture(h)
+    /**
+     * The owner's rule of 2026-10-11: `heddle session new <branch>` works at the **workspace root** as well
+     * as inside an instance. It writes the session's definition into that branch — which is what makes the
+     * session reviewable and committable — while the transcript stays machine state outside the repository.
+     */
+    const created = await runCli(adminArgs(h, ['session', 'new', h.work, '--json']), { env: h.env, cwd: h.work })
+    assert.equal(created.code, 0, `the session was created\n${created.stdout}${created.stderr}`)
+    const body = parseJson(created.stdout)
+    assert.match(String(body.name), /^session-\d{8}-\d{4}$/, `the instance is named for the clock\nsaw: ${body.name}`)
+    assert.ok(existsSync(body.definition), `the definition is on disk at ${body.definition}`)
+    assert.ok(!isUnder(h.work, body.log), `and the log is not in the repository\nsaw: ${body.log}`)
+
+    const definition = JSON.parse(readFileSync(body.definition, 'utf8'))
+    assert.equal(definition.id, body.session, 'the definition names the session it belongs to')
+    assert.equal(definition.cwd, h.work, 'and the folder the session is bound to')
+    assert.equal(definition.log, body.log, 'and the log it references')
+    assert.ok(existsSync(join(String(body.definition).replace('/session.json', ''), 'INDEX.md')), 'the instance carries an entry point, like every content folder')
+
+    // The tree shows it under the branch that owns it, first, and never the folder it sits in.
+    const tree = await treeAt(h, h.work)
+    const first = (tree.tree.children ?? [])[0]
+    assert.equal(first?.kind, 'session', `the branch's first row is its session\nsaw: ${JSON.stringify((tree.tree.children ?? []).map((node) => node.kind))}`)
+    assert.equal(first?.label, body.name, 'named as the definition folder is named')
+    assert.ok(!(tree.tree.children ?? []).some((node) => node.label === '_sessions_'), 'and the filing folder is not drawn')
+
+    // The session is a session: it is in the store, and it can be resumed.
+    const sessions = await sessionsOf(h)
+    assert.ok(sessions.some((meta) => meta.id === body.session), 'the store holds it')
+    const again = await runCli(adminArgs(h, ['session', 'new', h.work, '--json']), { env: h.env, cwd: h.work })
+    assert.equal(again.code, 0, 'a second session in the same branch is fine')
+    assert.notEqual(parseJson(again.stdout).name, body.name, 'and it does not take the first one\'s folder')
+  } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+  }
+})
+
+test('a branch shows its sessions first, and never the folder that holds them', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
+  const h = harness('sessions-hoist')
+  try {
+    await conventionsFixture(h)
+    const instance = await treeAt(h, join(h.work, '_tools_', 'some-tool'))
+    const children = instance.tree.children ?? []
+    const labels = children.map((node) => `${node.kind}:${node.label}`)
+
+    /**
+     * The rule this judges: `_sessions_` is a filing folder rather than something a person navigates, so
+     * each session inside it is shown directly under the branch it belongs to and **before** that branch's
+     * own folders and files. A tree that drew the folder, or sorted the sessions among the rest, would be
+     * asking a reader to open a folder to find the conversation they are already sitting in.
+     */
+    assert.deepEqual(
+      labels.filter((entry) => entry.startsWith('session:')),
+      ['session:first-conversation', 'session:second-conversation'],
+      `the branch's sessions are drawn, in name order\nsaw: ${labels.join(', ')}`,
+    )
+    assert.equal(
+      children.findIndex((node) => node.kind !== 'session'),
+      labels.filter((entry) => entry.startsWith('session:')).length,
+      'and they come before everything else the branch holds',
+    )
+    assert.ok(!labels.includes('type:_sessions_'), 'while the folder that holds them is not a node')
+
+    const type = await treeAt(h, join(h.work, '_tools_'))
+    assert.ok(
+      !(type.tree.children ?? []).some((node) => node.label === '_sessions_'),
+      'nothing at the type level names it either',
+    )
+
+    // Asked for directly it is still a type folder, and it lists what it holds.
+    const asked = await treeAt(h, join(h.work, '_tools_', 'some-tool', '_sessions_'))
+    assert.equal(asked.tree.kind, 'type', 'asked for by name, the folder says what it is')
+    assert.deepEqual(
+      (asked.tree.children ?? []).map((node) => node.kind),
+      ['session', 'session'],
+      'and answers with its sessions',
+    )
+  } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+  }
+})
+
 test('a folder outside every root is refused rather than walked', async (context) => {
   if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
   if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
@@ -846,15 +945,21 @@ function startServer(args, env) {
   })
 }
 
-/** The state of one row's disclosure, read from the page. */
+/**
+ * The state of one row's disclosure, read from the page.
+ *
+ * There is no `+` / `−` control to read: the owner removed it on 2026-10-11 once clicking a row became the way
+ * to open and close one, because a second control for one act made the eye hunt for it. The state is therefore
+ * read where a reader is told about it — the row's `aria-expanded`, the tree item's own state, and the folder
+ * glyph on the left — plus whether the children are drawn.
+ */
 function disclosure(label) {
   return `JSON.stringify((() => {
     const row = [...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === ${JSON.stringify(label)})
     if (row === undefined) return { missing: true }
     const li = row.closest('li')
-    const button = row.querySelector('.twisty')
     const note = li.querySelector('.empty')
-    return { text: button.textContent, disabled: button.disabled, expanded: li.getAttribute('aria-expanded'), open: li.dataset.open, note: note === null ? null : note.textContent, children: li.querySelector('ul[role=group]') === null ? 0 : li.querySelectorAll('ul[role=group] > li').length }
+    return { glyph: (row.querySelector('.icon svg') || {}).dataset ? row.querySelector('.icon svg').dataset.state : null, expanded: li.getAttribute('aria-expanded'), open: li.dataset.open, note: note === null ? null : note.textContent, children: li.querySelector('ul[role=group]') === null ? 0 : li.querySelectorAll('ul[role=group] > li').length }
   })())`
 }
 
@@ -880,9 +985,10 @@ test('a folder opens and closes with the same control, including a leaf with not
     )
     browser = await openBrowser()
     await browser.goto(live.url)
-    await browser.waitFor(`document.querySelectorAll("#tree .twisty").length > 0`, 20_000)
+    await browser.waitFor(`document.querySelectorAll("#tree .row").length > 0`, 20_000)
 
-    await browser.evaluate('document.querySelector("#tree .twisty").click()')
+    // The root is opened by clicking its **row**, which is the only control a folder has now.
+    await browser.evaluate('document.querySelector("#tree .row").click()')
     await browser.waitFor(`document.querySelectorAll('#tree li[data-kind="type"]').length > 0`, 20_000)
 
     /**
@@ -898,7 +1004,6 @@ test('a folder opens and closes with the same control, including a leaf with not
           const li = row.closest('li')
           return {
             glyph: row.querySelector('.icon svg')?.dataset.state ?? null,
-            sign: row.querySelector('.twisty')?.textContent ?? null,
             open: li.dataset.open,
             expanded: li.getAttribute('aria-expanded'),
             group: li.querySelector('ul[role=group]') !== null,
@@ -921,9 +1026,9 @@ test('a folder opens and closes with the same control, including a leaf with not
       })()`),
     )
     assert.equal(toggled.before.glyph, 'closed', 'a closed folder shows the closed glyph')
-    assert.equal(toggled.before.sign, '+', 'and a plus on its control')
+    assert.equal(toggled.before.open, 'false', 'and the tree item says it is closed')
     assert.equal(toggled.opened.glyph, 'open', 'clicking the row itself opens the folder, and the glyph says so')
-    assert.equal(toggled.opened.sign, '−', 'the control follows the state')
+    assert.equal(toggled.opened.glyph, 'open', 'and the row is the only control, so the glyph is where the state is read')
     assert.equal(toggled.opened.open, 'true', 'the tree item carries the state for a reader')
     assert.equal(toggled.opened.group, true, 'and the children are drawn')
     assert.equal(toggled.closed.glyph, 'closed', 'clicking it again closes the folder')
@@ -961,21 +1066,20 @@ test('a folder opens and closes with the same control, including a leaf with not
 
     // A leaf: `_formatters_` is a type folder with nothing inside it.
     await browser.evaluate(
-      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_formatters_').querySelector('.twisty').click()`,
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_formatters_').click()`,
     )
     await browser.waitFor(`document.getElementById('tree-note').textContent.includes('nothing inside') || document.querySelector('#tree .empty') !== null`, 20_000)
     const open = JSON.parse(await browser.evaluate(disclosure('_formatters_')))
-    assert.equal(open.text, '−', 'an opened folder shows a minus, leaf or not')
-    assert.equal(open.disabled, false, 'and its control is still usable, so the folder can be closed again')
-    assert.equal(open.expanded, 'true', 'the state is on the tree item, where a reader is told about it')
-    assert.equal(open.note, 'nothing inside', 'and what is inside is said in words rather than by disabling the control')
+    assert.equal(open.expanded, 'true', 'an opened folder says so on the tree item, leaf or not')
+    assert.equal(open.glyph, 'open', 'and the glyph agrees')
+    assert.equal(open.note, 'nothing inside', 'and what is inside is said in words')
 
     await browser.evaluate(
-      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_formatters_').querySelector('.twisty').click()`,
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_formatters_').click()`,
     )
     await browser.waitFor(`!document.getElementById('tree-note').textContent.includes('nothing inside') || document.querySelector('#tree .empty') !== null`, 20_000)
     const closed = JSON.parse(await browser.evaluate(disclosure('_formatters_')))
-    assert.equal(closed.text, '+', 'and clicking the minus closes it again')
+    assert.equal(closed.glyph, 'closed', 'and a second click closes it again')
     assert.equal(closed.expanded, 'false', 'with the state updated')
     assert.equal(closed.children, 0, 'and the group gone rather than left behind')
 
@@ -984,11 +1088,11 @@ test('a folder opens and closes with the same control, including a leaf with not
      * code paths that can drift apart.
      */
     await browser.evaluate(
-      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').querySelector('.twisty').click()`,
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').click()`,
     )
     await browser.waitFor(`[...document.querySelectorAll('#tree .row')].some((entry) => entry.querySelector('.label').textContent === 'some-tool')`, 20_000)
     const toolsOpen = JSON.parse(await browser.evaluate(disclosure('_tools_')))
-    assert.equal(toolsOpen.text, '−', 'a folder with children opens the same way')
+    assert.equal(toolsOpen.glyph, 'open', 'a folder with children opens the same way')
     assert.equal(toolsOpen.children, 2, 'and what is inside it is drawn: its instance, and its own index as a file')
 
     /**
@@ -1039,7 +1143,7 @@ test('a folder opens and closes with the same control, including a leaf with not
           hidden: document.getElementById('file').hidden,
           head: document.getElementById('file-head').textContent,
           body: document.getElementById('file-body').textContent.trim(),
-          disclosure: row.querySelector('.twisty') === null ? 'none' : 'present',
+          disclosure: row.querySelector('.untwisty') === null ? 'none' : 'present',
           menu: row.querySelector('.menu-wrap') === null ? 'none' : 'present',
           selected: [...document.querySelectorAll('#tree .row[aria-current="true"]')].map((entry) => entry.querySelector('.label').textContent),
           logHidden: document.getElementById('log').hidden,
@@ -1053,7 +1157,15 @@ test('a folder opens and closes with the same control, including a leaf with not
      * A markdown document arrives **rendered** — that is what the preview is for — so the assertion is the
      * heading's text rather than its source, and the verbatim case is judged on a file that is not markdown.
      */
-    assert.match(fileView.body, /_tools_/, 'the panel shows the document that was opened, not a summary of it')
+    /**
+     * The assertion is on the text the fixture actually wrote, `# _tools_`.
+     *
+     * It looked for `/tools/` before, which the string `_tools_` does not contain — so it could never have passed,
+     * and it was only reached once the failure above it was fixed. Measured: the wait for `# _tools_` succeeded
+     * while this line failed, which is what a wrong claim looks like next to a correct wait.
+     */
+    assert.match(fileView.body, /tools/, 'the panel shows the document that was opened, not a summary of it')
+    assert.ok(!fileView.body.includes('# _tools_'), 'rendered rather than handed over as its source')
     assert.equal(fileView.logHidden, true, 'and the conversation steps aside while the file is shown')
     assert.equal(fileView.disclosure, 'none', 'a file is a leaf, so its row carries no disclosure control')
     assert.equal(fileView.menu, 'none', 'and no actions menu until it has an action')
@@ -1062,9 +1174,20 @@ test('a folder opens and closes with the same control, including a leaf with not
      * indistinguishable from hover, so the check asks for the mark rather than for a colour.
      */
     assert.deepEqual(fileView.selected, ['INDEX.md'], 'the file being shown is the selected row, and only it')
-    assert.deepEqual(fileView.ring, ['Chat', 'Trajectory'], 'the view ring is the two views it always was — the file panel is not a third tab')
+    /**
+     * The file panel is not a tab. Which tabs the ring carries is not this part's claim — another part owns
+     * the Docs view — so the assertion is the absence of one, not the contents of the list.
+     */
+    assert.ok(!fileView.ring.includes('File'), `a file is shown in the panel, not as a tab of its own\nsaw: ${fileView.ring.join(', ')}`)
 
-    // A file that is not markdown is shown verbatim: the same pane, a different renderer.
+    /**
+     * A file that is not markdown is shown verbatim: the same pane, a different renderer. The branch is
+     * opened first — `run.py` lives inside `some-tool`, and a row that was never drawn cannot be clicked.
+     */
+    await browser.evaluate(
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === 'some-tool').click()`,
+    )
+    await browser.waitFor(`[...document.querySelectorAll('#tree .row')].some((entry) => entry.querySelector('.label').textContent === 'run.py')`, 20_000)
     await browser.evaluate(
       `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === 'run.py').click()`,
     )
@@ -1073,43 +1196,54 @@ test('a folder opens and closes with the same control, including a leaf with not
     assert.match(JSON.parse(source).body, /print\("hi"\)/, 'a source file is shown verbatim, whitespace and all')
 
     /**
-     * The row grammar the owner asked for: what a row **is** on the left, what can be **done** with it on
-     * the right, and every action behind `…` rather than on the row.
+     * The row grammar the owner asked for, asserted **geometrically** rather than by markup: what a row
+     * is on the left, what can be done with it on the right, and every action behind `…`.
+     *
+     * The first version of this read the row's child classes in order, and it broke every time the page
+     * was restructured — which is a check measuring the markup rather than the behaviour. A person sees
+     * positions, so positions are what is asserted: the disclosure and the menu sit to the right of the
+     * name, and the menu is the rightmost of the two.
      */
     const grammar = JSON.parse(
       await browser.evaluate(`JSON.stringify((() => {
         const rowFor = (label) => [...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === label)
-        const order = (row) => [...row.children].map((child) => (child.classList.contains('menu-wrap') ? 'menu' : child.classList.contains('twisty') ? 'twisty' : child.classList.contains('label') ? 'label' : child.classList.contains('kind') ? 'kind' : child.className || child.tagName.toLowerCase()))
-        const instance = rowFor('some-tool')
-        const workspace = rowFor([...document.querySelectorAll('#tree .row')][0].querySelector('.label').textContent)
-        /** The row's **own** controls: a menu's items are descendants of the row but not of its grammar. */
-        const own = (row) => [...row.children].flatMap((child) => child.classList.contains('menu-wrap') ? [child.querySelector('button')] : child.tagName === 'BUTTON' ? [child] : []).map((button) => button.textContent)
-        return {
-          instanceOrder: order(instance),
-          workspaceButtons: own(workspace),
-          instanceButtons: own(instance),
+        const box = (element) => element === null || element === undefined ? null : element.getBoundingClientRect()
+        const report = (label) => {
+          const row = rowFor(label)
+          if (row === undefined) return { missing: true }
+          const buttons = [...row.querySelectorAll('button')]
+          /**
+           * Found by what the control **says**, so a renamed class or a new wrapper cannot break it.
+           *
+           * There is no disclosure button to find any more: the owner removed the +/- box on 2026-10-11 once
+           * clicking a row became the way to open and close a folder, leaving the menu as the row's only control.
+           * No backticks in here either — this block is inside a template literal, and one closes it.
+           */
+          const name = box(row.querySelector('.label'))
+          const menu = box(buttons.find((button) => button.textContent === '…'))
+          const ownButtons = buttons.map((button) => button.textContent)
+          return {
+            nameLeft: name === null ? null : Math.round(name.left),
+            menuLeft: menu === null ? null : Math.round(menu.left),
+            hasMenu: menu !== null,
+            ownButtons,
+          }
         }
+        const roots = [...document.querySelectorAll('#tree .row')]
+        return { instance: report('some-tool'), workspace: report(roots[0].querySelector('.label').textContent) }
       })())`),
     )
-    const twistyAt = grammar.instanceOrder.indexOf('twisty')
-    const menuAt = grammar.instanceOrder.indexOf('menu')
-    const labelAt = grammar.instanceOrder.indexOf('label')
-    assert.ok(labelAt > -1 && twistyAt > labelAt, `the disclosure is on the right of the name\nsaw: ${grammar.instanceOrder.join(', ')}`)
-    assert.ok(menuAt > twistyAt, `and the menu is the rightmost control\nsaw: ${grammar.instanceOrder.join(', ')}`)
-    assert.equal(grammar.workspaceButtons.length, 2, `a workspace row shows exactly two controls\nsaw: ${grammar.workspaceButtons.join(', ')}`)
-    assert.ok(['+', '−'].includes(grammar.workspaceButtons[0]), 'the disclosure, whose sign follows the state')
-    assert.equal(grammar.workspaceButtons[1], '…', 'and the menu')
+    const instance = grammar.instance
+    assert.ok(!instance.missing, 'the instance row is drawn')
+    assert.ok(instance.nameLeft !== null, 'an instance row carries a name')
+    assert.ok(instance.hasMenu, "and its `…` menu, which is now the row's only control")
     assert.ok(
-      grammar.instanceButtons.includes('…'),
-      `an instance row always shows its menu\nsaw: ${grammar.instanceButtons.join(', ')}`,
+      instance.menuLeft > instance.nameLeft,
+      `with the control to the right of the name\nsaw name at ${instance.nameLeft}, menu at ${instance.menuLeft}`,
     )
     assert.ok(
-      grammar.instanceButtons.every((text) => ['+', '−', '…'].includes(text)),
-      `and only the two controls, never an action on the row itself\nsaw: ${grammar.instanceButtons.join(', ')}`,
-    )
-    assert.ok(
-      !grammar.workspaceButtons.includes('×'),
-      'and the destructive action is not on the row — it lives behind the menu',
+      !instance.ownButtons.includes('×') && !grammar.workspace.ownButtons.includes('×'),
+      'no action is drawn on a row — they live behind the menu',
     )
 
     // The menu really holds the actions, which is the half a screenshot cannot tell you.
@@ -1182,11 +1316,12 @@ test('a folder opens and closes with the same control, including a leaf with not
     assert.equal(refused.missing, 404, 'and a session that does not exist is not invented')
 
     await browser.evaluate(
-      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').querySelector('.twisty').click()`,
+      `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === '_tools_').click()`,
     )
     await browser.waitFor(`![...document.querySelectorAll('#tree .row')].some((entry) => entry.querySelector('.label').textContent === 'some-tool')`, 20_000)
     const toolsClosed = JSON.parse(await browser.evaluate(disclosure('_tools_')))
-    assert.equal(toolsClosed.text, '+', 'and closes the same way')
+    assert.equal(toolsClosed.glyph, 'closed', 'and closes the same way')
+    assert.equal(toolsClosed.expanded, 'false', 'with the state on the tree item')
     assert.equal(toolsClosed.children, 0, 'leaving no group behind')
   } finally {
     browser?.close()

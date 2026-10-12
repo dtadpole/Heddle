@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 
 import { canonicalPath } from '../paths.ts'
+import { existingSessionNames, writeSessionDefinition, type SessionDefinition } from './definition.ts'
 import type { Message } from '../llm/types.ts'
 
 import { SessionStore, defaultSessionRoot, type RecordedMessage, type SessionHandle, type SessionId, type SessionMeta, type SurfaceState } from './store.ts'
@@ -54,6 +55,32 @@ export class SessionService extends Service {
       ...(options.model !== undefined ? { model: options.model } : {}),
       ...(options.title !== undefined ? { title: options.title } : {}),
     })
+  }
+
+  /**
+   * Start a session bound to a folder **and write its definition into that folder**.
+   *
+   * The owner's ruling of 2026-10-11, and the reason this is one call rather than two: the log belongs to
+   * the machine and the definition belongs to the folder, and a session created without the second is a
+   * session nobody can find, review or commit. `fresh` is always true here — asking for a new session is
+   * asking for a new one.
+   */
+  createAt(
+    branch: string,
+    options: { readonly title?: string; readonly endpoint?: string; readonly model?: string } = {},
+  ): { readonly handle: SessionHandle; readonly definition: SessionDefinition } {
+    const canonical = canonicalPath(branch)
+    const taken = existingSessionNames(canonical)
+    const handle = this.openAt(canonical, { fresh: true, ...options })
+    const meta = this.list().find((entry) => entry.id === handle.id)
+    const definition = writeSessionDefinition(handle, canonical, {
+      createdAt: meta?.created ?? new Date().toISOString(),
+      taken,
+      ...(options.title !== undefined ? { title: options.title } : {}),
+      ...(options.endpoint !== undefined ? { endpoint: options.endpoint } : {}),
+      ...(options.model !== undefined ? { model: options.model } : {}),
+    })
+    return { handle, definition }
   }
 
   /** Record a user turn and return once it is on disk. */

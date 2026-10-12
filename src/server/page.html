@@ -1130,6 +1130,15 @@ function kindIcon(kind, open = false) {
     svg.append(svgPath('M4 2h5l3 3v9H4z'), svgPath('M9 2v3h3'))
     return svg
   }
+  if (kind === 'session') {
+    /**
+     * A conversation, not a folder: two speech lines in the same box. A session's `_sessions_` folder is
+     * not drawn at all (the server hoists its instances into the branch), so this glyph is the only thing
+     * that says a row is a session rather than something to walk into.
+     */
+    svg.append(svgPath('M3.2 3.6h9.6v6.2H8.4L5.6 12v-2.2H3.2z'), svgPath('M5.6 6.3h4.8M5.6 8.2h3.2'))
+    return svg
+  }
   svg.append(svgPath(FOLDER_PATH))
   if (open) svg.append(svgPath(FOLDER_OPEN_FRONT))
   if (kind === 'type') svg.append(svgPath(TYPE_MARK))
@@ -1270,6 +1279,29 @@ function closeMenus() {
 function menuItemsFor(node) {
   const items = []
   if (node.kind === 'workspace') {
+    /**
+     * The owner's rule of 2026-10-11: a session can be started at the **top-level workspace** as well as
+     * inside an instance, so a session that belongs to the whole repository has a home. It writes the
+     * session's definition into that branch and leaves the log where logs live.
+     */
+    items.push({
+      label: 'New session',
+      run: async () => {
+        const response = await fetch('/api/sessions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ branch: node.path }),
+        })
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          setNote(body.error ?? 'could not start a session there')
+          return
+        }
+        setNote('')
+        await showSession(body.session)
+        await renderTree()
+      },
+    })
     items.push({
       label: 'Rename…',
       run: async () => {

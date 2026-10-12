@@ -92,6 +92,7 @@ commands:
   sessions                   list the sessions this store holds
   workspaces                 list the workspaces and their sessions
   workspace add <path> [name]  register a target folder as a workspace root
+  session new [<branch>]     start a session at a branch and write its definition there
   workspace rename <id|path> <name>  retitle a root, leaving its path alone
   workspace remove <id|path>   unregister a root, reporting where its sessions went
   tree [<path>]              print one level of the folder tree the left column shows
@@ -287,6 +288,21 @@ function parseArgs(argv: readonly string[]): Args {
          * `--json` as a folder, which is the same trap the comment above records for `web --port`.
          */
         args.command = 'tree'
+        const candidate = argv[index + 1]
+        if (candidate !== undefined && !candidate.startsWith('-')) args.target = next()
+        break
+      }
+      case 'session': {
+        /**
+         * `session new [<branch>]` — the one session verb that writes, and the branch is optional because
+         * asking for no branch means the folder the command runs in.
+         */
+        args.command = 'session'
+        const subcommand = next() ?? ''
+        if (subcommand !== 'new') {
+          throw new Error(`unknown session subcommand '${subcommand}'; try 'heddle session new [<branch>]'`)
+        }
+        args.subcommand = subcommand
         const candidate = argv[index + 1]
         if (candidate !== undefined && !candidate.startsWith('-')) args.target = next()
         break
@@ -716,6 +732,28 @@ async function runCommand(command: string, target: string | undefined, json: boo
       })
       if (json) process.stdout.write(`${JSON.stringify(node, null, 2)}\n`)
       else process.stdout.write(`${describeTree(node).join('\n')}\n`)
+      return true
+    }
+    if (command === 'session') {
+      /**
+       * Where the session belongs: the branch named, or the folder the command runs in. Registering the
+       * owner of that branch keeps "a session always has a workspace" true for a session created *before*
+       * anything has run there, which is the case a root-level session is.
+       */
+      const branch = target !== undefined && target.length > 0 ? canonicalPath(target) : canonicalPath(process.cwd())
+      const workspaces = requireWorkspace(app.ctx)
+      workspaces.ensureOwner(branch)
+      const { handle, definition } = app.ctx.session.createAt(branch, {
+        ...(args.name !== undefined ? { title: args.name } : {}),
+        ...(args.endpoint !== undefined ? { endpoint: args.endpoint } : {}),
+        ...(args.model !== undefined ? { model: args.model } : {}),
+      })
+      if (json) {
+        process.stdout.write(`${JSON.stringify({ session: handle.id, name: definition.name, definition: definition.file, log: definition.log }, null, 2)}\n`)
+      } else {
+        process.stdout.write(`heddle: session ${handle.id} at ${definition.dir}\n`)
+        process.stdout.write(`heddle: its log is ${definition.log}\n`)
+      }
       return true
     }
     if (command === 'file') {

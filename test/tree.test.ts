@@ -240,3 +240,45 @@ test('the reader hands back text, refuses what a viewer cannot show, and says wh
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('a _sessions_ folder is not a node, and its sessions come first in the branch they belong to', () => {
+  const root = scaffold([
+    '_tools_/some-tool',
+    '_tools_/some-tool/_sessions_/first-conversation',
+    '_tools_/some-tool/_sessions_/second-conversation',
+    '_tools_/some-tool/src',
+    '_tools_/empty-tool/_sessions_',
+  ])
+  try {
+    writeFileSync(join(root, '_tools_', 'some-tool', 'INDEX.md'), '# some-tool\n')
+    writeFileSync(join(root, '_tools_', 'some-tool', '_sessions_', 'first-conversation', 'INDEX.md'), '# first\n')
+    writeFileSync(join(root, '_tools_', 'some-tool', '_sessions_', 'second-conversation', 'INDEX.md'), '# second\n')
+    const input: TreeInput = { roots: [{ path: root, title: 'fixture' }], sessions: [] }
+
+    const instance = tree(join(root, '_tools_', 'some-tool'), input)
+    assert.deepEqual(
+      (instance.children ?? []).map((node) => `${node.kind}:${node.label}`),
+      ['session:first-conversation', 'session:second-conversation', 'folder:src', 'file:INDEX.md'],
+      'the sessions are hoisted above the branch’s own files and folders',
+    )
+    assert.ok(
+      !(instance.children ?? []).some((node) => node.label === '_sessions_'),
+      'and the folder that holds them is not a node at all',
+    )
+
+    const level = tree(join(root, '_tools_'), input)
+    assert.ok(
+      !(level.children ?? []).some((node) => node.label === '_sessions_'),
+      'nothing at the type level names it either',
+    )
+
+    // A sessions folder with no session leaves no trace, because there is nothing to show.
+    const empty = tree(join(root, '_tools_', 'empty-tool'), input)
+    assert.deepEqual((empty.children ?? []).map((node) => node.kind), [], 'an empty _sessions_ folder adds no row')
+
+    assert.equal(kindOf(join(root, '_tools_', 'some-tool', '_sessions_', 'first-conversation'), input), 'session')
+    assert.equal(kindOf(join(root, '_tools_', 'some-tool', '_sessions_'), input), 'type', 'asked for directly, it is still a type folder')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

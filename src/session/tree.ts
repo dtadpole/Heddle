@@ -27,7 +27,7 @@ import type { SessionMeta } from './store.ts'
  * vocabulary is optional configuration elsewhere and is not needed to render.
  */
 
-export type NodeKind = 'roots' | 'workspace' | 'type' | 'instance' | 'folder' | 'generated' | 'file'
+export type NodeKind = 'roots' | 'workspace' | 'type' | 'instance' | 'folder' | 'generated' | 'file' | 'session'
 
 /** What a folder's session contributes to its row. */
 export interface TreeSession {
@@ -78,6 +78,15 @@ const TYPE_FOLDER = /^_[a-z0-9]+(_[a-z0-9]+)*_$/
 
 /** Kebab-case, two to four lowercase words. */
 const INSTANCE_NAME = /^[a-z0-9]+(-[a-z0-9]+){1,3}$/
+
+/**
+ * The type folder whose instances are a branch's **sessions**.
+ *
+ * It is named here rather than derived because it is a name the conventions gave a meaning to, and the
+ * tree gives that meaning a shape: the folder is not a node, and each instance inside it is shown as a
+ * session at the top of the branch it belongs to (owner's rule, 2026-10-11).
+ */
+const SESSIONS_FOLDER = '_sessions_'
 
 /** Folders nothing means by "content", so the tree does not enumerate them. */
 const PLUMBING = new Set(['node_modules', '__pycache__'])
@@ -259,17 +268,55 @@ function row(path: string, kind: NodeKind, label: string, context: Context): Omi
 
 /** The direct children of a folder: its subfolders, its files, or a registered root among them. */
 function childrenOf(dir: string, kind: NodeKind, context: Context): TreeNode[] {
-  return entries(dir).map((entry) => {
+  const sessions: TreeNode[] = []
+  const rest: TreeNode[] = []
+  /**
+   * Asked for **by name**, the sessions folder answers with sessions rather than with instances: the
+   * classification a child would normally get comes from its parent's kind, and this parent's meaning is
+   * "the sessions of the branch above me".
+   */
+  const parentIsSessions = basename(dir) === SESSIONS_FOLDER
+
+  for (const entry of entries(dir)) {
     const path = canonicalPath(join(dir, entry.name))
+
+    /**
+     * The sessions folder is **not a node**; the sessions inside it are this branch's own.
+     *
+     * The owner's rule of 2026-10-11: `_sessions_` is a filing folder, not something a person navigates
+     * — a branch's sessions belong to the branch, so each of them is shown directly under it and **first**,
+     * before the folders and files that live there. A folder named `_sessions_` that holds no instance
+     * therefore leaves no trace at all, which is right: there is nothing to show.
+     */
+    if (entry.directory && entry.name === SESSIONS_FOLDER) {
+      for (const session of entries(path)) {
+        if (!session.directory) continue
+        const sessionPath = canonicalPath(join(path, session.name))
+        sessions.push({ ...row(sessionPath, 'session', session.name, context), children: null })
+      }
+      continue
+    }
+
     /**
      * A file is a leaf and says so: `children: []` — asked for and empty — rather than `null`, because
      * "not asked" would invite a client to look for children that cannot exist.
      */
-    if (!entry.directory) return { ...row(path, 'file', entry.name, context), children: [], bytes: entry.bytes }
+    if (!entry.directory) {
+      rest.push({ ...row(path, 'file', entry.name, context), children: [], bytes: entry.bytes })
+      continue
+    }
     const root = context.byPath.get(path)
-    if (root !== undefined) return { ...row(path, 'workspace', root.title, context), children: null }
-    return { ...row(path, classify(entry.name, kind, context.generated), entry.name, context), children: null }
-  })
+    if (root !== undefined) {
+      rest.push({ ...row(path, 'workspace', root.title, context), children: null })
+      continue
+    }
+    rest.push({
+      ...row(path, parentIsSessions ? 'session' : classify(entry.name, kind, context.generated), entry.name, context),
+      children: null,
+    })
+  }
+
+  return [...sessions, ...rest]
 }
 
 /**
@@ -289,8 +336,25 @@ export function kindOf(path: string, input: TreeInput): NodeKind {
   if (owner === undefined) return 'folder'
   const relative = canonical.slice(owner.path.length).split(sep).filter(Boolean)
   let kind: NodeKind = 'workspace'
-  for (const segment of relative) kind = classify(segment, kind, context.generated)
-  return kind
+  let inSessions = false
+  for (const segment of relative) {
+    /**
+     * Past `_sessions_` the next segment is a **session** rather than an instance of a type, because the
+     * folder that would have said so is not drawn. Its own subfolders classify normally from there.
+     */
+    if (segment === SESSIONS_FOLDER) {
+      inSessions = true
+      continue
+    }
+    if (inSessions) {
+      kind = 'session'
+      inSessions = false
+      continue
+    }
+    kind = classify(segment, kind, context.generated)
+  }
+  /** The path *is* the sessions folder: it is a type folder, and asking for it directly lists its sessions. */
+  return inSessions ? 'type' : kind
 }
 
 /** Whether a path is a directory, for the two places that must not treat a file as a folder. */

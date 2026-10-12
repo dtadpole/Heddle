@@ -671,6 +671,39 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
   }
 
   /**
+   * Start a session at a branch, and write its definition into that branch.
+   *
+   * This is the `New session` action on a row, and it works at any branch — including the top-level
+   * workspace root, because a person may want a session that belongs to the whole repository rather than
+   * to one instance. The definition is what makes the session findable and committable; the log stays
+   * machine state (see `src/session/definition.ts`).
+   */
+  if (url.pathname === '/api/sessions' && request.method === 'POST') {
+    const workspaces = ctx.workspace
+    if (workspaces === undefined) {
+      respond(response, 503, 'application/json', `${JSON.stringify({ error: 'this profile does not load the workspace plugin' })}\n`)
+      return
+    }
+    const body = await readJson(request, response)
+    if (body === null) return
+    const wanted = typeof body.branch === 'string' && body.branch.length > 0 ? canonicalPath(body.branch) : canonicalPath(process.cwd())
+    if (workspaces.owner(wanted) === undefined) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: `${wanted} is not under any workspace root` })}\n`)
+      return
+    }
+    const { handle, definition } = ctx.session.createAt(wanted, {
+      ...(typeof body.title === 'string' && body.title.length > 0 ? { title: body.title } : {}),
+    })
+    respond(
+      response,
+      200,
+      'application/json',
+      `${JSON.stringify({ session: handle.id, branch: wanted, name: definition.name, definition: definition.file, log: definition.log }, null, 2)}\n`,
+    )
+    return
+  }
+
+  /**
    * The session a folder is bound to, created when it has none.
    *
    * This is the click that opens a folder: the client asks, the server answers with the folder's
