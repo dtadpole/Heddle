@@ -606,7 +606,7 @@ test('a type inside an instance is a type again', async (context) => {
     const { tree } = await treeAt(h, project)
     const context_ = childOf(tree, '_context_')
     assert.equal(context_?.kind, 'type', 'a type folder inside an instance is a type')
-    assert.equal(context_?.badge, 'CNT', 'badged from its own name, which keeps it apart from _conventions_')
+    assert.equal(context_?.badge, 'CTX', 'badged CTX, the name this UI uses for it, which keeps it apart from _conventions_')
 
     const deeper = await treeAt(h, join(project, '_context_'))
     assert.equal(childOf(deeper.tree, 'source-material')?.kind, 'instance', 'and its own instance is an instance, four levels down')

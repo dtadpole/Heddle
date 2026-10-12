@@ -177,9 +177,11 @@ unregistered; with no vocabulary configured, nothing is claimed about registrati
 hard-code a path into another repository.
 
 **Badges.** A type's badge is the first three letters of its name with the vowels dropped, uppercased
-(`_verifiers_` → `VRF`, `_tools_` → `TLS`, `_context_` → `CNT`, `_conventions_` → `CNV`), padded from
+(`_verifiers_` → `VRF`, `_tools_` → `TLS`, `_context_` → `CTX`, `_conventions_` → `CNV`), padded from
 the full name when fewer than three letters remain. That rule keeps the three `_con..._` types apart,
-which the first two letters do not.
+which the first two letters do not. A name whose derived badge is not the one in use is listed as an
+**override** in `badgeFor` — `_context_` is `CTX` because that is what a reader calls it, while the
+derivation would say `CNT`.
 
 **Icons are per kind, not per type.** One inline SVG per `kind`, plus a session marker and the
 disclosure control. There are 27 registered types and 12 of them do not exist on this machine; a

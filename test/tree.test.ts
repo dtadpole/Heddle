@@ -30,7 +30,7 @@ function session(id: string, cwd: string, created: string, turns = 1): SessionMe
 test('a type badge drops the vowels, which is what keeps the three con types apart', () => {
   assert.equal(badgeFor('_verifiers_'), 'VRF')
   assert.equal(badgeFor('_tools_'), 'TLS')
-  assert.equal(badgeFor('_context_'), 'CNT')
+  assert.equal(badgeFor('_context_'), 'CTX', 'the name this UI uses, which the vowels-dropped derivation does not give')
   assert.equal(badgeFor('_conventions_'), 'CNV')
   assert.equal(badgeFor('_constitutions_'), 'CNS')
   // Fewer than three consonants left: the full name supplies the rest rather than a short badge.

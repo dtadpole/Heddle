@@ -95,15 +95,30 @@ const PLUMBING = new Set(['node_modules', '__pycache__'])
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
 /**
+ * The badges a name is known by when the derivation below does not give the one people use.
+ *
+ * The owner's correction of 2026-10-11: `_context_` is called **`CTX`** in this UI. The derivation says
+ * otherwise — dropping the vowels of `context` leaves `cntxt`, so its three letters are `CNT` — and the
+ * derived badge is not *wrong*, it is just not the abbreviation a reader recognises. The exception is
+ * written down here rather than bent into the rule, because the rule is right for the other names it is
+ * asked about (`VRF`, `TLS`, `CNV`, `CNS`) and an exception that is stated is a fact while one that is
+ * hidden in the arithmetic is a surprise.
+ */
+const BADGE_OVERRIDES: Readonly<Record<string, string>> = { context: 'CTX' }
+
+/**
  * A type's badge: its name with the vowels dropped, uppercased, three letters.
  *
  * The rule is not decoration. Two letters would collide on the three types that matter most here —
  * `_context_`, `_conventions_` and `_constitutions_` all begin `co` — and dropping the vowels gives
  * `CNT`, `CNV` and `CNS`, which do not. When fewer than three consonants remain the full name
- * supplies the rest, so `_web_` does not become a one-letter badge.
+ * supplies the rest, so `_web_` does not become a one-letter badge. A name whose derived badge is not
+ * the one in use is listed in `BADGE_OVERRIDES` above.
  */
 export function badgeFor(name: string): string {
   const letters = name.replace(/_/g, '').toLowerCase()
+  const override = BADGE_OVERRIDES[letters]
+  if (override !== undefined) return override
   const consonants = letters.replace(/[aeiou]/g, '')
   const source = consonants.length >= 3 ? consonants : letters
   return source.slice(0, 3).toUpperCase()
