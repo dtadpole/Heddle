@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480" viewBox="23.833147736 40 480 480" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="440" viewBox="43.833147736 60 440 440" role="img" aria-labelledby="title desc">
   <title id="title">Heddle woven HD icon, black and white</title>
   <desc id="desc">Black H and D on a transparent background with 16-unit separation cuts and subtle 2-unit cut-edge corner radii. The D has a centered horizontal cut.</desc>
   <metadata>
@@ -12,7 +12,7 @@
     D inner bottom: y=296, aligned to the lower edge of the shared H cut.
     H-to-D separation: x=280..296. Crossbar-to-stem separation: x=184..200.
     Bottom pieces are exact reflections about y=216 (viewBox y=280).
-    Canvas: 480 by 480, centered on the visible HD bounds without scaling the geometry.
+    Canvas: 440 by 440, centered on the visible HD bounds without scaling the geometry.
     Coordinates above precede the common 64-unit vertical translation.
   </metadata>
   <g transform="translate(0 64)">
