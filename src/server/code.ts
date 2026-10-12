@@ -31,7 +31,7 @@ import { escapeHtml, renderMarkdown } from './markdown.ts'
  */
 
 /** What the file panel should do with a file. */
-export type RendererName = 'markdown' | 'code' | 'text'
+export type RendererName = 'markdown' | 'html' | 'code' | 'text'
 
 /** A decision about one file, and the markup when there is any. */
 export interface Rendered {
@@ -80,8 +80,11 @@ const LANGUAGES: Readonly<Record<string, string>> = {
   '.hpp': 'cpp',
   '.cc': 'cpp',
   '.css': 'css',
-  '.html': 'xml',
-  '.htm': 'xml',
+  /**
+   * **Removed** from this map on 2026-10-12: an HTML document was being shown as syntax-highlighted XML, which is a
+   * file's source rather than the page it is. It is a renderer of its own now — `rendererFor` answers `html` and the
+   * client shows it in a sandboxed frame — and the `xml` grammar is left to XML, which is not a page.
+   */
   '.svg': 'xml',
   '.xml': 'xml',
   '.diff': 'diff',
@@ -97,6 +100,15 @@ export function languageFor(path: string): string | undefined {
 export function rendererFor(path: string): { readonly renderer: RendererName; readonly language?: string } {
   const extension = extname(path).toLowerCase()
   if (extension === '.md' || extension === '.markdown') return { renderer: 'markdown' }
+  /**
+   * A page is previewed **as a page**, not as its source.
+   *
+   * A `.html` file has no shared source of truth with this file's escaping: it is a document with its own markup,
+   * styles and resources, and showing it as highlighted text is answering a different question from "what does this
+   * page look like". The rendering happens in the client, where a DOM and a sanitiser exist, and the server's part is
+   * the route that rewrites the document's relative resources.
+   */
+  if (extension === '.html' || extension === '.htm') return { renderer: 'html' }
   const language = LANGUAGES[extension]
   return language === undefined ? { renderer: 'text' } : { renderer: 'code', language }
 }
@@ -235,6 +247,17 @@ export function renderSource(path: string, text: string): Rendered {
   }
   if (decision.renderer === 'code' && decision.language !== undefined) {
     return { renderer: 'code', language: decision.language, html: renderCode(text, decision.language) }
+  }
+  /**
+   * A page has no markup **here**, and that is deliberate rather than a gap: this function's answer is JSON about a
+   * file, while the document itself comes from the HTML route with its resources rewritten, and the client puts it in
+   * a sandboxed frame. The name is what tells the client which of the two to ask for.
+   *
+   * Measured: without this branch the decision fell through to `text`, so an HTML file was previewed by reading it out
+   * as plain text — a page shown as its own source, which is the behaviour this was meant to replace.
+   */
+  if (decision.renderer === 'html') {
+    return { renderer: 'html' }
   }
   return { renderer: 'text' }
 }

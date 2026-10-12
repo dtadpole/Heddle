@@ -110,7 +110,7 @@ test('a language is chosen by extension, and an unknown one is shown as text', (
     ['/x/state.yaml', 'yaml'],
     ['/x/Cargo.toml', 'ini'],
     ['/x/style.css', 'css'],
-    ['/x/index.html', 'xml'],
+    ['/x/data.xml', 'xml'],
     ['/x/fix.patch', 'diff'],
   ] as const) {
     assert.equal(languageFor(path), language, `${path} is recognised`)

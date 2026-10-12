@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { browserAvailable, openBrowser } from '../../_tools_/check-helpers/browser.mjs'
+import { writeFileSync } from 'node:fs'
+
 import { fixtureDir, isolatedHome, removeDir, runCli, scriptedConfig, skipUnless } from '../../_tools_/check-helpers/lib.mjs'
 
 /**
@@ -174,6 +176,107 @@ test('the server renders each file type, and the page offers no second surface',
   }
 })
 
+test('an html document is previewed as a page, and nothing in it can act', async (context) => {
+  if (!skipUnless(context, await supportsWeb(), CAPABILITY)) return
+  if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
+  const home = isolatedHome('html-view')
+  const work = fixtureDir('html-view')
+  const { config } = scriptedConfig({ home, steps: [{ text: 'ready' }] })
+  /**
+   * A document written for this check, with everything a preview must refuse: a script, an inline handler, an iframe,
+   * a form, and a working image beside it — so the check can tell "the document's own resources load" from "the
+   * document was reduced to text".
+   */
+  writeFileSync(
+    join(work, 'page.html'),
+    [
+      '<!doctype html><html><head><title>Fixture</title>',
+      '<style>h1 { color: rgb(1, 2, 3) }</style></head><body>',
+      '<h1>Fixture page</h1>',
+      '<img src="mark.svg" alt="beside it" width="40" height="40">',
+      '<img src="missing.png" onerror="window.__pwned = 1">',
+      '<script>window.__pwned = 1</script>',
+      '<iframe src="https://example.com"></iframe>',
+      '<form action="https://example.com"><input name="x"></form>',
+      '</body></html>',
+    ].join('\n'),
+  )
+  writeFileSync(join(work, 'mark.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#E68000"/></svg>')
+
+  const server = await startCli(['web', '--host', '127.0.0.1', '--port', '0', '--session-root', join(home, 'sessions')], {
+    HEDDLE_HOME: home,
+    HEDDLE_CONFIG: config,
+  })
+  const browser = await openBrowser({ width: 1400, height: 900 })
+  try {
+    const cookie = await handshakeCookie(server.url)
+    const origin = new URL(server.url).origin
+    /** The fixture is made a workspace, which is what makes its files reachable through the routes. */
+    await fetch(`${origin}/api/workspaces`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ path: work }),
+    })
+
+    /** The route's answer: the document with its resources rewritten, and the policy it must run under. */
+    const payload = await (await fetch(`${origin}/api/html?path=${encodeURIComponent(join(work, 'page.html'))}`, { headers: { cookie } })).json()
+    assert.ok(String(payload.html).includes(join(work, 'mark.svg').split('/').pop() ?? ''), 'the document came back')
+    assert.match(String(payload.html), /\/api\/raw\?path=/, 'with its relative image pointed at the route that serves it')
+    assert.match(String(payload.csp), /script-src 'none'/, 'and a policy that forbids script')
+
+    await browser.goto(server.url)
+    await browser.waitFor('document.querySelectorAll("#tree .row").length > 0', 20_000)
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_500))
+    await browser.evaluate(`(() => { const row = [...document.querySelectorAll('#tree .row')].find((x) => x.querySelector('.label').textContent === ${JSON.stringify(work.split('/').pop() ?? '')}); if (row) row.click() })()`)
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_500))
+    const clicked = await browser.evaluate(`(() => { const row = [...document.querySelectorAll('#tree .row')].find((x) => x.querySelector('.label').textContent === 'page.html'); if (row === undefined) return false; row.click(); return true })()`)
+    assert.ok(clicked, 'the page is in the tree')
+    assert.ok(await browser.waitFor('!document.getElementById("file-html").hidden', 20_000), 'the frame is shown rather than the text pane')
+
+    const framed = JSON.parse(
+      await browser.evaluate(`(() => {
+        const frame = document.getElementById('html-view')
+        const inner = frame.contentDocument
+        if (inner === null) return JSON.stringify({ reachable: false })
+        const images = [...inner.querySelectorAll('img')]
+        return JSON.stringify({
+          reachable: true,
+          sandbox: frame.getAttribute('sandbox'),
+          scripts: inner.querySelectorAll('script').length,
+          iframes: inner.querySelectorAll('iframe').length,
+          forms: inner.querySelectorAll('form').length,
+          inputs: inner.querySelectorAll('input').length,
+          handlers: [...inner.querySelectorAll('*')].filter((e) => [...e.attributes].some((a) => a.name.startsWith('on'))).length,
+          policy: inner.querySelector('meta[http-equiv="Content-Security-Policy"]') === null ? 'missing' : 'present',
+          heading: (inner.querySelector('h1') || {}).textContent,
+          headingColour: inner.querySelector('h1') === null ? null : getComputedStyle(inner.querySelector('h1')).color,
+          images: images.length,
+          imagesLoaded: images.filter((i) => i.complete && i.naturalWidth > 0).length
+        })
+      })()`),
+    )
+    assert.ok(framed.reachable, 'the frame holds a document')
+    /**
+     * The sandbox is the boundary, so it is asserted rather than assumed: `allow-same-origin` lets the frame fetch its
+     * own resources through this server, and **no** `allow-scripts` is what stops the document running.
+     */
+    assert.equal(framed.sandbox, 'allow-same-origin', 'the frame allows resources and no scripts')
+    assert.equal(framed.scripts, 0, 'a script element was removed')
+    assert.equal(framed.handlers, 0, 'and an inline handler with it')
+    assert.equal(framed.iframes, 0, 'nothing may be framed inside it')
+    assert.equal(framed.forms + framed.inputs, 0, 'and nothing may be submitted')
+    assert.equal(framed.policy, 'present', 'the document carries the policy the browser enforces')
+    assert.equal(framed.heading, 'Fixture page', 'the page rendered as a page rather than as its source')
+    assert.equal(framed.headingColour, 'rgb(1, 2, 3)', "with the document's own stylesheet applied")
+    assert.ok(framed.imagesLoaded > 0, `and its own image loaded (${framed.imagesLoaded} of ${framed.images})`)
+  } finally {
+    browser.close()
+    server.kill()
+    removeDir(home)
+    removeDir(work)
+  }
+})
+
 test('a click in the left panel opens the one preview, rendered for its type and styled', async (context) => {
   if (!skipUnless(context, await supportsWeb(), CAPABILITY)) return
   if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
@@ -221,6 +324,7 @@ test('a click in the left panel opens the one preview, rendered for its type and
             gutterWidth: (() => { const ln = body.querySelector('.ln'); return ln === null ? 0 : Math.round(ln.getBoundingClientRect().width) })(),
             gutterNarrow: (() => { const ln = body.querySelector('.ln'); return ln !== null && ln.getBoundingClientRect().width < 34 })(),
             stackIncludesCjk: /PingFang|YaHei|Heiti|Songti/i.test(getComputedStyle(body).fontFamily),
+            links: body.querySelectorAll('a[data-heddle-path]').length,
             images: body.querySelectorAll('img').length,
             imagesLoaded: [...body.querySelectorAll('img')].filter((image) => image.complete && image.naturalWidth > 0).length,
             classes: new Set([...body.querySelectorAll('span[class^="hljs-"]')].map((span) => span.className)).size,
@@ -274,6 +378,37 @@ test('a click in the left panel opens the one preview, rendered for its type and
      * the text has not finished its job, whatever the markup looks like.
      */
     assert.equal(source.entityCodes, 0, `no entity code is visible in the text (${source.entityCodes} found)`)
+
+    /**
+     * A link to a file in the workspace is followed **in the panel**.
+     *
+     * Measured, and it is the owner's report: `[x](DEPLOY.md)` asked the browser for `/DEPLOY.md`, which answered
+     * `404`, so following a link lost the document being read. A plain click now opens the file here; the address
+     * stays real, so the status bar and a middle-click still point somewhere.
+     */
+    const linked = await openFile('ULTIMATE_GOAL.md')
+    assert.ok(linked.links > 0, `the document has links to other files (${linked.links})`)
+    const followed = JSON.parse(
+      await browser.evaluate(`(async () => {
+        const anchor = [...document.querySelectorAll('#file-body a[data-heddle-path]')][0]
+        if (anchor === undefined) return JSON.stringify({ missing: true })
+        const before = location.pathname
+        anchor.click()
+        await new Promise((done) => setTimeout(done, 2_500))
+        return JSON.stringify({
+          before,
+          after: location.pathname,
+          head: document.getElementById('file-head').textContent,
+          renderer: document.getElementById('file-body').dataset.renderer,
+          chars: document.getElementById('file-body').innerText.length
+        })
+      })()`),
+    )
+    assert.ok(!followed.missing, 'a link to another file is marked for the panel')
+    assert.equal(followed.after, followed.before, 'following it does not navigate the page away')
+    assert.match(followed.head, /INDEX\.md|ULTIMATE_GOAL\.md|_verifiers_/, `the panel shows the file that was linked (${followed.head})`)
+    assert.equal(followed.renderer, 'markdown', 'rendered, not shown as a source file')
+    assert.ok(followed.chars > 500, `and its content is there (${followed.chars} characters)`)
 
     /**
      * The image in a document is **fetched and decoded**, not merely referenced.

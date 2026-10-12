@@ -40,6 +40,7 @@ backticks, while the same document in the other tab looked right.
 | 11 | a file a browser would run is served as a download, and a path outside every workspace root as nothing | the route carries the session cookie, so serving an `.html` inline would be a same-origin page the harness runs by being viewed |
 | 12 | the code is set at a readable size with leading, a **CJK fallback** in its stack, and a narrow gutter | a bare `monospace` resolves to a face with no CJK coverage, so a mixed line loses its column |
 | 13 | each appearance has its own palette, on a surface the page paints itself | a palette written for a dark surface puts pale text on white on a light system |
+| 14 | a link to a file in the workspace is followed **in the panel**, and the page does not navigate away | measured: `[x](DEPLOY.md)` asked for `/DEPLOY.md`, which answered `404`, so a reader lost the document to reach a blank page |
 
 ## How it is judged
 
