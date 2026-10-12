@@ -126,6 +126,33 @@ test('the server renders each file type, and the page offers no second surface',
     assert.match(String(hostile.html), /<table>/, 'a table is a table, with its cells')
     assert.ok(!String(hostile.html).includes('onclick'), 'and no attribute of the document survives')
 
+    /**
+     * An embedded image is **served**, which is the half markdown could not do on its own.
+     *
+     * Measured: the renderer produced `<img src="heddle.svg">` and the browser asked for it at the server root, which
+     * answered `404` — a document with an image showed alt text and a broken marker. The raw route serves a file's
+     * bytes, with the type chosen so a browser renders an image and does **not** execute anything else.
+     */
+    const asset = await fetch(`${origin}/api/raw?path=${encodeURIComponent('/Users/zhenc/heddle/heddle.svg')}`, { headers: { cookie } })
+    assert.equal(asset.status, 200, 'an image in a workspace is served')
+    assert.equal(asset.headers.get('content-type'), 'image/svg+xml', 'with the type its extension names')
+    assert.equal(asset.headers.get('content-disposition'), 'inline', 'and inline, so it renders in the document')
+    assert.ok((await asset.arrayBuffer()).byteLength > 500, 'with its bytes')
+
+    /**
+     * And a file a browser would **run** is not served inline, even though it is served.
+     *
+     * This is the rule that makes the route safe to give a session cookie: a workspace can hold an `.html` file, and
+     * a route that handed that back as `text/html` would be a same-origin page the harness runs by being viewed.
+     */
+    const runnable = await fetch(`${origin}/api/raw?path=${encodeURIComponent('/Users/zhenc/heddle/README.md')}`, { headers: { cookie } })
+    assert.equal(runnable.status, 200, 'a markdown file is served too')
+    assert.notEqual(runnable.headers.get('content-type'), 'text/markdown', 'but not as something a browser renders as a page')
+    assert.match(String(runnable.headers.get('content-disposition')), /attachment/, 'it is offered as a download instead')
+
+    const outside = await fetch(`${origin}/api/raw?path=${encodeURIComponent('/etc/passwd')}`, { headers: { cookie } })
+    assert.equal(outside.status, 404, 'a path outside every workspace root is not served')
+
     const refused = await fetch(`${origin}/api/file?path=${encodeURIComponent('/etc/passwd')}`, { headers: { cookie } })
     assert.equal(refused.status, 400, 'a file outside every workspace root is refused')
 
@@ -189,6 +216,8 @@ test('a click in the left panel opens the one preview, rendered for its type and
             renderer: body.dataset.renderer,
             chars: body.innerText.length,
             highlighted: body.querySelectorAll('span[class^="hljs-"]').length,
+            images: body.querySelectorAll('img').length,
+            imagesLoaded: [...body.querySelectorAll('img')].filter((image) => image.complete && image.naturalWidth > 0).length,
             classes: new Set([...body.querySelectorAll('span[class^="hljs-"]')].map((span) => span.className)).size,
             colours: new Set([...body.querySelectorAll('span[class^="hljs-"]')].map((span) => getComputedStyle(span).color)).size,
             entityCodes: (body.innerText.match(/&#x?[0-9a-fA-F]+;/g) ?? []).length,
@@ -240,6 +269,19 @@ test('a click in the left panel opens the one preview, rendered for its type and
      * the text has not finished its job, whatever the markup looks like.
      */
     assert.equal(source.entityCodes, 0, `no entity code is visible in the text (${source.entityCodes} found)`)
+
+    /**
+     * The image in a document is **fetched and decoded**, not merely referenced.
+     *
+     * `naturalWidth > 0` is the only reading that proves it: an `<img>` with a broken source still exists in the DOM
+     * and still has a `src`, so counting elements would pass while a reader sees a broken marker.
+     */
+    const illustration = await openFile('README.md')
+    assert.ok(illustration.images > 0, `the document embeds an image (${illustration.images})`)
+    assert.ok(
+      illustration.imagesLoaded > 0,
+      `and the browser loaded it (${illustration.imagesLoaded} of ${illustration.images} decoded)`,
+    )
 
     /** Neither: shown as it is, and still not interpreted. */
     const plain = await openFile('LICENSE')

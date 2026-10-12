@@ -1,3 +1,5 @@
+import { isAbsolute, resolve } from 'node:path'
+
 import { Marked, type Tokens } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 
@@ -52,6 +54,29 @@ export function safeUrl(url: string): string | null {
 }
 
 /**
+ * Where an embedded subresource should be fetched from.
+ *
+ * A document's relative reference — `![icon](heddle.svg)` — means *beside this document*, and a browser resolves it
+ * against the **page URL** instead, which is the server root. Measured: that request answered `404`, so a document
+ * with an image in it showed alt text and a broken marker. The reference is therefore resolved against the
+ * document's own folder and handed to the route that serves a file's bytes.
+ *
+ * A remote URL is left exactly as written: it is the author's choice, it is not this server's to re-host, and
+ * `safeUrl` has already refused the schemes that would run code. A `data:` image is not a file at all, so it is
+ * refused here — the alternative is a document smuggling an arbitrary payload into the page.
+ */
+function resolveImage(href: string, base: string | undefined): string | null {
+  const trimmed = href.trim()
+  if (trimmed.length === 0) return null
+  if (/^(?:https?:)?\/\//i.test(trimmed) || trimmed.startsWith('data:')) return null
+  if (base === undefined) return null
+  /** A fragment or an absolute URL is not a file to look for beside the document. */
+  if (trimmed.startsWith('#')) return null
+  const absolute = isAbsolute(trimmed) ? trimmed : resolve(base, trimmed)
+  return `/api/raw?path=${encodeURIComponent(absolute)}`
+}
+
+/**
  * The parser, configured once.
  *
  * `gfm` stays on because it is the dialect a document in a repository is written in. `breaks` stays **off**: one
@@ -59,6 +84,15 @@ export function safeUrl(url: string): string | null {
  * into its own line.
  */
 const marked = new Marked({ gfm: true, breaks: false })
+
+/**
+ * The folder a document's relative images resolve against, for the parse in progress.
+ *
+ * One module-level value rather than a closure per document, because `marked`'s renderer hooks cannot be handed
+ * per-call state: the parse is synchronous and single-threaded, so this is set immediately before a parse and read
+ * during it. The setter below is the only writer.
+ */
+let imageBase: string | undefined
 
 /**
  * A leading `_` is escaped, so a name is a name.
@@ -145,8 +179,10 @@ marked.use({
       const label = tokens === undefined ? escapeHtml(text) : this.parser.parseInline(tokens as unknown[])
       const target = safeUrl(href)
       if (target === null) return label
+      /** The base is set per parse, so one document's relative images do not resolve against another's. */
+      const source = resolveImage(target, imageBase) ?? target
       const heading = title === null || title === undefined ? '' : ` title="${escapeHtml(title)}"`
-      return `<img src="${escapeHtml(target)}" alt="${escapeHtml(text)}"${heading}>`
+      return `<img src="${escapeHtml(source)}" alt="${escapeHtml(text)}"${heading}>`
     },
   },
 })
@@ -167,7 +203,8 @@ export function renderInline(text: string): string {
  * A leading YAML block is lifted out and shown as metadata rather than parsed: every document in this repository
  * opens with frontmatter, and as markdown it renders as a horizontal rule and a heading made of the first key.
  */
-export function renderMarkdown(source: string): string {
+export function renderMarkdown(source: string, options: { readonly base?: string } = {}): string {
+  imageBase = options.base
   const text = String(source ?? '').replace(/\r\n?/g, '\n')
   const front = /^---\n([\s\S]*?)\n---\n?/.exec(text)
   const body = front === null ? text : text.slice(front[0].length)

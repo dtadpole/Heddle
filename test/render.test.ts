@@ -170,3 +170,50 @@ test('an ampersand and an angle bracket survive a round trip through the highlig
   assert.equal(textOf(html), source, 'the file comes back exactly')
   assert.ok(!/&amp;(amp|lt|gt);/.test(html), 'and nothing is escaped twice')
 })
+
+test('an embedded image is served by the raw route, resolved beside its document', () => {
+  /**
+   * The owner's report: markdown rendered `<img src="heddle.svg">` and the browser asked for it at the server root,
+   * which answered `404` — so a document with an image in it showed alt text and a broken marker. The reference now
+   * resolves against the **document's** folder and lands on the route that serves a file's bytes.
+   */
+  const document = String(renderSource('/Users/zhenc/heddle/README.md', '![icon](heddle.svg)').html)
+  assert.match(document, /<img src="\/api\/raw\?path=%2FUsers%2Fzhenc%2Fheddle%2Fheddle\.svg" alt="icon">/, 'beside the document')
+
+  const nested = String(renderSource('/Users/zhenc/heddle/_context_/notes.md', '![icon](../heddle.svg)').html)
+  assert.match(nested, /%2FUsers%2Fzhenc%2Fheddle%2Fheddle\.svg/, 'a parent reference resolves to the same file')
+})
+
+test('an image cannot make the server fetch somewhere else, or carry a payload', () => {
+  /**
+   * The rules matter more than the feature: a document is untrusted text, and an image reference is a URL it can
+   * choose. A remote URL is left as the author wrote it, because re-hosting it is not this server's job; a scheme
+   * that would run code is refused; and a `data:` image is refused because a document that can embed an arbitrary
+   * payload in the page is a document that can smuggle one there.
+   */
+  const remote = String(renderSource('/x/a.md', '![r](https://example.com/a.png)').html)
+  assert.match(remote, /src="https:\/\/example\.com\/a\.png"/, 'a remote image is left alone')
+
+  for (const [source, why] of [
+    ['![x](javascript:alert(1))', 'a script scheme'],
+    ['![x](data:image/png;base64,AAAA)', 'an embedded payload'],
+    ['![x](vbscript:msgbox(1))', 'another script scheme'],
+  ] as const) {
+    const html = String(renderSource('/x/a.md', source).html)
+    assert.ok(!html.includes('<img'), `${why} produces no image element`)
+    assert.match(html, /x/, 'and the alt text is kept so the document still reads')
+  }
+})
+
+test('one document\'s relative image does not resolve against another\'s folder', () => {
+  /**
+   * The base is set for the duration of one parse. If it leaked, a document parsed after another would resolve its
+   * images against the wrong folder — a bug that would only appear when two documents are rendered in sequence,
+   * which is exactly what the panel does.
+   */
+  const first = String(renderSource('/one/notes.md', '![a](x.png)').html)
+  const second = String(renderSource('/two/notes.md', '![a](x.png)').html)
+  assert.match(first, /%2Fone%2Fx\.png/, 'the first resolves in its own folder')
+  assert.match(second, /%2Ftwo%2Fx\.png/, 'and the second in its own')
+  assert.ok(!second.includes('%2Fone%2F'), 'with nothing carried over')
+})

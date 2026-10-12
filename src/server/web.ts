@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { networkInterfaces } from 'node:os'
-import { join } from 'node:path'
+import { basename, extname, join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -331,6 +331,54 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
       url.pathname.startsWith('/api') ? 'text/plain' : 'text/html; charset=utf-8',
       url.pathname.startsWith('/api') ? 'unauthorized\n' : tokenFormPage(),
     )
+    return
+  }
+
+  /**
+   * A file's **bytes**, so a document's embedded images and other subresources can load.
+   *
+   * Measured, and it is the owner's report: markdown rendered `<img src="heddle.svg">` correctly and the browser
+   * then asked this server for `/heddle.svg`, which answered `404` — the renderer was never the missing piece, a
+   * **file was simply not served**. A document with an image in it showed alt text and a broken-image marker.
+   *
+   * Two rules, and both are the ones `/api/file` already applies: the path must be inside a workspace root, and the
+   * caller must have the session cookie the page was opened with. What is new is only that the body is bytes rather
+   * than JSON.
+   *
+   * The `content-type` is chosen from a small map and **defaults to a download**, never to something a browser will
+   * run: a workspace can contain an `.html` file or a `.js` one, and a route that served those inline with the
+   * session cookie attached would be a same-origin script the harness runs by being viewed. Only the types a
+   * document embeds are served inline.
+   */
+  if (url.pathname === '/api/raw' && request.method === 'GET') {
+    const workspaces = ctx.workspace
+    const wanted = url.searchParams.get('path')
+    if (wanted === null || wanted.length === 0) {
+      respond(response, 400, 'text/plain', 'a path is required\n')
+      return
+    }
+    if (workspaces === undefined || workspaces.owner(wanted) === undefined) {
+      respond(response, 404, 'text/plain', 'no such asset\n')
+      return
+    }
+    try {
+      const stats = statSync(wanted)
+      if (!stats.isFile()) {
+        respond(response, 404, 'text/plain', 'no such asset\n')
+        return
+      }
+      const contentType = inlineContentType(wanted)
+      response.writeHead(200, {
+        'content-type': contentType ?? 'application/octet-stream',
+        'content-length': String(stats.size),
+        /** `inline` only for a type a document embeds; anything else is offered as a download. */
+        'content-disposition': contentType === null ? `attachment; filename="${basename(wanted).replace(/"/g, '')}"` : 'inline',
+        'cache-control': 'no-store',
+      })
+      response.end(readFileSync(wanted))
+    } catch {
+      respond(response, 404, 'text/plain', 'no such asset\n')
+    }
     return
   }
 
@@ -978,6 +1026,25 @@ function respondSse(response: ServerResponse): void {
     'x-accel-buffering': 'no',
   })
   response.write(': heddle stream open\n\n')
+}
+
+/**
+ * The type a document may embed inline, or `null` for anything a browser should not run in this origin.
+ *
+ * A deny-by-default map rather than a lookup of everything known: the list is the types an `<img>`, an `@font-face`
+ * or a `<video>` needs, and a file outside it is still served — as a download, so a person can have it without the
+ * page executing it.
+ */
+function inlineContentType(path: string): string | null {
+  const extension = extname(path).toLowerCase()
+  const known: Readonly<Record<string, string>> = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+    '.webp': 'image/webp', '.avif': 'image/avif', '.bmp': 'image/bmp', '.ico': 'image/x-icon',
+    '.svg': 'image/svg+xml', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg',
+    '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.woff': 'font/woff', '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf', '.otf': 'font/otf', '.pdf': 'application/pdf',
+  }
+  return known[extension] ?? null
 }
 
 function respond(response: ServerResponse, status: number, contentType: string, body: string): void {

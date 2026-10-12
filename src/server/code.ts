@@ -1,4 +1,4 @@
-import { extname } from 'node:path'
+import { dirname, extname } from 'node:path'
 
 import { highlightCode } from './highlight.ts'
 import { escapeHtml, renderMarkdown } from './markdown.ts'
@@ -224,7 +224,15 @@ export function renderCode(source: string, language: string): string {
 /** Decide how to show one file's text, and produce the markup when there is any. */
 export function renderSource(path: string, text: string): Rendered {
   const decision = rendererFor(path)
-  if (decision.renderer === 'markdown') return { renderer: 'markdown', html: `<div class="markdown">${renderMarkdown(text)}</div>` }
+  /**
+   * The document's own folder is the base for its relative images, so `![icon](heddle.svg)` in
+   * `_context_/notes.md` looks beside that file rather than at the server root. Measured before this: the browser
+   * resolved the reference against the page URL, the request answered `404`, and a document with an image showed a
+   * broken marker.
+   */
+  if (decision.renderer === 'markdown') {
+    return { renderer: 'markdown', html: `<div class="markdown">${renderMarkdown(text, { base: dirname(path) })}</div>` }
+  }
   if (decision.renderer === 'code' && decision.language !== undefined) {
     return { renderer: 'code', language: decision.language, html: renderCode(text, decision.language) }
   }

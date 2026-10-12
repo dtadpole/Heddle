@@ -36,6 +36,8 @@ backticks, while the same document in the other tab looked right.
 | 7 | a file outside every workspace root is refused | a preview that can be asked for any path is disclosure with a renderer in front |
 | 8 | a source file's tokens resolve to **different colours**, not merely carrying the highlighter's classes | spans in the markup prove the library ran; only the computed colour proves a reader can see it |
 | 9 | no entity code is visible in the text | the highlighter writes a single quote as hexadecimal, and a decoder that knows only the decimal spelling leaves `&#x27;` on screen |
+| 10 | an image in a document is **fetched and decoded**, not merely referenced | an `img` with a broken source still has a `src`, so counting elements passes while a reader sees a broken marker |
+| 11 | a file a browser would run is served as a download, and a path outside every workspace root as nothing | the route carries the session cookie, so serving an `.html` inline would be a same-origin page the harness runs by being viewed |
 
 ## How it is judged
 

@@ -200,7 +200,14 @@
   .markdown blockquote { border-left: 3px solid var(--line); margin-left: 0; padding-left: .8rem; opacity: .85; }
   .markdown hr { border: none; border-top: 1px solid var(--line); margin: 1.2rem 0; }
   .markdown a { color: #6aa6ff; }
-  .markdown img { max-width: 100%; }
+  /**
+   * An embedded image fits the pane, and is not drawn larger than its own file.
+   *
+   * `max-width: 100%` keeps a wide image inside the column; `max-height` keeps a tall one from pushing the rest of
+   * the document a screen down — measured on this repository's own icon, which is 560x560 and filled the pane.
+   * `height: auto` lets it scale by its own proportions rather than being stretched to a box.
+   */
+  .markdown img { max-width: 100%; max-height: 340px; height: auto; }
   /**
    * A table is a table: bordered cells, a header rule, and its own horizontal scroll when it is wider than the
    * pane. Measured before this — the markup was right and the cells ran together with no borders, which reads as
