@@ -193,10 +193,18 @@ test('an image written as HTML resolves beside its document too, which is what c
    * attribute it is deciding, and the document's own resolution applies to both spellings of an image.
    */
   const centred = String(
-    renderSource('/Users/zhenc/heddle/README.md', '<p align="center">\n  <img src="heddle.svg" alt="icon" width="256">\n</p>').html,
+    renderSource('/Users/zhenc/heddle/README.md', '<p align="center">\n  <img src="heddle.svg" alt="icon" width="160">\n</p>').html,
   )
   assert.match(centred, /align="center"/, 'the wrapper survives, since markdown cannot centre anything')
   assert.match(centred, /src="\/api\/raw\?path=%2FUsers%2Fzhenc%2Fheddle%2Fheddle\.svg"/, 'and the image resolves beside the document')
+  /**
+   * And the size the document asked for survives: the file is 560 units and the README shows it at 160, so a view
+   * that dropped the attribute showed one size while GitHub showed another.
+   */
+  assert.match(centred, /width="160"/, 'the width the document asked for is kept')
+  const nonsense = String(renderSource('/Users/zhenc/heddle/x.md', '<img src="heddle.svg" width="wide" height="1;color:red">').html)
+  assert.ok(!/width="wide"/.test(nonsense), 'a width that is not a number is dropped')
+  assert.ok(!/height="1;color:red"/.test(nonsense), 'and neither does a value reach the page as styling')
 
   /** And a reference that is already resolved is left alone: resolving twice wraps the route in itself. */
   const twice = String(renderSource('/Users/zhenc/heddle/README.md', '![icon](heddle.svg)').html)

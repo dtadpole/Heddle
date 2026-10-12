@@ -23,7 +23,18 @@ const ALLOWED = new Set([
 ])
 
 /** Attributes a document view uses. `class` is here for the renderer's own language and frontmatter hooks. */
-const ATTRS = new Set(['align', 'alt', 'checked', 'class', 'disabled', 'href', 'id', 'src', 'title', 'type'])
+const ATTRS = new Set(['align', 'alt', 'checked', 'class', 'disabled', 'height', 'href', 'id', 'src', 'title', 'type', 'width'])
+
+/**
+ * Attributes that may only be a **number of pixels**.
+ *
+ * A document that embeds an image may say how large it is shown, and it needs to: measured, the README's icon is
+ * 560 units in the file and the owner asked for it at 160 in the document. Without these the document's wish was
+ * dropped and every reader of this view saw the file's own size, while a reader of GitHub saw 160 — one document,
+ * two sizes. The value is checked rather than trusted: these attributes are for a count of pixels, so a number is
+ * what survives, and a document cannot reach the page's styling through them.
+ */
+const NUMERIC_ATTRS = new Set(['height', 'width'])
 
 /** Elements whose **text** is not content: dropping the tag must drop what is inside it. */
 const DROP_WITH_CONTENT = new Set(['script', 'style', 'iframe', 'object', 'embed', 'template', 'noscript'])
@@ -131,6 +142,11 @@ export function sanitizeHtml(html: string, options: SanitizeOptions = {}): strin
       }
       cursor = attribute.end
       if (!ATTRS.has(attribute.name)) continue
+      if (NUMERIC_ATTRS.has(attribute.name)) {
+        if (!/^\d{1,4}$/.test(attribute.value)) continue
+        attributes.push(`${attribute.name}="${attribute.value}"`)
+        continue
+      }
       if (URL_ATTRS.has(attribute.name)) {
         const decided =
           options.url === undefined ? attribute.value : options.url(attribute.value, { tag: name, attribute: attribute.name })
