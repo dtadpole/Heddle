@@ -442,6 +442,15 @@
   #brand-name { font-family: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif; font-size: 1.06rem; font-weight: 600; letter-spacing: .01em; }
   .untwisty { font: inherit; padding: 0 .3rem; opacity: .55; }
   .untwisty:hover { opacity: 1; }
+  /**
+   * One tool element, two halves: what was asked and what came back. The call and its result share a
+   * block, and the state is a colour on the summary rather than a second row — which is how DSH marks
+   * it, and what keeps a failure visible while the block is closed.
+   */
+  .turn.tool[data-state='running'] > summary { opacity: .75; }
+  .turn.tool[data-state='error'] > summary { color: #d14343; }
+  .turn.tool pre { margin: .25rem 0 0; padding: .35rem .5rem; background: color-mix(in oklab, currentColor 6%, transparent); border-radius: .25rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .turn.tool pre.result { border-left: 2px solid color-mix(in oklab, currentColor 25%, transparent); }
 </style>
 </head>
 <body>
@@ -559,7 +568,7 @@ const list = document.getElementById('adhoc')
 const adhocNote = document.getElementById('adhoc-note')
 let current = null
 
-function add(kind, text, merge = true, label) {
+function add(kind, text, merge = true, label, tool) {
   if (text === '' || text === undefined) return
   const last = log.lastElementChild
   // The merge flag is what the live stream wants: deltas of one answer belong in one block. Passing
@@ -575,7 +584,7 @@ function add(kind, text, merge = true, label) {
     return
   }
   if (kind === 'reasoning' || kind === 'tool') {
-    addBlock(kind, text, merge, label)
+    addBlock(kind, text, merge, label, tool)
     return
   }
   const node = document.createElement('div')
@@ -594,7 +603,7 @@ function add(kind, text, merge = true, label) {
  * **closed** by default, because reasoning and tool arguments are the two things a reader wants out of the
  * way until asked for, while the answer itself is not.
  */
-function addBlock(kind, text, merge, label) {
+function addBlock(kind, text, merge, label, tool) {
   const last = log.lastElementChild
   if (merge && last && last.dataset.kind === kind) {
     const body = last.querySelector('[data-body]')
@@ -606,16 +615,69 @@ function addBlock(kind, text, merge, label) {
   const node = document.createElement('details')
   node.className = 'turn ' + kind
   node.dataset.kind = kind
+  /**
+   * A tool block is one element per **call**, and its result lands inside it.
+   *
+   * This is what the owner asked for and what DSH does: a call and its answer are one thing a reader can
+   * open, not two rows to match up by eye. The call's id is on the element so a live result can find the
+   * row it belongs to instead of appending a second one.
+   */
+  if (kind === 'tool') {
+    const state = tool && tool.state ? tool.state : 'ok'
+    node.dataset.state = state
+    if (tool && tool.toolCallId) node.dataset.toolCallId = tool.toolCallId
+    if (tool && tool.name) node.dataset.toolName = tool.name
+  }
   // Named line, not summary: a local called summary shadows the global summary() for the type stripper,
   // which then read the call below as a call on a string. Measured.
   const line = document.createElement('summary')
   line.textContent = oneLiner(kind, text, label)
   const body = document.createElement('div')
   body.setAttribute('data-body', '')
-  body.textContent = text
+  if (kind === 'tool') {
+    const args = document.createElement('pre')
+    args.className = 'args'
+    args.setAttribute('data-args', '')
+    args.textContent = text
+    body.append(args)
+    if (tool && typeof tool.result === 'string') {
+      const answer = document.createElement('pre')
+      answer.className = 'result'
+      answer.setAttribute('data-result', '')
+      answer.textContent = tool.result
+      body.append(answer)
+    }
+  } else {
+    body.textContent = text
+  }
   node.append(line, body)
   log.append(node)
   log.scrollTop = log.scrollHeight
+}
+
+/**
+ * Put a tool's result into the element of the call it answers.
+ *
+ * The live stream delivers the call and its result as two events, which is the transport's shape rather
+ * than the reader's. Matching on the call id is what keeps them one element; a result with no call to
+ * fill in is shown on its own, because dropping it would lose what the tool said.
+ */
+function fillToolResult(toolCallId, result, failed) {
+  const selector = toolCallId ? '.turn.tool[data-tool-call-id="' + CSS.escape(toolCallId) + '"]' : null
+  const open = selector ? log.querySelector(selector) : Array.from(log.querySelectorAll('.turn.tool')).reverse().find((node) => !node.querySelector('[data-result]'))
+  if (!open) return false
+  let answer = open.querySelector('[data-result]')
+  if (!answer) {
+    answer = document.createElement('pre')
+    answer.className = 'result'
+    answer.setAttribute('data-result', '')
+    open.querySelector('[data-body]').append(answer)
+  }
+  answer.textContent += result
+  open.dataset.state = failed ? 'error' : 'ok'
+  const name = open.dataset.toolName ?? ''
+  open.querySelector('summary').textContent = oneLiner('tool', open.querySelector('[data-args]')?.textContent ?? '', name ? '→ ' + name : undefined)
+  return true
 }
 
 /** The one line a closed block shows: the label when there is one, otherwise the kind and its size. */
@@ -920,7 +982,7 @@ async function showSession(id) {
      */
     for (const turn of body.turns ?? []) {
       try {
-        add(turn.kind, turn.text, false, turn.label)
+        add(turn.kind, turn.text, false, turn.label, turn)
       } catch (error) {
         const note = document.createElement('div')
         note.className = 'turn denied'
@@ -969,9 +1031,21 @@ events.addEventListener('session', (message) => {
   const event = payload.event
   if (event.type === 'assistant/chunk' && event.chunk.type === 'text-delta') add('assistant', event.chunk.text)
   else if (event.type === 'assistant/chunk' && event.chunk.type === 'reasoning-delta') add('reasoning', event.chunk.text)
-  else if (event.type === 'assistant/chunk' && event.chunk.type === 'tool-call') add('tool', event.chunk.arguments ?? '{}', false, '→ ' + event.chunk.name)
-  else if (event.type === 'message' && event.message.role === 'user') add('user', event.message.content.map((part) => part.text ?? '').join(''))
-  else if (event.type === 'message' && event.message.role === 'tool') add(event.message.content.some((part) => part.text?.startsWith('error')) ? 'denied' : 'tool', event.message.content.map((part) => part.text ?? '').join(''))
+  else if (event.type === 'assistant/chunk' && event.chunk.type === 'tool-call') {
+    add('tool', event.chunk.arguments ?? '{}', false, '→ ' + event.chunk.name, {
+      name: event.chunk.name,
+      toolCallId: event.chunk.id,
+      state: 'running',
+    })
+  } else if (event.type === 'message' && event.message.role === 'user') add('user', event.message.content.map((part) => part.text ?? '').join(''))
+  else if (event.type === 'message' && event.message.role === 'tool') {
+    const text = event.message.content.map((part) => part.text ?? '').join('')
+    const failed = event.message.content.some((part) => part.text?.startsWith('error'))
+    if (!fillToolResult(event.message.toolCallId, text, failed)) {
+      // No call to fill in: the result is still the truth about what happened, so it is shown.
+      add(failed ? 'denied' : 'tool', text, false, undefined, { state: failed ? 'error' : 'ok', result: text })
+    }
+  }
   /**
    * The ledger is a projection and is refetched rather than appended to, so following it means asking for it
    * again — and only when the reader has not scrolled away.

@@ -1113,35 +1113,93 @@ export function transcriptTurns(
    * the events a session actually holds: the narrower parameter rejected every one of them.
    */
   events: readonly { readonly type: string; readonly [key: string]: unknown }[],
-): readonly { readonly kind: string; readonly text: string; readonly label?: string }[] {
-  const turns: { kind: string; text: string; label?: string }[] = []
+): readonly ChatTurn[] {
+  const turns: ChatTurn[] = []
+  /** Where each open call sits, by the id its result will carry. */
+  const open = new Map<string, number>()
+  /** The newest call without a result, for a provider that sends no ids at all. */
+  let lastOpen = -1
+
+  const close = (index: number, result: string): void => {
+    const turn = turns[index]
+    if (turn === undefined) return
+    turns[index] = { ...turn, result, state: /^error/i.test(result) ? 'error' : 'ok' }
+  }
+
   for (const event of events) {
     if (event.type === 'message') {
-      const message = event.message as { role?: string; content?: readonly { type?: string; text?: string }[]; toolCallId?: string } | undefined
+      const message = event.message as
+        | { role?: string; content?: readonly { type?: string; text?: string }[]; toolCallId?: string }
+        | undefined
       if (message === undefined) continue
       const text = (message.content ?? []).map((part) => part.text ?? '').join('')
       if (message.role === 'user') turns.push({ kind: 'user', text })
-      else if (message.role === 'tool') turns.push({ kind: /^error/i.test(text) ? 'denied' : 'tool', text })
       else if (message.role === 'assistant') turns.push({ kind: 'assistant', text })
+      else if (message.role === 'tool') {
+        /**
+         * A tool's result names the call it answers, so it **fills that call in** rather than becoming a
+         * row of its own.
+         *
+         * This is the whole point of the fold: a person reading a transcript wants "it ran this and got
+         * that" as one thing they can open, not two rows they have to match up by eye — which is how
+         * DSH renders it too, one element per call that carries its result. The id is what pairs them;
+         * a provider that sends none is paired with the newest call still open, and a result that
+         * matches nothing is still shown, because losing it would be worse than an unpaired row.
+         */
+        const index = message.toolCallId !== undefined && open.has(message.toolCallId) ? (open.get(message.toolCallId) ?? -1) : lastOpen
+        if (index >= 0 && turns[index]?.kind === 'tool' && turns[index]?.result === undefined) {
+          close(index, text)
+          if (message.toolCallId !== undefined) open.delete(message.toolCallId)
+          lastOpen = -1
+          continue
+        }
+        turns.push({ kind: 'tool', text: '', result: text, state: /^error/i.test(text) ? 'error' : 'ok', ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}) })
+      }
       continue
     }
     if (event.type !== 'assistant/chunk') continue
-    const chunk = event.chunk as { type?: string; text?: string; name?: string; arguments?: string } | undefined
+    const chunk = event.chunk as { type?: string; text?: string; id?: string; name?: string; arguments?: string } | undefined
     if (chunk === undefined) continue
     if (chunk.type === 'text-delta' && chunk.text !== undefined) turns.push({ kind: 'assistant', text: chunk.text })
     else if (chunk.type === 'reasoning-delta' && chunk.text !== undefined) turns.push({ kind: 'reasoning', text: chunk.text })
     /**
-     * A tool call carries its **label** separately from its body.
+     * A call opens one turn, and keeps its **name apart from its arguments**.
      *
-     * The label is what the collapsed one-liner shows — the tool's name — and the body is the arguments,
-     * which are only worth reading when someone asks. Deriving the label from the text on the client would
-     * mean parsing it back out of a string this code just built.
+     * The name is what the closed one-liner shows; the arguments are worth reading only when someone
+     * asks. Deriving the name on the client would mean parsing it back out of a string this code just
+     * built, which is why it travels as a field.
      */
     else if (chunk.type === 'tool-call' && chunk.name !== undefined) {
-      turns.push({ kind: 'tool', label: `→ ${chunk.name}`, text: chunk.arguments ?? '{}' })
+      turns.push({
+        kind: 'tool',
+        name: chunk.name,
+        label: `→ ${chunk.name}`,
+        text: chunk.arguments ?? '{}',
+        state: 'running',
+        ...(chunk.id !== undefined ? { toolCallId: chunk.id } : {}),
+      })
+      lastOpen = turns.length - 1
+      if (chunk.id !== undefined) open.set(chunk.id, lastOpen)
     }
   }
   return turns
+}
+
+/** One thing the chat shows, after the fold. A tool turn carries both halves of one call. */
+export interface ChatTurn {
+  readonly kind: 'user' | 'assistant' | 'reasoning' | 'tool'
+  /** What the model said, or a tool call's arguments, or the reasoning text. */
+  readonly text: string
+  /** A closed tool's one-liner, kept as a field so the client never parses it back out. */
+  readonly label?: string
+  /** The tool's name, without the arrow the label carries. */
+  readonly name?: string
+  /** The call this result answers, which is what pairs the two halves. */
+  readonly toolCallId?: string
+  /** What the tool answered — on the same turn, which is what makes one element of it. */
+  readonly result?: string
+  /** DSH's phases, simplified: a call is running until its result says otherwise. */
+  readonly state?: 'running' | 'ok' | 'error'
 }
 
 /**

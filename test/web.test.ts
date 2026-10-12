@@ -20,7 +20,9 @@ test('a tool call keeps its name as a label, apart from its arguments', () => {
   const turns = transcriptTurns([
     { type: 'assistant/chunk', chunk: { type: 'tool-call', id: 'c1', name: 'bash', arguments: '{"command":"pwd"}' } },
   ])
-  assert.deepEqual(turns, [{ kind: 'tool', label: '→ bash', text: '{"command":"pwd"}' }])
+  assert.deepEqual(turns, [
+    { kind: 'tool', name: 'bash', label: '→ bash', text: '{"command":"pwd"}', state: 'running', toolCallId: 'c1' },
+  ])
 })
 
 test('reasoning keeps its own kind, because a reader wants it apart from the answer', () => {
@@ -60,8 +62,55 @@ test('a tool result is a tool turn, and an error result is marked denied', () =>
     { type: 'message', message: { role: 'tool', toolCallId: 'c2', content: [{ type: 'text', text: 'error: refused' }] } },
   ])
   assert.deepEqual(
-    turns.map((turn) => turn.kind),
-    ['tool', 'denied'],
+    turns.map((turn) => [turn.kind, turn.state]),
+    [
+      ['tool', 'ok'],
+      ['tool', 'error'],
+    ],
+    'a result with no call to fill in is still shown, and says whether it failed',
+  )
+})
+
+test('a tool result fills the call it answers, so the two are one turn', () => {
+  /**
+   * The claim the chat view exists to make: "it ran this and got that" is one element a reader can open,
+   * not two rows to match up by eye. The id is what pairs them, and the fold is where the pairing lives,
+   * because a client that had to do it would be re-deriving the transcript from a flat list.
+   */
+  const turns = transcriptTurns([
+    { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'list the files' }] } },
+    { type: 'assistant/chunk', chunk: { type: 'reasoning-delta', text: 'I should look' } },
+    { type: 'assistant/chunk', chunk: { type: 'tool-call', id: 'c1', name: 'list_dir', arguments: '{"path":"/tmp"}' } },
+    { type: 'message', message: { role: 'tool', toolCallId: 'c1', content: [{ type: 'text', text: 'a.txt\nb.txt' }] } },
+    { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'two files' } },
+  ])
+
+  assert.deepEqual(turns, [
+    { kind: 'user', text: 'list the files' },
+    { kind: 'reasoning', text: 'I should look' },
+    { kind: 'tool', name: 'list_dir', label: '→ list_dir', text: '{"path":"/tmp"}', state: 'ok', toolCallId: 'c1', result: 'a.txt\nb.txt' },
+    { kind: 'assistant', text: 'two files' },
+  ])
+  assert.equal(turns.filter((turn) => turn.kind === 'tool').length, 1, 'one call, one turn')
+})
+
+test('a call with no id is paired with the newest call still open', () => {
+  /**
+   * Not every provider sends an id. Pairing by position is the fallback, and it must not reach backwards
+   * past a call that already has its result — otherwise a second call would fill in the first one's row.
+   */
+  const turns = transcriptTurns([
+    { type: 'assistant/chunk', chunk: { type: 'tool-call', name: 'bash', arguments: '{"command":"one"}' } },
+    { type: 'message', message: { role: 'tool', content: [{ type: 'text', text: 'first' }] } },
+    { type: 'assistant/chunk', chunk: { type: 'tool-call', name: 'bash', arguments: '{"command":"two"}' } },
+    { type: 'message', message: { role: 'tool', content: [{ type: 'text', text: 'second' }] } },
+  ])
+  assert.deepEqual(
+    turns.map((turn) => [turn.text, turn.result, turn.state]),
+    [
+      ['{"command":"one"}', 'first', 'ok'],
+      ['{"command":"two"}', 'second', 'ok'],
+    ],
   )
 })
 
