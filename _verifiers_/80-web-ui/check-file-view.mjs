@@ -144,12 +144,16 @@ test('the file route decides by kind, and never lets a file become markup', asyn
     assert.equal(python.status, 200)
     assert.equal(python.body.renderer, 'code')
     assert.equal(python.body.language, 'python')
-    assert.match(String(python.body.html), /tok-keyword">def</, 'the language is highlighted, not guessed at')
+    /**
+     * The classes are `highlight.js`'s, because the panel is rendered by that library now — the same one that colours
+     * a fenced block inside a document, so a keyword is classified once in the project rather than twice.
+     */
+    assert.match(String(python.body.html), /hljs-keyword">def</, 'the language is highlighted, not guessed at')
     assert.match(String(python.body.html), /<span class="ln">1<\/span>/, 'and it carries a gutter')
 
     const javascript = await api(server.url, cookie, `/api/file?path=${encodeURIComponent(join(server.work, 'src', 'clamp.js'))}`)
     assert.equal(javascript.body.language, 'javascript')
-    assert.match(String(javascript.body.html), /tok-comment">\/\/ a tiny script</)
+    assert.match(String(javascript.body.html), /hljs-comment">\/\/ a tiny script</)
 
     const markdown = await api(server.url, cookie, `/api/file?path=${encodeURIComponent(join(server.work, 'README.md'))}`)
     assert.equal(markdown.body.renderer, 'markdown', 'a document is rendered as a document')
@@ -197,7 +201,7 @@ test('the browser shows a Python file as source, and does not run what a file sa
       return {
         renderer: document.getElementById('file').querySelector('#file-body').dataset.renderer,
         lines: body.querySelectorAll('.line').length,
-        keywords: body.querySelectorAll('.tok-keyword').length,
+        keywords: body.querySelectorAll('.hljs-keyword').length,
         text: body.innerText,
       }
     })()`)

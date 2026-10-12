@@ -289,10 +289,14 @@
   #file-body[data-renderer='markdown'] { white-space: normal; font-family: inherit; font-size: .88rem; line-height: 1.5; }
   #file-body .line { display: block; }
   #file-body .ln { display: inline-block; width: 3.2em; margin-right: .6rem; text-align: right; opacity: .45; user-select: none; }
-  #file-body .tok-comment { opacity: .65; font-style: italic; }
-  #file-body .tok-string { color: #2fa36b; }
-  #file-body .tok-number { color: #b7791f; }
-  #file-body .tok-keyword { color: #8b5cf6; }
+  /**
+   * The highlighter's classes, for the **source** renderer.
+   *
+   * These rules used to name this project's own token classes (`tok-*`), from the hand-written scanner the panel
+   * used before it was replaced by the library. The library's names are shared with a fenced block inside a
+   * document, so a keyword is coloured the same whether it is in a file or in a document — and the rules for the
+   * shared names live with the markdown rules above, on the `.markdown` class both panes carry.
+   */
   .untwisty { font: inherit; padding: 0 .3rem; opacity: .55; }
   .untwisty:hover { opacity: 1; }
 </style>

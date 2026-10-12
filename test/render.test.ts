@@ -56,18 +56,22 @@ test('a file full of markup arrives as text and never as markup', () => {
   assert.equal(textOf(html), hostile, 'and it is still the file')
 })
 
-test('the classes say what was recognised, and only that', () => {
+test("the classes are the highlighter's, and they say what was recognised", () => {
+  /**
+   * The classes are `highlight.js`'s own (`hljs-*`), because the classification is now the library's rather than
+   * this project's. That is the point of the change: one highlighter for a fenced block inside a document and for a
+   * whole source file, so the two cannot disagree about what a keyword is.
+   */
   const html = renderCode('// a comment\nconst x = 12 // tail\n', 'javascript')
-  assert.match(html, /<span class="tok-comment">\/\/ a comment<\/span>/)
-  assert.match(html, /<span class="tok-keyword">const<\/span>/)
-  assert.match(html, /<span class="tok-number">12<\/span>/)
-  assert.ok(!html.includes('<span class="tok-keyword">x</span>'), 'an identifier is not a keyword')
+  assert.match(html, /<span class="hljs-comment">\/\/ a comment<\/span>/)
+  assert.match(html, /<span class="hljs-keyword">const<\/span>/)
+  assert.match(html, /<span class="hljs-number">12<\/span>/)
+  assert.ok(!html.includes('>x</span>'), 'an identifier is not a keyword')
 
   const python = renderCode('def f():\n    return None  # done\n', 'python')
-  assert.match(python, /<span class="tok-keyword">def<\/span>/)
-  assert.match(python, /<span class="tok-keyword">None<\/span>/)
-  assert.match(python, /<span class="tok-comment"># done<\/span>/)
-  assert.ok(!python.includes('tok-comment"># done\n'), 'the comment stops at the line, not at the file')
+  assert.match(python, /<span class="hljs-keyword">def<\/span>/)
+  assert.match(python, /<span class="hljs-comment"># done<\/span>/)
+  assert.ok(!python.includes('hljs-comment"># done\n'), 'the comment stops at the line, not at the file')
 })
 
 test('the gutter numbers every line and starts at one', () => {
@@ -84,6 +88,23 @@ test('a language is chosen by extension, and an unknown one is shown as text', (
   assert.equal(languageFor('/x/UPPER.PY'), 'python', 'case is not the filename’s business')
   assert.equal(languageFor('/x/notes.txt'), undefined)
 
+  /**
+   * The shapes a repository is actually written in, all of which the highlighter has grammars for.
+   *
+   * Measured: `cordis.yml` rendered as plain text, so the one file that says how the harness is configured was a
+   * wall of text while `package.json` beside it was coloured.
+   */
+  for (const [path, language] of [
+    ['/x/cordis.yml', 'yaml'],
+    ['/x/state.yaml', 'yaml'],
+    ['/x/Cargo.toml', 'ini'],
+    ['/x/style.css', 'css'],
+    ['/x/index.html', 'xml'],
+    ['/x/fix.patch', 'diff'],
+  ] as const) {
+    assert.equal(languageFor(path), language, `${path} is recognised`)
+  }
+
   assert.deepEqual(rendererFor('/x/README.md'), { renderer: 'markdown' })
   assert.deepEqual(rendererFor('/x/tool.py'), { renderer: 'code', language: 'python' })
   assert.deepEqual(rendererFor('/x/notes.txt'), { renderer: 'text' })
@@ -98,7 +119,7 @@ test('renderSource decides, and a document renders as a document', () => {
   const code = renderSource('/x/tool.py', 'print("hi")\n')
   assert.equal(code.renderer, 'code')
   assert.equal(code.language, 'python')
-  assert.match(code.html ?? '', /tok-string/)
+  assert.match(code.html ?? '', /hljs-string/)
 
   const text = renderSource('/x/notes.txt', 'just text\n')
   assert.equal(text.renderer, 'text')

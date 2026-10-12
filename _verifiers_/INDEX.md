@@ -1,6 +1,6 @@
 ---
 title: Verifiers
-version: 2.6.0
+version: 2.7.0
 description: The ultimate verifications — one folder each, named after the capability the owner named, every one keeping the project's 0/1/3 verdict contract.
 grounded_in:
   - source: owner statement in the dsh session, 2026-10-11, listing the ten verifiers
@@ -29,12 +29,12 @@ deliberately does not.
 | 10 | [`90-web-ui-token/`](90-web-ui-token/INDEX.md) | the Web UI and its event stream are protected by a token |
 | 11 | [`85-trajectory-view/`](85-trajectory-view/INDEX.md) | one session read two ways: the conversation, and the ledger of what the harness did |
 | 12 | [`87-resizable-panels/`](87-resizable-panels/INDEX.md) | the sidebar's width is the reader's choice, by pointer or keyboard, and is remembered |
-| 13 | [`89-markdown-view/`](89-markdown-view/INDEX.md) | a markdown document renders as a document on the right, and cannot inject markup |
+| 13 | [`88-file-preview/`](88-file-preview/INDEX.md) | one preview surface: a file clicked in the left panel, rendered by the library its type calls for |
 | 14 | [`95-web-daemon/`](95-web-daemon/INDEX.md) | a launchd agent keeps the Web UI running at the documented port |
 
 ## Where each stands, 2026-10-11
 
-**108 checks, 0 failures, 0 unjudged**, measured by running every verifier after `npm run build` on
+**110 checks, 0 failures, 0 unjudged**, measured by running every verifier after `npm run build` on
 2026-10-11. Nothing is left unjudged: the fourteen checks that were waiting on part 7's mechanism —
 written ahead of it because the owner asked for the checks first — now pass, and the two that are
 allowed to report unjudged (part 1's real-backend probe and the daemon check) both found their subject
@@ -61,7 +61,7 @@ a diff against the previous measurement.
 | 10 | 10 | `0` — fresh token, cookie handshake, the fence, both endpoints refused, the secret's mode, a stale token's recovery page, session history over the API and in a browser |
 | 11 | 2 | `0` — the ledger's fields and rules over the API, and a browser drawing both views with a timeline |
 | 12 | 1 | `0` — a divider that is a control, a pointer drag, the limits, the arrow keys, and the width after a reload |
-| 13 | 2 | `0` — the listing, the rendering and the refusals over the API, and a browser showing a document rather than its source |
+| 13 | 2 | `0` — each file type through the route the panel uses, and a browser where a click opens the one preview, rendered and styled |
 | 14 | 3 | `0` — a complete definition, the port answering with the service's name, and a kill it recovers from |
 
 ## The verdict contract

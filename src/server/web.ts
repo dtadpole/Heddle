@@ -8,7 +8,6 @@ import type { Context } from '@deepseek-ai/cordis'
 import { runTurn } from '../agent/loop.ts'
 import { renderSource } from './code.ts'
 import { projectLedger, projectTimeline } from './ledger.ts'
-import { findDocs, readDoc } from './docs.ts'
 import { renderMarkdown } from './markdown.ts'
 import { expandHome } from '../config/schema.ts'
 import { canonicalPath } from '../paths.ts'
@@ -332,28 +331,6 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
       url.pathname.startsWith('/api') ? 'text/plain' : 'text/html; charset=utf-8',
       url.pathname.startsWith('/api') ? 'unauthorized\n' : tokenFormPage(),
     )
-    return
-  }
-
-  /**
-   * The documents a right-hand view can show: a listing, and one rendered document.
-   *
-   * A **default renderer** for markdown, which is what the owner asked for — a repository is largely `.md`, and
-   * reading one as a wall of source is the wrong default. The HTML is produced here rather than in the page,
-   * so the renderer and its escaping are judged by unit tests instead of by trusting the browser.
-   */
-  if (url.pathname === '/api/docs' && request.method === 'GET') {
-    const wanted = url.searchParams.get('path')
-    if (wanted === null) {
-      respond(response, 200, 'application/json', `${JSON.stringify({ root: process.cwd(), docs: findDocs(process.cwd()) }, null, 2)}\n`)
-      return
-    }
-    const doc = readDoc(process.cwd(), wanted)
-    if ('error' in doc) {
-      respond(response, 400, 'application/json', `${JSON.stringify({ error: doc.error })}\n`)
-      return
-    }
-    respond(response, 200, 'application/json', `${JSON.stringify({ path: wanted, html: renderMarkdown(doc.text) })}\n`)
     return
   }
 

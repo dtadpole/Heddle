@@ -1,5 +1,6 @@
 import { extname } from 'node:path'
 
+import { highlightCode } from './highlight.ts'
 import { escapeHtml, renderMarkdown } from './markdown.ts'
 
 /**
@@ -17,8 +18,16 @@ import { escapeHtml, renderMarkdown } from './markdown.ts'
  * off and comparing with the source. A renderer that quietly swallowed a construct would be worse than
  * no highlighting, because the reader would believe what they saw.
  *
- * No dependency, for the same reason the rest of this project has none: a highlighter is a luxury, and
- * a panel that cannot render a file because a package is missing is not a luxury worth having.
+ * Highlighting is **`highlight.js`**, the library the markdown fences already use, adopted on the owner's
+ * instruction of 2026-10-11 to render each file type with a library rather than with code written here. What
+ * remains here is the part a library does not do for this panel: the **line gutter**, which is presentation and
+ * must stay out of a copy, and the exact-text guarantee above, which the library is not responsible for.
+ *
+ * The two are combined by reading the library's own spans back as pieces — the text of each piece is the source
+ * text, and its class is the library's — so the panel gets the library's classification without giving up either
+ * property. Dividing a file into lines before highlighting was the alternative, and it is wrong in a way a reader
+ * sees immediately: a block comment or a template literal that spans a newline would be classified as two
+ * separate constructs, and the second half would be coloured as if the first had never opened.
  */
 
 /** What the file panel should do with a file. */
@@ -48,35 +57,35 @@ const LANGUAGES: Readonly<Record<string, string>> = {
   '.sh': 'shell',
   '.bash': 'shell',
   '.zsh': 'shell',
-}
-
-/** Words a language reserves, which are the only thing highlighting claims to know. */
-const KEYWORDS: Readonly<Record<string, readonly string[]>> = {
-  javascript: [
-    'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'default', 'delete', 'do',
-    'else', 'export', 'extends', 'finally', 'for', 'from', 'function', 'if', 'import', 'in', 'instanceof',
-    'let', 'new', 'of', 'return', 'super', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void',
-    'while', 'yield', 'true', 'false', 'null', 'undefined',
-  ],
-  typescript: [
-    'any', 'as', 'asserts', 'async', 'await', 'boolean', 'break', 'case', 'catch', 'class', 'const',
-    'constructor', 'continue', 'declare', 'default', 'delete', 'do', 'else', 'enum', 'export', 'extends',
-    'false', 'finally', 'for', 'from', 'function', 'if', 'implements', 'import', 'in', 'infer', 'instanceof',
-    'interface', 'is', 'keyof', 'let', 'namespace', 'never', 'new', 'null', 'number', 'object', 'of',
-    'private', 'protected', 'public', 'readonly', 'return', 'satisfies', 'static', 'string', 'super',
-    'switch', 'symbol', 'this', 'throw', 'true', 'try', 'type', 'typeof', 'undefined', 'unknown', 'var',
-    'void', 'while', 'yield',
-  ],
-  python: [
-    'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else',
-    'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not',
-    'or', 'pass', 'raise', 'return', 'self', 'try', 'while', 'with', 'yield', 'True', 'False', 'None',
-  ],
-  json: ['true', 'false', 'null'],
-  shell: [
-    'case', 'do', 'done', 'elif', 'else', 'esac', 'fi', 'for', 'function', 'if', 'in', 'local', 'return',
-    'then', 'until', 'while',
-  ],
+  /**
+   * YAML and the rest of the shapes a repository is written in, which the highlighter has grammars for.
+   *
+   * Measured: `cordis.yml` rendered as plain text, because the map had no entry for it — so the one file that says
+   * how the harness is configured appeared as a wall of text while `package.json` beside it was coloured.
+   */
+  '.yml': 'yaml',
+  '.yaml': 'yaml',
+  '.toml': 'ini',
+  '.ini': 'ini',
+  '.cfg': 'ini',
+  '.mdx': 'markdown',
+  '.sql': 'sql',
+  '.rb': 'ruby',
+  '.rs': 'rust',
+  '.go': 'go',
+  '.java': 'java',
+  '.c': 'c',
+  '.h': 'c',
+  '.cpp': 'cpp',
+  '.hpp': 'cpp',
+  '.cc': 'cpp',
+  '.css': 'css',
+  '.html': 'xml',
+  '.htm': 'xml',
+  '.svg': 'xml',
+  '.xml': 'xml',
+  '.diff': 'diff',
+  '.patch': 'diff',
 }
 
 /** The language a path's extension names, or `undefined` when this renderer does not know it. */
@@ -92,139 +101,77 @@ export function rendererFor(path: string): { readonly renderer: RendererName; re
   return language === undefined ? { renderer: 'text' } : { renderer: 'code', language }
 }
 
-/** One span of source, classified. */
-type Piece =
-  | { readonly kind: 'plain' | 'comment' | 'string' | 'number' | 'keyword'; readonly text: string }
-  | { readonly kind: 'newline' }
-
-/** Whether a character can start an identifier in the C-like and Python grammars alike. */
-function isWordStart(character: string): boolean {
-  return /[A-Za-z_$]/.test(character)
-}
-
-function isWordPart(character: string): boolean {
-  return /[A-Za-z0-9_$]/.test(character)
+/** One piece of the source: its exact text, and the class the highlighter gave it. */
+interface Piece {
+  readonly text: string
+  /** `null` for text the highlighter did not classify, which is most of a file. */
+  readonly className: string | null
+  readonly newline: boolean
 }
 
 /**
- * Split source into classified pieces without losing a character.
+ * Read the highlighter's markup back as pieces.
  *
- * The scanner is line-blind: it reads comments, strings and numbers wherever they start, and the line
- * numbers are added by the printer. That keeps the two concerns apart, which matters because the line
- * count is also what the panel's header reports.
+ * A **depth-aware scan**, not a regular expression, and the test is what made that necessary: the library nests
+ * its spans — a template literal is a string containing a substitution — and a non-greedy match for a span stops
+ * at the inner close, so the outer tag's text was re-read as if it were source. The panel then showed the markup
+ * it had just been handed, which is the exact failure the exact-text guarantee exists to catch.
+ *
+ * Text between spans is plain, and the innermost class wins for the text inside it, which is the class the library
+ * attached to the smallest piece containing it.
  */
-function scan(source: string, language: string): readonly Piece[] {
+function piecesFrom(html: string): Piece[] {
   const pieces: Piece[] = []
-  const keywords = new Set(KEYWORDS[language] ?? [])
-  const lineComment = language === 'python' || language === 'shell' ? '#' : language === 'json' ? undefined : '//'
-  const blockComment = language === 'python' || language === 'shell' || language === 'json' ? false : true
-  const backtick = language === 'javascript' || language === 'typescript' || language === 'shell'
-
-  let plain = ''
-  const flush = (): void => {
-    if (plain.length > 0) pieces.push({ kind: 'plain', text: plain })
-    plain = ''
+  const push = (text: string, className: string | null): void => {
+    if (text.length === 0) return
+    /** Split at newlines: the gutter numbers lines, and nothing else needs to know where they are. */
+    const parts = text.split('\n')
+    for (let index = 0; index < parts.length; index += 1) {
+      if (index > 0) pieces.push({ text: '\n', className: null, newline: true })
+      pieces.push({ text: parts[index] ?? '', className, newline: false })
+    }
   }
-
-  let index = 0
-  while (index < source.length) {
-    const character = source[index] ?? ''
-
-    if (character === '\n') {
-      flush()
-      pieces.push({ kind: 'newline' })
-      index += 1
+  const open = /<span class="([^"]*)">/y
+  const currentClass = (): string | null => (classes.length > 0 ? (classes[classes.length - 1] ?? null) : null)
+  let cursor = 0
+  /** Where the text of the piece being read begins, and the class that text belongs to. */
+  let plainStart = 0
+  let plainClass: string | null = null
+  const classes: string[] = []
+  while (cursor < html.length) {
+    /** The text before a closing tag belongs to the span that is closing, and has to be taken before it pops. */
+    if (html.startsWith('</span>', cursor)) {
+      push(unescapeEntities(html.slice(plainStart, cursor)), plainClass)
+      classes.pop()
+      cursor += '</span>'.length
+      plainStart = cursor
+      plainClass = currentClass()
       continue
     }
-
-    if (lineComment !== undefined && source.startsWith(lineComment, index)) {
-      const end = source.indexOf('\n', index)
-      flush()
-      pieces.push({ kind: 'comment', text: end === -1 ? source.slice(index) : source.slice(index, end) })
-      index = end === -1 ? source.length : end
+    open.lastIndex = cursor
+    const match = open.exec(html)
+    if (match !== null) {
+      push(unescapeEntities(html.slice(plainStart, cursor)), plainClass)
+      cursor += match[0].length
+      classes.push(match[1] ?? '')
+      plainStart = cursor
+      plainClass = currentClass()
       continue
     }
-
-    if (blockComment && source.startsWith('/*', index)) {
-      const end = source.indexOf('*/', index + 2)
-      flush()
-      pieces.push({ kind: 'comment', text: end === -1 ? source.slice(index) : source.slice(index, end + 2) })
-      index = end === -1 ? source.length : end + 2
-      continue
-    }
-
-    /**
-     * Python's triple-quoted strings are read before the single ones, or `'''` would be three strings
-     * and the docstring between them would be read as code.
-     */
-    if (language === 'python' && (source.startsWith("'''", index) || source.startsWith('"""', index))) {
-      const fence = source.slice(index, index + 3)
-      const end = source.indexOf(fence, index + 3)
-      flush()
-      pieces.push({ kind: 'string', text: end === -1 ? source.slice(index) : source.slice(index, end + 3) })
-      index = end === -1 ? source.length : end + 3
-      continue
-    }
-
-    if (character === '"' || character === "'" || (backtick && character === '`')) {
-      let cursor = index + 1
-      while (cursor < source.length) {
-        const next = source[cursor] ?? ''
-        if (next === '\\') {
-          cursor += 2
-          continue
-        }
-        if (next === character || next === '\n') break
-        cursor += 1
-      }
-      const closed = source[cursor] === character
-      const end = closed ? cursor + 1 : cursor
-      flush()
-      pieces.push({ kind: 'string', text: source.slice(index, end) })
-      index = end
-      continue
-    }
-
-    if (/[0-9]/.test(character)) {
-      let cursor = index
-      while (cursor < source.length && /[0-9a-fA-FxXoObBeE._+-]/.test(source[cursor] ?? '')) {
-        // A `+`/`-` only continues a number directly after an exponent, which keeps `a-1` an operator.
-        const previous = source[cursor - 1] ?? ''
-        if ((source[cursor] === '+' || source[cursor] === '-') && !/[eE]/.test(previous)) break
-        cursor += 1
-      }
-      flush()
-      pieces.push({ kind: 'number', text: source.slice(index, cursor) })
-      index = cursor
-      continue
-    }
-
-    if (isWordStart(character)) {
-      let cursor = index
-      while (cursor < source.length && isWordPart(source[cursor] ?? '')) cursor += 1
-      const word = source.slice(index, cursor)
-      if (keywords.has(word)) {
-        flush()
-        pieces.push({ kind: 'keyword', text: word })
-      } else {
-        plain += word
-      }
-      index = cursor
-      continue
-    }
-
-    plain += character
-    index += 1
+    cursor += 1
   }
-  flush()
+  push(unescapeEntities(html.slice(plainStart)), plainClass)
   return pieces
 }
 
-const CLASSES: Readonly<Record<string, string>> = {
-  comment: 'tok-comment',
-  string: 'tok-string',
-  number: 'tok-number',
-  keyword: 'tok-keyword',
+/** Undo the highlighter's escaping, so a piece holds the file's own characters. */
+function unescapeEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
 }
 
 /**
@@ -235,7 +182,7 @@ const CLASSES: Readonly<Record<string, string>> = {
  * numbers.
  */
 export function renderCode(source: string, language: string): string {
-  const pieces = scan(source.replace(/\r\n?/g, '\n'), language)
+  const pieces = piecesFrom(highlightCode(source.replace(/\r\n?/g, '\n'), language))
   const out: string[] = ['<code class="code">']
   let line = 1
   let open = false
@@ -245,15 +192,14 @@ export function renderCode(source: string, language: string): string {
   }
   startLine()
   for (const piece of pieces) {
-    if (piece.kind === 'newline') {
+    if (piece.newline) {
       out.push('\n')
       if (open) out.push('</span>')
       line += 1
       startLine()
       continue
     }
-    const className = CLASSES[piece.kind]
-    out.push(className === undefined ? escapeHtml(piece.text) : `<span class="${className}">${escapeHtml(piece.text)}</span>`)
+    out.push(piece.className === null ? escapeHtml(piece.text) : `<span class="${piece.className}">${escapeHtml(piece.text)}</span>`)
   }
   if (open) out.push('</span>')
   out.push('</code>')
