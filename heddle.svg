@@ -1,35 +1,34 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="560" height="560" viewBox="0 0 560 560" role="img" aria-labelledby="title desc">
   <title id="title">Heddle woven HD icon</title>
-  <desc id="desc">Neutral-gray H and orange D with uniform 16-unit separation cuts. The D has a constant 72-unit ribbon width and a centered horizontal cut.</desc>
+  <desc id="desc">Neutral-gray H and orange D with 16-unit separation cuts and subtle 2-unit cut-edge corner radii. The D has a centered horizontal cut.</desc>
   <metadata>
     Colors: neutral gray #858585; orange #E68000.
     D outer radius: 152; inner radius: 80; center: (312,216).
     H vertical stroke width: 80; horizontal stroke width: 64 (y=184..248).
-    D ribbon width: 72 throughout. All cuts: 16 units. Center cut: y=208..224.
+    D ribbon width: 72 away from the local 2-unit terminal and cut-edge fillets.
+    All separation corridors remain fully transparent and at least 16 units wide.
+    Center cut: y=208..224. H external corner radius: 20; internal corner radius: 2.
+    D cut fillets are tangent to the unchanged outer and inner circles.
     D inner bottom: y=296, aligned to the lower edge of the shared H cut.
-    H-to-D vertical separation: x=280..296. Crossbar-to-stem separation: x=184..200.
-    All visible geometry is vertically symmetric about y=216 (canvas y=280).
+    H-to-D separation: x=280..296. Crossbar-to-stem separation: x=184..200.
+    Bottom pieces are exact reflections about y=216 (canvas y=280).
     Coordinates above precede the common 64-unit vertical translation.
   </metadata>
-  <defs>
-    <mask id="left-cuts" maskUnits="userSpaceOnUse" x="0" y="0" width="560" height="432" style="mask-type:luminance">
-      <rect width="560" height="432" fill="white"/>
-      <path d="M56 168h96v16H56z M56 248h96v16H56z" fill="black"/>
-    </mask>
-    <mask id="shared-cuts" maskUnits="userSpaceOnUse" x="0" y="0" width="560" height="432" style="mask-type:luminance">
-      <rect width="560" height="432" fill="white"/>
-      <path d="M192 136h96v16h-96z M192 280h96v16h-96z" fill="black"/>
-    </mask>
-    <mask id="d-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="560" height="432" style="mask-type:luminance">
-      <rect width="560" height="432" fill="white"/>
-      <rect x="368" y="208" width="112" height="16" fill="black"/>
-    </mask>
-  </defs>
   <g transform="translate(0 64)">
-    <rect x="64" y="56" width="80" height="320" rx="20" fill="#858585" mask="url(#left-cuts)"/>
-    <rect x="200" y="56" width="80" height="320" rx="20" fill="#858585" mask="url(#shared-cuts)"/>
-    <rect x="64" y="184" width="120" height="64" fill="#E68000"/>
-    <path d="M296 64H312A152 152 0 0 1 312 368H296V296H312A80 80 0 0 0 312 136H296Z"
-          fill="#E68000" mask="url(#d-cut)"/>
+    <g fill="#858585">
+      <path d="M84 56H124A20 20 0 0 1 144 76V166A2 2 0 0 1 142 168H66A2 2 0 0 1 64 166V76A20 20 0 0 1 84 56Z"/>
+      <path d="M84 56H124A20 20 0 0 1 144 76V166A2 2 0 0 1 142 168H66A2 2 0 0 1 64 166V76A20 20 0 0 1 84 56Z"
+            transform="translate(0 432) scale(1 -1)"/>
+      <path d="M220 56H260A20 20 0 0 1 280 76V134A2 2 0 0 1 278 136H202A2 2 0 0 1 200 134V76A20 20 0 0 1 220 56Z"/>
+      <rect x="200" y="152" width="80" height="128" rx="2"/>
+      <path d="M220 56H260A20 20 0 0 1 280 76V134A2 2 0 0 1 278 136H202A2 2 0 0 1 200 134V76A20 20 0 0 1 220 56Z"
+            transform="translate(0 432) scale(1 -1)"/>
+    </g>
+    <g fill="#E68000">
+      <rect x="64" y="184" width="120" height="64" rx="2"/>
+      <path d="M298 64H312A152 152 0 0 1 463.661846077 205.866666667A2 2 0 0 1 461.666295471 208H393.387959798A2 2 0 0 1 391.402887607 206.243902439A80 80 0 0 0 312 136H298A2 2 0 0 1 296 134V66A2 2 0 0 1 298 64Z"/>
+      <path d="M298 64H312A152 152 0 0 1 463.661846077 205.866666667A2 2 0 0 1 461.666295471 208H393.387959798A2 2 0 0 1 391.402887607 206.243902439A80 80 0 0 0 312 136H298A2 2 0 0 1 296 134V66A2 2 0 0 1 298 64Z"
+            transform="translate(0 432) scale(1 -1)"/>
+    </g>
   </g>
 </svg>
