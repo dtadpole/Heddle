@@ -12,14 +12,25 @@ import { languageFor, renderCode, renderSource, rendererFor } from '../src/serve
  * the file become markup, fails here rather than in a reader's understanding.
  */
 
-/** Undo the escaping, so markup can be compared with the text it came from. */
+/**
+ * Undo the escaping, so markup can be compared with the text it came from.
+ *
+ * Deliberately a **general** decoder rather than the five entities the renderer happened to write. The first version
+ * of this helper listed exactly those five, and the renderer's own decoder listed the same five — so when the
+ * highlighter wrote a single quote as the hexadecimal `&#x27;` and the renderer failed to decode it, the test
+ * compared the same wrong decoding on both sides and passed while the panel showed `&#x27;node:fs&#x27;` to a
+ * reader. A test that repeats the implementation's assumption cannot see the assumption.
+ */
 function unescapeHtml(text: string): string {
-  return text
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&')
+  const named: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' }
+  return text.replace(/&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, (whole, body: string) => {
+    if (body.startsWith('#')) {
+      const hexadecimal = body[1] === 'x' || body[1] === 'X'
+      const code = Number.parseInt(hexadecimal ? body.slice(2) : body.slice(1), hexadecimal ? 16 : 10)
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole
+    }
+    return named[body] ?? whole
+  })
 }
 
 /** The source back out of the markup: drop the gutter, drop the tags, undo the escaping. */
@@ -130,4 +141,32 @@ test('a carriage return does not become a line', () => {
   const html = renderCode('a\r\nb\r\n', 'javascript')
   assert.equal(textOf(html), 'a\nb\n', 'CRLF is normalised, so the gutter and the file agree')
   assert.equal([...html.matchAll(/<span class="ln">/g)].length, 3)
+})
+
+test('a quote in the source is a quote on screen, not an entity code', () => {
+  /**
+   * Measured in the panel: an import line read `from &#x27;node:fs&#x27;`. The highlighter writes a single quote as
+   * the **hexadecimal** `&#x27;` and the renderer's decoder only knew the decimal `&#39;`, so the entity reached the
+   * reader — and the test above could not see it, because its own helper had the same five-entity list.
+   */
+  const html = renderCode("import { join } from 'node:path'\nconst s = \"a & b\"\n", 'typescript')
+  /**
+   * One escaping, in this renderer's own normal form: a single quote as the decimal `&#39;` and a double quote as
+   * `&quot;`. What must not reach a reader is the **library's** spelling left in place, or the library's escaping
+   * escaped again.
+   */
+  assert.ok(!html.includes('&#x27;'), 'no hexadecimal apostrophe reaches the output')
+  assert.ok(!html.includes('&amp;quot;'), 'and no double quote is escaped twice')
+  assert.equal((html.match(/&#39;/g) ?? []).length, 2, 'the file\'s single quotes, escaped once each')
+  assert.equal((html.match(/&quot;/g) ?? []).length, 2, 'and its double quotes')
+  assert.match(html, /<span class="hljs-string">&#39;node:path&#39;<\/span>/, 'the quote is escaped once, by this renderer')
+  assert.equal(textOf(html), "import { join } from 'node:path'\nconst s = \"a & b\"\n", 'and the text is the file')
+})
+
+test('an ampersand and an angle bracket survive a round trip through the highlighter', () => {
+  /** The three characters that make entities ambiguous, each of them in a string, a comment and plain text. */
+  const source = 'const a = "x & y < z > w"\n// a & b < c\nlet d = 1 & 2\n'
+  const html = renderCode(source, 'javascript')
+  assert.equal(textOf(html), source, 'the file comes back exactly')
+  assert.ok(!/&amp;(amp|lt|gt);/.test(html), 'and nothing is escaped twice')
 })

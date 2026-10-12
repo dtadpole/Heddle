@@ -34,6 +34,8 @@ backticks, while the same document in the other tab looked right.
 | 5 | a file with no renderer is shown as text, with no markup invented for it | inventing markup for plain text is how a file becomes unreadable |
 | 6 | the preview is **styled**: a bordered table, an inline code span with a background, a heading larger than its body | markup can be entirely right while every rule names another pane |
 | 7 | a file outside every workspace root is refused | a preview that can be asked for any path is disclosure with a renderer in front |
+| 8 | a source file's tokens resolve to **different colours**, not merely carrying the highlighter's classes | spans in the markup prove the library ran; only the computed colour proves a reader can see it |
+| 9 | no entity code is visible in the text | the highlighter writes a single quote as hexadecimal, and a decoder that knows only the decimal spelling leaves `&#x27;` on screen |
 
 ## How it is judged
 

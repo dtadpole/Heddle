@@ -189,6 +189,9 @@ test('a click in the left panel opens the one preview, rendered for its type and
             renderer: body.dataset.renderer,
             chars: body.innerText.length,
             highlighted: body.querySelectorAll('span[class^="hljs-"]').length,
+            classes: new Set([...body.querySelectorAll('span[class^="hljs-"]')].map((span) => span.className)).size,
+            colours: new Set([...body.querySelectorAll('span[class^="hljs-"]')].map((span) => getComputedStyle(span).color)).size,
+            entityCodes: (body.innerText.match(/&#x?[0-9a-fA-F]+;/g) ?? []).length,
             gutter: gutter === null ? null : gutter.textContent,
             tableBorder: table === null ? null : getComputedStyle(table).borderTopWidth,
             inlineCodeBg: (() => { const c = body.querySelector('p code'); return c === null ? null : getComputedStyle(c).backgroundColor })(),
@@ -215,6 +218,28 @@ test('a click in the left panel opens the one preview, rendered for its type and
     assert.ok(source.highlighted > 0, `coloured by the highlighter (${source.highlighted} spans)`)
     assert.equal(source.gutter, '1', 'with a line gutter starting at one')
     assert.equal(source.codeFont, true, 'in a monospace face')
+
+    /**
+     * And the colours are **applied**, which is the half that was missing when the owner reported it.
+     *
+     * Measured: `src/cli.ts` rendered 2702 spans and every one of them was white, because the theme rules named the
+     * markdown pane and a source file is not one. Spans in the markup prove the library ran; only the computed
+     * colour proves a reader can see what it decided.
+     */
+    assert.ok(source.classes > 1, `a source file holds more than one kind of token (${source.classes})`)
+    assert.ok(
+      source.colours > 1,
+      `and those kinds resolve to different colours, so the theme reaches this pane (${source.colours})`,
+    )
+
+    /**
+     * No entity code is shown to a reader.
+     *
+     * Measured: an import line read `from &#x27;node:fs&#x27;`, because the highlighter writes a single quote as the
+     * hexadecimal `&#x27;` and this project's decoder listed the decimal `&#39;`. A renderer that leaves escaping in
+     * the text has not finished its job, whatever the markup looks like.
+     */
+    assert.equal(source.entityCodes, 0, `no entity code is visible in the text (${source.entityCodes} found)`)
 
     /** Neither: shown as it is, and still not interpreted. */
     const plain = await openFile('LICENSE')

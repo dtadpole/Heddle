@@ -164,14 +164,29 @@ function piecesFrom(html: string): Piece[] {
   return pieces
 }
 
-/** Undo the highlighter's escaping, so a piece holds the file's own characters. */
+/** The named entities a highlighter emits. Numeric ones are handled by their code point. */
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0',
+}
+
+/**
+ * Undo the highlighter's escaping, so a piece holds the file's own characters.
+ *
+ * The first version listed five entities, and the suite did not catch the gap because its own helper listed the same
+ * five: measured, the library writes a single quote as `&#x27;` — **hexadecimal**, not the decimal `&#39;` this
+ * looked for — so a string literal rendered as `&#x27;node:fs&#x27;` on screen and the test agreed it was fine. A
+ * decoder that enumerates spellings is a decoder that is wrong about the next one, so this handles any numeric
+ * reference and the small set of names, rather than a list.
+ */
 function unescapeEntities(text: string): string {
-  return text
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&')
+  return text.replace(/&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, (whole, body: string) => {
+    if (body.startsWith('#')) {
+      const hexadecimal = body[1] === 'x' || body[1] === 'X'
+      const code = Number.parseInt(hexadecimal ? body.slice(2) : body.slice(1), hexadecimal ? 16 : 10)
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole
+    }
+    return NAMED_ENTITIES[body] ?? whole
+  })
 }
 
 /**

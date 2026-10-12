@@ -178,15 +178,25 @@
    * a function name. The class names are the library's, so a theme can replace this wholesale later without
    * touching the renderer.
    */
-  .markdown .hljs-keyword, .markdown .hljs-selector-tag, .markdown .hljs-literal, .markdown .hljs-doctag { color: #c792ea; }
-  .markdown .hljs-string, .markdown .hljs-regexp, .markdown .hljs-addition { color: #a5d6a7; }
-  .markdown .hljs-number, .markdown .hljs-symbol, .markdown .hljs-bullet { color: #f78c6c; }
-  .markdown .hljs-comment, .markdown .hljs-quote { color: #7c8a99; font-style: italic; }
-  .markdown .hljs-title, .markdown .hljs-section, .markdown .hljs-name { color: #82aaff; }
-  .markdown .hljs-attr, .markdown .hljs-attribute, .markdown .hljs-variable, .markdown .hljs-template-variable { color: #ffcb6b; }
-  .markdown .hljs-type, .markdown .hljs-built_in, .markdown .hljs-class { color: #ffcb6b; }
-  .markdown .hljs-meta, .markdown .hljs-deletion { color: #d14343; }
-  .markdown .hljs-punctuation, .markdown .hljs-operator { color: inherit; opacity: .75; }
+  /**
+   * The highlighter's classes, coloured **wherever the highlighter wrote them**.
+   *
+   * These rules named `.markdown ...` at first, which coloured a fenced block inside a document and left a source
+   * file monochrome — measured: `src/cli.ts` rendered 2702 spans and **every one of them white**, because the file
+   * pane is not a markdown pane. A theme belongs to the class the library emits, not to the element it was first
+   * used in, so these selectors match a token in a file and in a document alike.
+   *
+   * The class names are the library's own, so a real theme file can replace this wholesale later.
+   */
+  .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag { color: #c792ea; }
+  .hljs-string, .hljs-regexp, .hljs-addition { color: #a5d6a7; }
+  .hljs-number, .hljs-symbol, .hljs-bullet { color: #f78c6c; }
+  .hljs-comment, .hljs-quote { color: #7c8a99; font-style: italic; }
+  .hljs-title, .hljs-section, .hljs-name { color: #82aaff; }
+  .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property { color: #ffcb6b; }
+  .hljs-type, .hljs-built_in, .hljs-class, .hljs-params { color: #ffcb6b; }
+  .hljs-meta, .hljs-deletion, .hljs-tag { color: #d14343; }
+  .hljs-punctuation, .hljs-operator { color: inherit; opacity: .75; }
   .markdown blockquote { border-left: 3px solid var(--line); margin-left: 0; padding-left: .8rem; opacity: .85; }
   .markdown hr { border: none; border-top: 1px solid var(--line); margin: 1.2rem 0; }
   .markdown a { color: #6aa6ff; }
