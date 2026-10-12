@@ -29,6 +29,7 @@ const handle: SessionHandle = {
   id: 'session-prune-test',
   dir: '/tmp/heddle-prune-test',
   transcript: '/tmp/heddle-prune-test/session.jsonl',
+  meta: '/tmp/heddle-prune-test/session-prune-test.json',
 }
 
 /** A surface in a `Map`, with an `append` that applies `surfaceOp` as a shadow. */

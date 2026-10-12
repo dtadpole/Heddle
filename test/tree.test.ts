@@ -270,16 +270,26 @@ test('a _sessions_ folder is not a node, and its sessions come first in the bran
      * A session is a leaf: its definition folder holds `INDEX.md` and `session.json`, and the tree shows
      * neither, because the panel shows the conversation rather than the filing.
      */
-    const session = (instance.children ?? [])[0]
-    assert.deepEqual(session.children, [], 'a session row is a leaf, not a folder to open')
+    const session = (instance.children ?? [])[0]!
+    /**
+     * The children are held in a local before they are asserted empty.
+     */
+    const sessionChildren = session.children ?? []
+    /**
+     * Emptiness is asserted by length rather than by `deepEqual` against `[]`: that form **narrows** the
+     * asserted value to `never[]`, so the rows below became `never` and stopped having a `label` at all.
+     * The claim is the same and the type error that said nothing about the tree is gone.
+     */
+    assert.equal(sessionChildren.length, 0, 'a session row is a leaf, not a folder to open')
     assert.ok(
-      !(session.children ?? []).some((node) => node.label === 'INDEX.md' || node.label === 'session.json'),
+      !sessionChildren.some((node) => node.label === 'INDEX.md' || node.label === 'session.json'),
       'and nothing from its definition folder is offered as a row',
     )
 
     const level = tree(join(root, '_tools_'), input)
+    const levelChildren = level.children ?? []
     assert.ok(
-      !(level.children ?? []).some((node) => node.label === '_sessions_'),
+      !levelChildren.some((node) => node.label === '_sessions_'),
       'nothing at the type level names it either',
     )
 

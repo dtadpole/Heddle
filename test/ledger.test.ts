@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { projectLedger, projectTimeline } from '../src/server/ledger.ts'
+import { projectLedger, projectTimeline, type LedgerEvent } from '../src/server/ledger.ts'
 
 /**
  * Unit tests for the Trajectory ledger.
@@ -11,7 +11,8 @@ import { projectLedger, projectTimeline } from '../src/server/ledger.ts'
  * absent rather than zero, and a duration comes from the record's own events.
  */
 
-const event = (seq, at, rest) => ({ seq, at, ...rest })
+/** One logged event, in the shape the ledger reads: a sequence, a time, and whatever the type carries. */
+const event = (seq: number, at: string, rest: Record<string, unknown>): LedgerEvent => ({ seq, at, ...rest }) as LedgerEvent
 
 test('one prompt becomes one turn with its steps, and the records are grouped under them', () => {
   const ledger = projectLedger([
@@ -25,17 +26,17 @@ test('one prompt becomes one turn with its steps, and the records are grouped un
   ])
 
   assert.equal(ledger.turns.length, 1, 'one turn')
-  assert.equal(ledger.turns[0].steps.length, 1, 'and one step for one request')
-  const kinds = ledger.turns[0].steps[0].records.map((record) => record.kind)
+  assert.equal(ledger.turns[0]!.steps.length, 1, 'and one step for one request')
+  const kinds = ledger.turns[0]!.steps[0]!.records.map((record) => record.kind)
   /**
    * The trailing `system` record is the settled answer's own summary — its finish reason and round count.
    * It is a record rather than a decoration because the ledger is where a reader looks for why a step ended
    * the way it did.
    */
   assert.deepEqual(kinds, ['user', 'system', 'reasoning', 'assistant', 'system'], 'the records are grouped in order')
-  assert.match(ledger.turns[0].steps[0].records[4].text, /finish:/, 'the last one says how the step ended')
-  assert.equal(ledger.turns[0].steps[0].records[0].text, 'what is a heddle?', 'the prompt is the turn opener')
-  assert.match(ledger.turns[0].steps[0].records[1].text, /1200|message/, 'the request record carries what the request said')
+  assert.match(ledger.turns[0]!.steps[0]!.records[4]!.text, /finish:/, 'the last one says how the step ended')
+  assert.equal(ledger.turns[0]!.steps[0]!.records[0]!.text, 'what is a heddle?', 'the prompt is the turn opener')
+  assert.match(ledger.turns[0]!.steps[0]!.records[1]!.text, /1200|message/, 'the request record carries what the request said')
 })
 
 test('a turn and its step get durations, and a step with no end gets none', () => {
@@ -45,8 +46,8 @@ test('a turn and its step get durations, and a step with no end gets none', () =
     event(3, '2026-10-11T10:00:02.000Z', { type: 'assistant/completed', text: 'done' }),
     event(4, '2026-10-11T10:00:02.000Z', { type: 'turn/completed', rounds: 1 }),
   ])
-  assert.equal(ledger.turns[0].durationMs, 2000, 'the turn measured two seconds')
-  assert.equal(ledger.turns[0].steps[0].durationMs, 2000, 'and so did its step')
+  assert.equal(ledger.turns[0]!.durationMs, 2000, 'the turn measured two seconds')
+  assert.equal(ledger.turns[0]!.steps[0]!.durationMs, 2000, 'and so did its step')
 })
 
 test('an unfinished stream is marked in flight and carries no duration', () => {
@@ -60,7 +61,7 @@ test('an unfinished stream is marked in flight and carries no duration', () => {
     event(2, '2026-10-11T10:00:00.000Z', { type: 'model/request', estimatedTokens: 10 }),
     event(3, '2026-10-11T10:00:00.500Z', { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'half an ans' } }),
   ])
-  const partial = ledger.turns[0].steps[0].records.find((record) => record.kind === 'assistant')
+  const partial = ledger.turns[0]!.steps[0]!.records.find((record) => record.kind === 'assistant')
   assert.ok(partial, 'the partial answer is recorded')
   assert.equal(partial.inFlight, true, 'and marked in flight')
   assert.equal(partial.durationMs, undefined, 'with no duration invented for it')
@@ -79,7 +80,7 @@ test('an unreported token count is absent, not zero', () => {
     event(3, '2026-10-11T10:00:01.000Z', { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'answer' } }),
     event(4, '2026-10-11T10:00:01.000Z', { type: 'assistant/completed', text: 'answer' }),
   ])
-  const answer = ledger.turns[0].steps[0].records.find((record) => record.kind === 'assistant')
+  const answer = ledger.turns[0]!.steps[0]!.records.find((record) => record.kind === 'assistant')!
   assert.equal(answer.usage, undefined, 'no usage object at all rather than zeroes')
   assert.deepEqual(ledger.tokens, {}, 'and the totals are empty rather than zero')
 })
@@ -92,9 +93,9 @@ test('provider usage is kept apart from the harness estimate', () => {
     event(4, '2026-10-11T10:00:01.000Z', { type: 'assistant/chunk', chunk: { type: 'done', usage: { inputTokens: 812, outputTokens: 7 } } }),
     event(5, '2026-10-11T10:00:01.000Z', { type: 'assistant/completed', text: 'answer' }),
   ])
-  const records = ledger.turns[0].steps[0].records
-  const request = records.find((record) => record.label === 'request')
-  const answer = records.find((record) => record.kind === 'assistant')
+  const records = ledger.turns[0]!.steps[0]!.records
+  const request = records.find((record) => record.label === 'request')!
+  const answer = records.find((record) => record.kind === 'assistant')!
   assert.equal(request.usageSource, 'estimated', 'the request record is the harness estimate')
   assert.equal(answer.usageSource, 'provider', 'and the answer holds what the provider reported')
   assert.deepEqual(answer.usage, { inputTokens: 812, outputTokens: 7 })
@@ -110,7 +111,7 @@ test('a tool call and its result are separate records, and a refusal says so', (
     event(5, '2026-10-11T10:00:00.300Z', { type: 'assistant/chunk', chunk: { type: 'tool-call', id: 'c2', name: 'write_file', arguments: '{"path":"/etc/x"}' } }),
     event(6, '2026-10-11T10:00:00.400Z', { type: 'message', message: { role: 'tool', toolCallId: 'c2', content: [{ type: 'text', text: 'error: outside the sandbox root' }] } }),
   ])
-  const records = ledger.turns[0].steps[0].records
+  const records = ledger.turns[0]!.steps[0]!.records
   const call = records.find((record) => record.label === '→ bash')
   assert.ok(call, 'the call is identified by its tool name')
   assert.equal(call.text, '{"command":"pwd"}', 'and holds the arguments exactly as recorded')
@@ -129,7 +130,7 @@ test('records that belong to no turn are kept, not dropped', () => {
   const ledger = projectLedger([event(1, '2026-10-11T10:00:00.000Z', { type: 'something/new', detail: 7 })])
   assert.equal(ledger.turns.length, 0, 'no turn was opened')
   assert.equal(ledger.loose.length, 1, 'and the event is kept as a loose record')
-  assert.equal(ledger.loose[0].label, 'something/new', 'named by its own type')
+  assert.equal(ledger.loose[0]!.label, 'something/new', 'named by its own type')
 })
 
 test('projecting the same events twice gives the same ledger', () => {
@@ -155,7 +156,7 @@ test('an answer recorded only as a completion still appears', () => {
     event(3, '2026-10-11T10:00:01.000Z', { type: 'assistant/completed', text: 'the answer', finishReason: 'stop' }),
     event(4, '2026-10-11T10:00:01.000Z', { type: 'turn/completed', rounds: 1 }),
   ])
-  const answer = ledger.turns[0].steps[0].records.find((record) => record.kind === 'assistant')
+  const answer = ledger.turns[0]!.steps[0]!.records.find((record) => record.kind === 'assistant')!
   assert.ok(answer, 'the answer is recorded')
   assert.equal(answer.text, 'the answer', 'with the text the completion carried')
 })
@@ -168,9 +169,9 @@ test('a stream and its completion yield one answer, not two', () => {
     event(4, '2026-10-11T10:00:01.000Z', { type: 'assistant/completed', text: 'the answer' }),
     event(5, '2026-10-11T10:00:01.000Z', { type: 'turn/completed', rounds: 1 }),
   ])
-  const answers = ledger.turns[0].steps[0].records.filter((record) => record.kind === 'assistant')
+  const answers = ledger.turns[0]!.steps[0]!.records.filter((record) => record.kind === 'assistant')
   assert.equal(answers.length, 1, 'the stream is the answer, and the completion does not duplicate it')
-  assert.equal(answers[0].text, 'the answer')
+  assert.equal(answers[0]!.text, 'the answer')
 })
 
 test('the timeline is the recorded span, and an untimed record contributes no span', () => {
@@ -190,9 +191,9 @@ test('the timeline is the recorded span, and an untimed record contributes no sp
   assert.equal(timeline.startsAt, '2026-10-11T10:00:00.000Z', 'the domain starts at the earliest recorded time')
   assert.equal(timeline.durationMs, 2000, 'and spans the recorded two seconds')
   assert.equal(timeline.spans.length, 1, 'one turn, one span')
-  assert.equal(timeline.spans[0].turn, 1, 'labelled with its turn')
-  assert.ok(timeline.spans[0].start === 0, 'starting at the left edge')
-  assert.ok(timeline.spans[0].end > 0.9, 'and reaching the right')
+  assert.equal(timeline.spans[0]!.turn, 1, 'labelled with its turn')
+  assert.ok(timeline.spans[0]!.start === 0, 'starting at the left edge')
+  assert.ok(timeline.spans[0]!.end > 0.9, 'and reaching the right')
 })
 
 test('a running record extends the axis and marks its span running', () => {
@@ -203,7 +204,7 @@ test('a running record extends the axis and marks its span running', () => {
   ])
   const timeline = projectTimeline(ledger)
   assert.equal(timeline.endsAt, '2026-10-11T10:00:05.000Z', 'the domain reaches the newest event')
-  assert.equal(timeline.spans[0].running, true, 'and the span is marked running rather than given a duration')
+  assert.equal(timeline.spans[0]!.running, true, 'and the span is marked running rather than given a duration')
 })
 
 test('a ledger with nothing timed has an empty axis rather than a made-up one', () => {
@@ -250,6 +251,6 @@ test("a turn's band is coloured by what it did, not by the prompt that opened it
       event(4, '2026-10-11T10:00:01.000Z', { type: 'turn/completed', rounds: 1 }),
     ]),
   )
-  assert.equal(withTool.spans[0].kinds[0], 'tool', 'a turn that called a tool leads with the tool')
-  assert.equal(withAnswer.spans[0].kinds[0], 'assistant', 'and a turn that only answered leads with the answer')
+  assert.equal(withTool.spans[0]!.kinds[0]!, 'tool', 'a turn that called a tool leads with the tool')
+  assert.equal(withAnswer.spans[0]!.kinds[0]!, 'assistant', 'and a turn that only answered leads with the answer')
 })
