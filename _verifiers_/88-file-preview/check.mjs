@@ -216,6 +216,11 @@ test('a click in the left panel opens the one preview, rendered for its type and
             renderer: body.dataset.renderer,
             chars: body.innerText.length,
             highlighted: body.querySelectorAll('span[class^="hljs-"]').length,
+            codeSize: parseFloat(getComputedStyle(body).fontSize),
+            lineHeight: parseFloat(getComputedStyle(body).lineHeight),
+            gutterWidth: (() => { const ln = body.querySelector('.ln'); return ln === null ? 0 : Math.round(ln.getBoundingClientRect().width) })(),
+            gutterNarrow: (() => { const ln = body.querySelector('.ln'); return ln !== null && ln.getBoundingClientRect().width < 34 })(),
+            stackIncludesCjk: /PingFang|YaHei|Heiti|Songti/i.test(getComputedStyle(body).fontFamily),
             images: body.querySelectorAll('img').length,
             imagesLoaded: [...body.querySelectorAll('img')].filter((image) => image.complete && image.naturalWidth > 0).length,
             classes: new Set([...body.querySelectorAll('span[class^="hljs-"]')].map((span) => span.className)).size,
@@ -282,6 +287,22 @@ test('a click in the left panel opens the one preview, rendered for its type and
       illustration.imagesLoaded > 0,
       `and the browser loaded it (${illustration.imagesLoaded} of ${illustration.images} decoded)`,
     )
+
+    /**
+     * The code is set for reading, and it is set for **both appearances**.
+     *
+     * Two claims, each measured before it was made. The typography: a bare `monospace` resolved to whatever the
+     * platform picked, with no CJK coverage, so a Chinese comment lost its column — the stack is now a named one
+     * ending in the CJK faces. The appearance: the palette was written for a dark surface only, and the page paints
+     * its own background, so on a light system the same pale tokens would have sat on white.
+     */
+    assert.ok(source.codeSize >= 11 && source.codeSize <= 14, `code is set at a readable size (${source.codeSize}px)`)
+    assert.ok(
+      source.lineHeight >= source.codeSize * 1.4,
+      `with enough leading to read a long file (${source.lineHeight}px on ${source.codeSize}px)`,
+    )
+    assert.ok(source.stackIncludesCjk, 'and a stack with a CJK fallback, so a mixed line stays monospaced')
+    assert.ok(source.gutterNarrow, `the line numbers are a margin note rather than a column (${source.gutterWidth}px)`)
 
     /** Neither: shown as it is, and still not interpreted. */
     const plain = await openFile('LICENSE')

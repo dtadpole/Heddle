@@ -184,6 +184,15 @@ export async function openBrowser(options = {}) {
     [
       ...(options.visible === true ? ['--new-window'] : ['--headless=new']),
       '--disable-gpu',
+      /**
+       * The appearance the page is told the reader prefers.
+       *
+       * A light or dark theme is a real claim and it needs both to be judgeable: a page that follows the system
+       * (`color-scheme: light dark`) can be entirely unreadable in one of the two, and measured was exactly that — a
+       * palette written for a dark background left a source file washed out on a light one. Without this flag a check
+       * can only ever see whichever appearance the host happens to be set to.
+       */
+      ...(options.colorScheme === 'light' ? ['--force-light-mode'] : options.colorScheme === 'dark' ? ['--force-dark-mode'] : []),
       '--no-first-run',
       '--no-default-browser-check',
       '--remote-debugging-port=0',
@@ -278,6 +287,14 @@ export async function openBrowser(options = {}) {
   }
 
   return {
+    /**
+     * The DevTools connection itself, for the one thing the options do not cover.
+     *
+     * Handed out deliberately rather than wrapped: a narrow wrapper would have to be extended for every emulation a
+     * check wants, while the protocol is documented and this is a check helper. `--force-light-mode` and
+     * `--force-dark-mode` cover the appearance; a media feature is emulated through this.
+     */
+    send: (method, params) => connection.send(method, params),
     async goto(url, timeoutMs = 20_000) {
       contextId = undefined
       const loaded = connection.once('Page.loadEventFired', timeoutMs)

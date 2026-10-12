@@ -38,6 +38,8 @@ backticks, while the same document in the other tab looked right.
 | 9 | no entity code is visible in the text | the highlighter writes a single quote as hexadecimal, and a decoder that knows only the decimal spelling leaves `&#x27;` on screen |
 | 10 | an image in a document is **fetched and decoded**, not merely referenced | an `img` with a broken source still has a `src`, so counting elements passes while a reader sees a broken marker |
 | 11 | a file a browser would run is served as a download, and a path outside every workspace root as nothing | the route carries the session cookie, so serving an `.html` inline would be a same-origin page the harness runs by being viewed |
+| 12 | the code is set at a readable size with leading, a **CJK fallback** in its stack, and a narrow gutter | a bare `monospace` resolves to a face with no CJK coverage, so a mixed line loses its column |
+| 13 | each appearance has its own palette, on a surface the page paints itself | a palette written for a dark surface puts pale text on white on a light system |
 
 ## How it is judged
 
