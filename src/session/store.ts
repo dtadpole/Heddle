@@ -403,6 +403,31 @@ export class SessionStore {
   }
 
   /**
+   * Record which endpoint and model a session runs with — the model switcher's one write.
+   *
+   * The same rule as `rename`, for the same reason: the meta file is a record, not the log, so only the
+   * fields a person changed are replaced and the append-only transcript is never touched. The selection is
+   * **replaced rather than merged**: a model override belongs to the endpoint that answered with it, so
+   * switching endpoints drops it, and a switch that carried the old model across would silently ask the new
+   * endpoint for a model it may not serve. The caller validates the endpoint against the model service; this
+   * layer records what it is told.
+   */
+  setModel(id: SessionId, selection: { readonly endpoint: string; readonly model?: string }): SessionMeta | null {
+    const current = this.list().find((meta) => meta.id === id)
+    if (current === undefined) return null
+    const endpoint = selection.endpoint.trim()
+    if (endpoint.length === 0) return null
+    const model = selection.model?.trim()
+    const next: SessionMeta = { ...current, endpoint }
+    if (model !== undefined && model.length > 0) (next as { model?: string }).model = model
+    else delete (next as { model?: string }).model
+    const meta = this.metaFile(id)
+    if (meta === null) return null
+    writeFileSync(meta, `${JSON.stringify(next, null, 2)}\n`)
+    return next
+  }
+
+  /**
    * Where a session's metadata is, in whichever layout it was written in.
    *
    * Two layouts are read and only one is written: a session created before the workspace folders existed

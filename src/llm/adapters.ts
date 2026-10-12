@@ -52,7 +52,7 @@ function parseBlock(block: string): SseEvent | null {
   return event === undefined ? { data: data.join('\n') } : { event, data: data.join('\n') }
 }
 
-import { wire, type WireResponse } from './http.ts'
+import { titleCaseHeaders, wire, type WireResponse } from './http.ts'
 
 /** What a call site passes to {@link post}; the transport is in `./http.ts`. */
 interface HttpOptions {
@@ -62,6 +62,7 @@ interface HttpOptions {
   readonly apiKey?: string
   readonly stream: boolean
   readonly timeoutMs?: number
+  readonly proxy?: string
   readonly endpoint: string
   readonly signal?: AbortSignal
 }
@@ -84,6 +85,7 @@ export function post(options: HttpOptions): Promise<WireResponse> {
     ...(options.headers !== undefined ? { headers: options.headers } : {}),
     ...(options.apiKey !== undefined ? { apiKey: options.apiKey } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.proxy !== undefined ? { proxy: options.proxy } : {}),
     ...(options.signal !== undefined ? { signal: options.signal } : {}),
   })
 }
@@ -362,6 +364,239 @@ export function openAiResponsesAdapter(
   })()
 }
 
+/** The body version an Anthropic publisher route requires; it is not a header on this shape. */
+export const ANTHROPIC_VERTEX_VERSION = 'vertex-2023-10-16'
+
+/**
+ * What a call with no cap gets.
+ *
+ * The route **requires** `max_tokens`, so a request that names none cannot simply omit it — the provider would
+ * refuse the whole call over a field the caller did not know it had to send. The cap is conservative on
+ * purpose: it bounds a runaway answer, and an endpoint that wants a different one says so in its configuration.
+ */
+export const DEFAULT_MAX_TOKENS = 4096
+
+/** A tool call's arguments as the provider expects them: parsed JSON, not a string. */
+function parseToolInput(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * The request body and URL for the Anthropic publisher route.
+ *
+ * Pure and exported so the translation can be judged without a socket. Four rules differ from the OpenAI
+ * shapes and each one is a provider refusal if it is wrong:
+ *
+ * - the **system prompt** is a top-level field, not a message;
+ * - a recorded **tool call** becomes a `tool_use` block with parsed input, and its result becomes a
+ *   `tool_result` block on a **user** turn, naming the call;
+ * - adjacent same-role turns are merged, because Anthropic's turns must alternate and a tool result follows an
+ *   assistant turn directly;
+ * - **reasoning is dropped**: a thinking block carries a signature the provider issues when it generates it,
+ *   and one sent back without that signature is refused.
+ */
+export function anthropicCall(
+  endpoint: Adapter['endpoint'],
+  request: GenerateRequest,
+): { readonly url: string; readonly body: Record<string, unknown>; readonly headers: Record<string, string> } {
+  if (endpoint.project === undefined || endpoint.project.length === 0) {
+    throw new ModelError(`'${endpoint.name}' has no project, and the publisher route is addressed under one`, {
+      endpoint: endpoint.name,
+      code: 'NO_PROJECT',
+    })
+  }
+  if (endpoint.region === undefined || endpoint.region.length === 0) {
+    throw new ModelError(`'${endpoint.name}' has no region, and the publisher route is addressed in one`, {
+      endpoint: endpoint.name,
+      code: 'NO_REGION',
+    })
+  }
+  const model = request.model ?? endpoint.model
+  if (model === undefined || model.length === 0) {
+    throw new ModelError(`'${endpoint.name}' names no model`, { endpoint: endpoint.name, code: 'NO_MODEL' })
+  }
+  const system = request.messages
+    .filter((message) => message.role === 'system')
+    .map((message) => message.content.filter((part) => part.type === 'text').map((part) => (part.type === 'text' ? part.text : '')).join(''))
+    .filter((text) => text.length > 0)
+    .join('\n\n')
+  const maxTokens = request.maxOutputTokens ?? endpoint.maxOutputTokens ?? DEFAULT_MAX_TOKENS
+
+  const body: Record<string, unknown> = {
+    anthropic_version: ANTHROPIC_VERTEX_VERSION,
+    messages: toAnthropicMessages(request.messages),
+    max_tokens: maxTokens,
+    stream: true,
+    ...(system.length > 0 ? { system } : {}),
+    ...(request.tools && request.tools.length > 0
+      ? {
+          tools: request.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.parameters,
+          })),
+        }
+      : {}),
+    ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+  }
+
+  return {
+    url: `${endpoint.baseUrl}/projects/${endpoint.project}/locations/${endpoint.region}/publishers/anthropic/models/${model}:streamRawPredict`,
+    body,
+    headers: titleCaseHeaders(endpoint.headers ?? {}),
+  }
+}
+
+/** The message list as Anthropic reads it, with a system prompt left to the top-level field. */
+function toAnthropicMessages(messages: GenerateRequest['messages']): Record<string, unknown>[] {
+  const turns: { role: 'user' | 'assistant'; content: Record<string, unknown>[] }[] = []
+  const push = (role: 'user' | 'assistant', content: Record<string, unknown>[]): void => {
+    if (content.length === 0) return
+    const last = turns[turns.length - 1]
+    if (last !== undefined && last.role === role) last.content.push(...content)
+    else turns.push({ role, content })
+  }
+
+  for (const message of messages) {
+    if (message.role === 'system') continue
+    if (message.role === 'assistant') {
+      push(
+        'assistant',
+        message.content.flatMap((part): Record<string, unknown>[] => {
+          if (part.type === 'text') return [{ type: 'text', text: part.text }]
+          if (part.type === 'tool-call') {
+            return [{ type: 'tool_use', id: part.id, name: part.name, input: parseToolInput(part.arguments) }]
+          }
+          // A reasoning part is deliberately not sent: see this function's caller for why.
+          return []
+        }),
+      )
+      continue
+    }
+    if (message.role === 'tool') {
+      const text = message.content.map((part) => (part.type === 'text' ? part.text : '')).join('')
+      push('user', [{ type: 'tool_result', tool_use_id: message.toolCallId ?? '', content: text }])
+      continue
+    }
+    push(
+      'user',
+      message.content.flatMap((part) => (part.type === 'text' ? [{ type: 'text', text: part.text }] : [])),
+    )
+  }
+  return turns
+}
+
+/**
+ * Fold Anthropic's event stream into the harness vocabulary.
+ *
+ * The shape is the one Anthropic documents and the one a cloud publisher route relays unchanged: text arrives
+ * as `text_delta`, thinking as `thinking_delta`, a tool call as a `content_block_start` naming it followed by
+ * `input_json_delta` fragments, the stop reason and output count as `message_delta`, and the end as
+ * `message_stop`. Split out from the transport so the fold is judged by feeding it literals.
+ */
+export async function* anthropicChunks(
+  events: AsyncIterable<{ readonly event?: string; readonly data: string }>,
+  endpointName: string,
+): AsyncIterable<Chunk> {
+  const calls = new Map<number, PartialToolCall>()
+  let finishReason = 'stop'
+  let usage: { inputTokens?: number; outputTokens?: number } | undefined
+
+  for await (const event of events) {
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(event.data) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    const type = String(parsed.type ?? event.event ?? '')
+    if (type === 'message_start') {
+      const message = parsed.message as { usage?: { input_tokens?: number; output_tokens?: number } } | undefined
+      if (message?.usage !== undefined) {
+        usage = {
+          ...(message.usage.input_tokens !== undefined ? { inputTokens: message.usage.input_tokens } : {}),
+          ...(message.usage.output_tokens !== undefined ? { outputTokens: message.usage.output_tokens } : {}),
+        }
+      }
+    } else if (type === 'content_block_start') {
+      const block = parsed.content_block as { type?: string; id?: string; name?: string } | undefined
+      const index = typeof parsed.index === 'number' ? parsed.index : 0
+      if (block?.type === 'tool_use') {
+        calls.set(index, { id: block.id ?? `call-${index}`, name: block.name ?? '', arguments: '' })
+      }
+    } else if (type === 'content_block_delta') {
+      const delta = parsed.delta as { type?: string; text?: string; thinking?: string; partial_json?: string } | undefined
+      const index = typeof parsed.index === 'number' ? parsed.index : 0
+      if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+        yield { type: 'text-delta', text: delta.text }
+      } else if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+        yield { type: 'reasoning-delta', text: delta.thinking }
+      } else if (delta?.type === 'input_json_delta') {
+        const call = calls.get(index) ?? { id: `call-${index}`, name: '', arguments: '' }
+        call.arguments += String(delta.partial_json ?? '')
+        calls.set(index, call)
+      }
+    } else if (type === 'message_delta') {
+      const delta = parsed.delta as { stop_reason?: string } | undefined
+      if (typeof delta?.stop_reason === 'string') finishReason = delta.stop_reason
+      const reported = parsed.usage as { output_tokens?: number } | undefined
+      if (reported?.output_tokens !== undefined) usage = { ...(usage ?? {}), outputTokens: reported.output_tokens }
+    } else if (type === 'message_stop') {
+      for (const call of calls.values()) yield { type: 'tool-call', id: call.id, name: call.name, arguments: call.arguments }
+      yield { type: 'done', finishReason, ...(usage !== undefined ? { usage } : {}) }
+      return
+    } else if (type === 'error') {
+      const failure = parsed.error as { type?: string; message?: string } | undefined
+      throw new ModelError(
+        `'${endpointName}' reported ${failure?.type ?? 'an error'} — ${failure?.message ?? JSON.stringify(parsed).slice(0, 200)}`,
+        { endpoint: endpointName, code: 'REMOTE' },
+      )
+    }
+  }
+  for (const call of calls.values()) yield { type: 'tool-call', id: call.id, name: call.name, arguments: call.arguments }
+  yield { type: 'done', finishReason, ...(usage !== undefined ? { usage } : {}) }
+}
+
+/**
+ * Anthropic's Messages shape on a cloud publisher route.
+ *
+ * A third wire shape beside Chat Completions and Responses, and the reason it is worth having: it is the
+ * **standard** way to reach Anthropic's models on a hosted cloud, so an enterprise deployment that forwards to
+ * that publisher is reached by configuration alone — the gateway's address, the project and region, and the
+ * hop an agent on loopback provides. Nothing about a particular deployment is in this file.
+ */
+export function anthropicVertexAdapter(
+  endpoint: Adapter['endpoint'],
+  request: GenerateRequest,
+  signal?: AbortSignal,
+): AsyncIterable<Chunk> {
+  return (async function* anthropic() {
+    const call = anthropicCall(endpoint, request)
+    const result = await post({
+      url: call.url,
+      body: call.body,
+      headers: call.headers,
+      ...(endpoint.apiKey !== undefined ? { apiKey: endpoint.apiKey } : {}),
+      ...(endpoint.proxy !== undefined ? { proxy: endpoint.proxy } : {}),
+      ...(endpoint.timeoutMs !== undefined ? { timeoutMs: endpoint.timeoutMs } : {}),
+      stream: true,
+      endpoint: endpoint.name,
+      ...(signal !== undefined ? { signal } : {}),
+    })
+    if ('json' in result) {
+      throw new ModelError(`'${endpoint.name}' answered the publisher route without a stream`, {
+        endpoint: endpoint.name,
+        code: 'BAD_BODY',
+      })
+    }
+    yield* anthropicChunks(readSse(result.stream), endpoint.name)
+  })()
+}
+
 /**
  * A deterministic backend for the checks, and the reason they spend nothing.
  *
@@ -458,6 +693,8 @@ export function adapterFor(endpoint: Adapter['endpoint']): Adapter {
       return { endpoint, stream: (request, signal) => openAiChatAdapter(endpoint, request, signal) }
     case 'openai-responses':
       return { endpoint, stream: (request, signal) => openAiResponsesAdapter(endpoint, request, signal) }
+    case 'anthropic-vertex':
+      return { endpoint, stream: (request, signal) => anthropicVertexAdapter(endpoint, request, signal) }
     case 'scripted':
       return { endpoint, stream: (request, signal) => scriptedAdapter(endpoint, request, signal) }
     default: {

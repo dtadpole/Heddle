@@ -22,6 +22,28 @@ function modelFailure(error: unknown): { readonly code: string; readonly message
   return { code, message: typeof message === 'string' ? message : String(error) }
 }
 
+/** The surface positions that hold a user message, which is what "new input" means to a running turn. */
+function userInputSeqs(ctx: Context, session: SessionHandle): ReadonlySet<number> {
+  const held = new Set<number>()
+  for (const seq of ctx.session.surface(session).nodes) {
+    if (ctx.session.node(session, seq)?.role === 'user') held.add(seq)
+  }
+  return held
+}
+
+/**
+ * Whether a message arrived that this loop did not put there.
+ *
+ * The rule it exists for is DSH's steering: a message delivered **into a running turn** is answered by that
+ * turn rather than by the next one. The loop already re-derives its context from the surface at the top of
+ * every round, so what was missing was only the decision to take another round when the model answers without
+ * asking for a tool — and that decision is this comparison, taken at the moment the answer completes.
+ */
+export function hasNewInput(before: ReadonlySet<number>, after: ReadonlySet<number>): boolean {
+  for (const seq of after) if (!before.has(seq)) return true
+  return false
+}
+
 /**
  * The agent loop.
  *
@@ -126,6 +148,16 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
 
   for (let round = 0; round < maxRounds; round += 1) {
     rounds += 1
+
+    /**
+     * What the person had already said when this round started.
+     *
+     * Compared with the same reading after the answer, it is how a message delivered **into** the running turn
+     * is noticed — DSH's steering. The agent runtime there owns an inbox and injects a steered message between
+     * steps; heddle has no runtime between steps, so the message is appended to the session and the loop has
+     * to look for it, which is what this pair of readings does.
+     */
+    const inputBefore = userInputSeqs(ctx, options.session)
 
     /**
      * The context step: derive from the surface, prune, and summarise only if pruning did not
@@ -271,7 +303,16 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     }
     text += roundText
 
-    if (calls.length === 0) break
+    /**
+     * A message that arrived while the model was answering is answered **by this turn**.
+     *
+     * This is the half of steering the loop owns. The other half is the append: a `steer` submission writes the
+     * user's message to the session while the turn is running, and because context is re-derived from the
+     * surface at the top of every round, the next round would already see it — but only if there **is** a next
+     * round, and an answer with no tool calls used to end the turn. Measured consequence of leaving it out: a
+     * steered message sat in the transcript unanswered until the person sent something else.
+     */
+    if (calls.length === 0 && !hasNewInput(inputBefore, userInputSeqs(ctx, options.session))) break
 
     for (const call of calls) {
       const args = parseArguments(call.arguments)

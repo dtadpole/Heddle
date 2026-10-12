@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { networkInterfaces } from 'node:os'
-import { basename, extname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -9,8 +9,10 @@ import { runTurn } from '../agent/loop.ts'
 import { renderSource } from './code.ts'
 import { pickFolder } from './picker.ts'
 import { projectLedger, projectTimeline } from './ledger.ts'
+import { PREVIEW_CSP, rewriteResources } from './html.ts'
 import { renderMarkdown } from './markdown.ts'
 import { expandHome } from '../config/schema.ts'
+import { describeEndpoints } from '../endpoints.ts'
 import { canonicalPath } from '../paths.ts'
 import { readFileText, tree } from '../session/tree.ts'
 import type { SessionEvent, SessionHandle } from '../session/store.ts'
@@ -115,6 +117,8 @@ export async function startWebServer(ctx: Context, options: WebServerOptions = {
 
   const clients = new Set<ServerResponse>()
   const subscribers = new Set<ServerResponse>()
+  /** Sessions with a turn in flight, which is what the steer route asks about before it accepts one. */
+  const running = new Map<string, number>()
   // Tracked so shutdown can reach a connection whose handler is still awaiting a turn.
   const sockets = new Set<import('node:net').Socket>()
 
@@ -141,6 +145,7 @@ export async function startWebServer(ctx: Context, options: WebServerOptions = {
       port,
       clients,
       subscribers,
+      running,
       ...(options.quiet !== undefined ? { quiet: options.quiet } : {}),
       ...(options.defaultEndpoint !== undefined ? { defaultEndpoint: options.defaultEndpoint } : {}),
     }).catch((error: unknown) => {
@@ -208,6 +213,14 @@ interface RequestState {
   readonly port: number
   readonly clients: Set<ServerResponse>
   readonly subscribers: Set<ServerResponse>
+  /**
+   * How many turns are running per session.
+   *
+   * A count rather than a flag because two turns on one session are possible, and a set would then clear the
+   * mark for a session that is still running. It is what the steer route asks before it accepts a message:
+   * DSH refuses a steer whose turn has ended, and this is the same question about the same fact.
+   */
+  readonly running: Map<string, number>
   readonly quiet?: boolean
   readonly defaultEndpoint?: string
 }
@@ -403,8 +416,88 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
     return
   }
 
+  /**
+   * DOMPurify's browser build, served from the installed package.
+   *
+   * The sanitiser runs **in the browser**, where the DOM already is. Measured before choosing: the package is 1.6 MB
+   * installed and 29 KB as the minified bundle served here, with **zero dependencies**, while doing it on the server
+   * means jsdom or four packages to parse HTML the browser has already parsed. The file is read from `node_modules`
+   * at request time rather than vendored into the tree, so it cannot drift from the version in `package.json`.
+   */
+  if (url.pathname === '/vendor/purify.js' && request.method === 'GET') {
+    try {
+      const bundle = readFileSync(new URL('../../node_modules/dompurify/dist/purify.min.js', import.meta.url))
+      response.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' })
+      response.end(bundle)
+    } catch {
+      respond(response, 404, 'text/plain', 'the sanitiser is not installed\n')
+    }
+    return
+  }
+
+  /**
+   * An HTML document, prepared to be shown as a page.
+   *
+   * The answer is the document with its relative resources pointed at the route that serves them, and the policy it
+   * must run under — not sanitised here, because the sanitiser is DOMPurify in the browser and the page is where a
+   * DOM exists. Two things make this safe to hand over: nothing about it is executed by this server, and what the
+   * browser does with it happens inside a sandboxed frame with no scripts allowed.
+   */
+  if (url.pathname === '/api/html' && request.method === 'GET') {
+    const workspaces = ctx.workspace
+    const wanted = url.searchParams.get('path')
+    if (wanted === null || wanted.length === 0) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'a path is required' })}\n`)
+      return
+    }
+    if (workspaces === undefined || workspaces.owner(wanted) === undefined) {
+      respond(response, 404, 'application/json', `${JSON.stringify({ error: 'that path is not under any workspace root' })}\n`)
+      return
+    }
+    try {
+      const stats = statSync(wanted)
+      if (!stats.isFile()) {
+        respond(response, 404, 'application/json', `${JSON.stringify({ error: 'not a file' })}\n`)
+        return
+      }
+      /** Bounded like every other reading: a preview is not a way to make the server hold a huge file in memory. */
+      if (stats.size > 4 * 1024 * 1024) {
+        respond(response, 413, 'application/json', `${JSON.stringify({ error: 'the document is larger than 4MB' })}\n`)
+        return
+      }
+      const source = readFileSync(wanted, 'utf8')
+      const html = rewriteResources(source, dirname(wanted), (path) => `/api/raw?path=${encodeURIComponent(path)}`)
+      respond(
+        response,
+        200,
+        'application/json',
+        `${JSON.stringify({ path: wanted, html, csp: PREVIEW_CSP, bytes: stats.size }, null, 2)}\n`,
+      )
+    } catch {
+      respond(response, 404, 'application/json', `${JSON.stringify({ error: 'no such document' })}\n`)
+    }
+    return
+  }
+
   if (url.pathname === '/api/sessions' && request.method === 'GET') {
     respond(response, 200, 'application/json', `${JSON.stringify(ctx.session.list(), null, 2)}\n`)
+    return
+  }
+
+  /**
+   * What a session can be switched onto.
+   *
+   * The composer's model seat needs the list before it can offer anything, and the list is the model
+   * service's own — **never** the configuration file, because a machine's endpoints are resolved from
+   * several layers and a page that read the file would miss the environment overrides and the
+   * repository's defaults. `describeEndpoints` is the one function that knows what is safe to say, so
+   * the route reuses it: a key, a key *path* and a header value are all secrets that can live in an
+   * endpoint, and none of them may reach a browser.
+   */
+  if (url.pathname === '/api/endpoints' && request.method === 'GET') {
+    const endpoints = ctx.model.list()
+    const described = describeEndpoints(endpoints, ctx.model.defaultEndpoint())
+    respond(response, 200, 'application/json', `${JSON.stringify(described, null, 2)}\n`)
     return
   }
 
@@ -735,6 +828,50 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
   }
 
   /**
+   * Switch a session onto one endpoint — the composer's model seat, committed.
+   *
+   * The same shape as the retitle above and for the same reason: a session's **record** changes and its
+   * append-only log does not. The endpoint is validated against the model service rather than trusted,
+   * because this is the one place a name from a browser reaches the store, and an unvalidated name would
+   * be recorded and then fail every following turn with "no endpoint named ...". An unknown session is a
+   * `404` rather than a quiet write, so a page attached to a session that was removed finds out.
+   *
+   * `model` is optional and replaces any override the session carried; omitting it means the endpoint's
+   * own configured model answers, which is what a switcher selects.
+   */
+  if (url.pathname.startsWith('/api/sessions/') && url.pathname.endsWith('/model') && request.method === 'POST') {
+    const id = decodeURIComponent(url.pathname.slice('/api/sessions/'.length, -'/model'.length))
+    if (!/^session-[0-9a-f-]{36}$/i.test(id)) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'not a session id' })}\n`)
+      return
+    }
+    const body = await readJson(request, response)
+    if (body === null) return
+    const endpoint = typeof body.endpoint === 'string' ? body.endpoint.trim() : ''
+    if (endpoint.length === 0) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'an endpoint is required' })}\n`)
+      return
+    }
+    if (!ctx.model.names().includes(endpoint)) {
+      respond(
+        response,
+        400,
+        'application/json',
+        `${JSON.stringify({ error: `no endpoint named '${endpoint}'; configured: ${ctx.model.names().join(', ')}` })}\n`,
+      )
+      return
+    }
+    const model = typeof body.model === 'string' && body.model.trim().length > 0 ? body.model.trim() : undefined
+    const meta = ctx.session.setModel(id, { endpoint, ...(model !== undefined ? { model } : {}) })
+    if (meta === null) {
+      respond(response, 404, 'application/json', `${JSON.stringify({ error: `no session ${id}` })}\n`)
+      return
+    }
+    respond(response, 200, 'application/json', `${JSON.stringify(meta, null, 2)}\n`)
+    return
+  }
+
+  /**
    * Start a session at a branch, and write its definition into that branch.
    *
    * This is the `New session` action on a row, and it works at any branch — including the top-level
@@ -845,7 +982,29 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
       respond(response, 200, 'application/json', `${JSON.stringify({ id, ledger, timeline: projectTimeline(ledger) }, null, 2)}\n`)
       return
     }
-    respond(response, 200, 'application/json', `${JSON.stringify({ id, turns: transcriptTurns(events) }, null, 2)}\n`)
+    /** The session's own record, which is where a switch from the panel was written. */
+    const meta = ctx.session.list().find((entry) => entry.id === id)
+    respond(
+      response,
+      200,
+      'application/json',
+      `${JSON.stringify(
+        {
+          id,
+          /**
+           * How this session is run travels with its transcript, so the composer's model seat can show
+           * the session rather than the server's default. `null` means the session has never recorded a
+           * choice — the page then keeps the endpoint it already had, which is what makes switching
+           * before a turn survives starting the session that turn creates.
+           */
+          endpoint: meta?.endpoint ?? null,
+          model: meta?.model ?? null,
+          turns: transcriptTurns(events),
+        },
+        null,
+        2,
+      )}\n`,
+    )
     return
   }
 
@@ -853,6 +1012,58 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
     respondSse(response)
     state.subscribers.add(response)
     request.on('close', () => state.subscribers.delete(response))
+    return
+  }
+
+  /**
+   * Steer: deliver a message **into the turn that is already running** — DSH's `steer` mode.
+   *
+   * DSH's agent runtime owns an inbox and injects a steered message between steps. heddle has no runtime
+   * between steps, so the delivery is an **append**: the message becomes part of the session's surface, and
+   * the loop — which re-derives its context at the top of every round — sees it and answers it in the same
+   * turn. The loop's half of that rule is in `src/agent/loop.ts`.
+   *
+   * The refusal is DSH's, code and meaning: a steer whose turn has ended is not a queued message the caller
+   * can leave to happen, it is a delivery that cannot arrive, so it is answered `409` and the caller (the
+   * composer) falls back to queueing it. Measured on 2026-10-12: without this route the composer's
+   * accelerated chord could only reorder a local list, which is not what the chord means.
+   */
+  if (url.pathname.startsWith('/api/sessions/') && url.pathname.endsWith('/steer') && request.method === 'POST') {
+    const id = decodeURIComponent(url.pathname.slice('/api/sessions/'.length, -'/steer'.length))
+    if (!/^session-[0-9a-f-]{36}$/i.test(id)) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'not a session id' })}\n`)
+      return
+    }
+    const body = await readJson(request, response)
+    if (body === null) return
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+    if (prompt.length === 0) {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'a prompt is required' })}\n`)
+      return
+    }
+    if ((state.running.get(id) ?? 0) === 0) {
+      respond(
+        response,
+        409,
+        'application/json',
+        `${JSON.stringify({ error: 'the current turn no longer accepts steering', code: 'session/steer-unavailable' })}\n`,
+      )
+      return
+    }
+    const handle = ctx.session.store.open(id)
+    if (handle === null) {
+      respond(response, 404, 'application/json', `${JSON.stringify({ error: `no session ${id}` })}\n`)
+      return
+    }
+    /**
+     * Recording the message is the delivery.
+     *
+     * `ctx.session.user` writes the same event the composer's own turn would have written, so the appending
+     * is measured by the loop's next round and streamed to every reader by the one write path — there is no
+     * second channel a steer could travel on without becoming a second truth.
+     */
+    ctx.session.user(handle, prompt)
+    respond(response, 200, 'application/json', `${JSON.stringify({ accepted: true, session: id }, null, 2)}\n`)
     return
   }
 
@@ -949,6 +1160,27 @@ async function readJson(request: IncomingMessage, response: ServerResponse): Pro
   }
 }
 
+/**
+ * Which endpoint answers a turn, from the four places a name can come from.
+ *
+ * Pure and exported so the order can be judged without a socket, because the order **is** the rule. It
+ * mirrors DSH's model selection: what the request names wins, then what the session itself recorded, then
+ * the server's own default (the flag `heddle web --endpoint` carries), then the configuration's nomination.
+ * An empty string is absence rather than a name — a page that sends `endpoint: ''` must fall through
+ * instead of asking the model service for an endpoint called nothing.
+ */
+export function resolveTurnEndpoint(sources: {
+  readonly requested?: string
+  readonly recorded?: string
+  readonly serverDefault?: string
+  readonly serviceDefault?: string
+}): string | undefined {
+  for (const candidate of [sources.requested, sources.recorded, sources.serverDefault, sources.serviceDefault]) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate
+  }
+  return undefined
+}
+
 /** Run one turn and stream its session events back as they are written. */async function handleTurn(ctx: Context, request: IncomingMessage, response: ServerResponse, state: RequestState): Promise<void> {
   let raw = ''
   for await (const chunk of request) {
@@ -980,23 +1212,75 @@ async function readJson(request: IncomingMessage, response: ServerResponse): Pro
    * that folder instead, leaving the previous log where it is.
    */
   const folder = typeof body.folder === 'string' && body.folder.length > 0 ? canonicalPath(body.folder) : null
+  /**
+   * The endpoint and model the request names, checked **before** a session exists.
+   *
+   * The order is a correction rather than a tidy-up: the earlier code created the session first and only
+   * then checked the name, so a request naming an endpoint that is not configured left behind a real
+   * session, with a real definition and no turn in it. A name arriving from a browser is the one thing
+   * here that must be checked before anything is written.
+   */
+  const requested = typeof body.endpoint === 'string' && body.endpoint.length > 0 ? body.endpoint : undefined
+  if (requested !== undefined && !ctx.model.names().includes(requested)) {
+    respond(response, 400, 'text/plain', `no endpoint named '${requested}'; configured: ${ctx.model.names().join(', ')}\n`)
+    return
+  }
+  const model = typeof body.model === 'string' && body.model.length > 0 ? body.model : undefined
+  const born = { ...(requested !== undefined ? { endpoint: requested } : {}), ...(model !== undefined ? { model } : {}) }
   const handle: SessionHandle =
     typeof body.session === 'string' && body.session.length > 0
       ? ctx.session.start({ resume: body.session })
       : folder !== null
-        ? ctx.session.openAt(folder, { ...(body.new === true ? { fresh: true } : {}), title: body.prompt.slice(0, 60) })
-        : ctx.session.start({ cwd: process.cwd(), title: body.prompt.slice(0, 60) })
+        ? ctx.session.openAt(folder, { ...(body.new === true ? { fresh: true } : {}), title: body.prompt.slice(0, 60), ...born })
+        : ctx.session.start({ cwd: process.cwd(), title: body.prompt.slice(0, 60), ...born })
   if (folder !== null) ctx.workspace?.ensureOwner(folder)
-  const endpoint = body.endpoint ?? state.defaultEndpoint ?? ctx.model.defaultEndpoint()
+  /**
+   * Which endpoint answers: the request, then the session's own record, then the server's default, then the
+   * configuration's. The session's record sits above the server's because a session switched from the panel
+   * must stay switched — a reload sends the session id without the choice, and reading the server's default
+   * first would make the switch a per-request illusion.
+   */
+  const record = ctx.session.list().find((entry) => entry.id === handle.id)
+  const nominated = ctx.model.defaultEndpoint()
+  const endpoint = resolveTurnEndpoint({
+    ...(requested !== undefined ? { requested } : {}),
+    ...(record?.endpoint !== undefined ? { recorded: record.endpoint } : {}),
+    ...(state.defaultEndpoint !== undefined ? { serverDefault: state.defaultEndpoint } : {}),
+    ...(nominated !== undefined ? { serviceDefault: nominated } : {}),
+  })
   if (endpoint === undefined) {
     respond(response, 400, 'text/plain', 'no endpoint is configured\n')
     return
   }
+  /**
+   * A recorded endpoint that the configuration no longer holds fails **loudly**, naming it. Falling back to
+   * another backend would answer a switched session with a model its person did not choose; the page shows
+   * the missing name in its menu so the reason is visible where the fix is.
+   */
   if (!ctx.model.names().includes(endpoint)) {
     respond(response, 400, 'text/plain', `no endpoint named '${endpoint}'; configured: ${ctx.model.names().join(', ')}\n`)
     return
   }
+  /**
+   * The session records how it is run.
+   *
+   * A session created by this request is born with the choice, so this writes only when the record and the
+   * turn disagree — a resumed session this request pointed elsewhere, or one started before the record
+   * existed. Writing only on a difference is what keeps an ordinary turn from rewriting a metadata file on
+   * every message, which is also the reason the comparison includes the model.
+   */
+  if (record?.endpoint !== endpoint || record?.model !== model) {
+    ctx.session.setModel(handle.id, { endpoint, ...(model !== undefined ? { model } : {}) })
+  }
 
+  /**
+   * The session is marked running **before** the stream opens, and unmarked in the `finally` below.
+   *
+   * That mark is the whole of "is there a turn to steer into": DSH refuses a steer whose turn has ended, and
+   * this route asks the same question about the same fact. It is a count because two turns on one session are
+   * possible, and a set would clear the mark for a session that is still running.
+   */
+  state.running.set(handle.id, (state.running.get(handle.id) ?? 0) + 1)
   respondSse(response)
   state.clients.add(response)
   /**
@@ -1024,7 +1308,7 @@ async function readJson(request: IncomingMessage, response: ServerResponse): Pro
   // same emit the server already listens on for other clients.
   const unsubscribe = subscribeSessionEvent(ctx, forward)
   try {
-    const result = await runTurn(ctx, { session: handle, endpoint, prompt: body.prompt, ...(body.model !== undefined ? { model: body.model } : {}) })
+    const result = await runTurn(ctx, { session: handle, endpoint, prompt: body.prompt, ...(model !== undefined ? { model } : {}) })
     safeWrite(
       `event: done\ndata: ${JSON.stringify({ session: handle.id, text: result.text, finishReason: result.finishReason, rounds: result.rounds, denials: result.denials })}\n\n`,
     )
@@ -1038,6 +1322,9 @@ async function readJson(request: IncomingMessage, response: ServerResponse): Pro
     safeWrite(`event: error\ndata: ${JSON.stringify({ message: (error as Error).message })}\n\n`)
   } finally {
     unsubscribe()
+    const left = (state.running.get(handle.id) ?? 1) - 1
+    if (left > 0) state.running.set(handle.id, left)
+    else state.running.delete(handle.id)
     state.clients.delete(response)
     if (!response.writableEnded && !response.destroyed) response.end()
   }

@@ -165,6 +165,17 @@ export class SessionService extends Service {
     return this.store.rename(id, title)
   }
 
+  /**
+   * Switch a session onto an endpoint, replacing any model override it carried.
+   *
+   * Exposed on the service rather than read from `store` by the route, because the store is the layer a
+   * caller may not touch and the switcher is an ordinary caller. The route validates the name against the
+   * model service before it lands here; this records the decision the session made.
+   */
+  setModel(id: SessionId, selection: { readonly endpoint: string; readonly model?: string }): SessionMeta | null {
+    return this.store.setModel(id, selection)
+  }
+
   /** The last complete answer, which is what a transcript read returns. */
   lastAnswer(handle: SessionHandle): string {
     return this.store.lastAnswer(handle)

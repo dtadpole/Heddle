@@ -149,6 +149,25 @@ export function resolveEndpoints(
   return [...byName.values()]
 }
 
+/**
+ * The endpoint list as the Web UI's switcher reads it, plus the name it should show as current.
+ *
+ * One list, one shape: this is `describeEndpoint` mapped over the service's own endpoints, so the answer
+ * to "what is safe to say about an endpoint" stays in one function rather than being re-derived for the
+ * page. The `default` is validated against the list, because a name that is not there is not a selection
+ * the page can mark — `null` is the honest answer, and the page falls back to whatever a session recorded.
+ */
+export function describeEndpoints(
+  endpoints: readonly EndpointConfig[],
+  nominated?: string,
+): { readonly endpoints: readonly Record<string, unknown>[]; readonly default: string | null } {
+  const present = nominated !== undefined && endpoints.some((endpoint) => endpoint.name === nominated)
+  return {
+    endpoints: endpoints.map(describeEndpoint),
+    default: present && nominated !== undefined ? nominated : null,
+  }
+}
+
 /** A credential-free summary of an endpoint, safe to log or print. */
 export function describeEndpoint(endpoint: EndpointConfig): Record<string, unknown> {
   return {
@@ -156,6 +175,9 @@ export function describeEndpoint(endpoint: EndpointConfig): Record<string, unkno
     kind: endpoint.kind,
     baseUrl: endpoint.baseUrl,
     ...(endpoint.model !== undefined ? { model: endpoint.model } : {}),
+    ...(endpoint.project !== undefined ? { project: endpoint.project } : {}),
+    ...(endpoint.region !== undefined ? { region: endpoint.region } : {}),
+    ...(endpoint.proxy !== undefined ? { proxy: endpoint.proxy } : {}),
     ...(endpoint.capabilities !== undefined ? { capabilities: endpoint.capabilities } : {}),
     // Presence, never the value.
     ...(endpoint.apiKey !== undefined ? { credential: 'set' } : {}),

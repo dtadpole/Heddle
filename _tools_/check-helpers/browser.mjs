@@ -255,19 +255,39 @@ export async function openBrowser(options = {}) {
    * context — or between the old one dying and the new one existing — is answered with an empty remote
    * object rather than an error, so a reading after navigation came back `undefined` on a page that had a
    * value. `Runtime.executionContextCreated` names each context.
+   *
+   * **The main frame's context, not the newest one.** A page with an `iframe` — heddle's own HTML preview
+   * builds one, sandboxed — creates a second default context, and taking the last one created pointed every
+   * reading at the frame instead of the page: measured on 2026-10-12, `location.href` answered `about:blank`
+   * while the raw protocol answered the server's URL, because the iframe's context was the last to arrive.
+   * Contexts are therefore kept **by frame** and the top frame's is chosen; `Page.frameNavigated` names the
+   * top frame, since a subframe has a `parentId` and it does not.
    */
-  let contextId
+  const contexts = new Map()
+  let fallbackContextId
+  let mainFrameId
+  connection.on('Page.frameNavigated', (params) => {
+    const frame = params?.frame
+    if (frame !== undefined && frame.parentId === undefined) mainFrameId = frame.id
+  })
   connection.on('Runtime.executionContextCreated', (params) => {
     const context = params?.context
-    if (context !== undefined && context.auxData?.isDefault === true) contextId = context.id
+    if (context === undefined || context.auxData?.isDefault !== true) return
+    const frameId = context.auxData?.frameId
+    if (typeof frameId === 'string') contexts.set(frameId, context.id)
+    else if (fallbackContextId === undefined) fallbackContextId = context.id
   })
   connection.on('Runtime.executionContextsCleared', () => {
-    contextId = undefined
+    contexts.clear()
+    fallbackContextId = undefined
   })
+  /** The top frame's context when it is known, and the only default context seen otherwise. */
+  const liveContextId = () => (mainFrameId !== undefined ? contexts.get(mainFrameId) : undefined) ?? fallbackContextId
 
   const evaluate = async (expression, timeoutMs = 10_000) => {
     const deadline = Date.now() + timeoutMs
     for (;;) {
+      const contextId = liveContextId()
       const result = await connection.send('Runtime.evaluate', {
         expression,
         returnByValue: true,
@@ -296,12 +316,14 @@ export async function openBrowser(options = {}) {
      */
     send: (method, params) => connection.send(method, params),
     async goto(url, timeoutMs = 20_000) {
-      contextId = undefined
+      contexts.clear()
+      fallbackContextId = undefined
+      mainFrameId = undefined
       const loaded = connection.once('Page.loadEventFired', timeoutMs)
       await connection.send('Page.navigate', { url })
       await loaded
       const deadline = Date.now() + timeoutMs
-      while (contextId === undefined && Date.now() < deadline) await new Promise((resolvePromise) => setTimeout(resolvePromise, 50))
+      while (liveContextId() === undefined && Date.now() < deadline) await new Promise((resolvePromise) => setTimeout(resolvePromise, 50))
       return this
     },
     evaluate,

@@ -85,19 +85,53 @@
   li:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
   li[aria-current] { background: color-mix(in oklab, currentColor 14%, transparent); }
   .meta { opacity: .6; font-size: .78rem; }
-  #log { flex: 1; overflow-y: auto; padding: .85rem; display: flex; flex-direction: column; gap: .5rem; font-size: 13px; line-height: 1.45; }
-  .turn { border-left: 3px solid var(--line); padding-left: .6rem; white-space: pre-wrap; }
-  .turn.user { border-color: #4b8bf5; }
-  .turn.assistant { border-color: #2fa36b; }
-  .turn.reasoning { border-color: #b7791f; opacity: .85; }
-  .turn.reasoning[open] [data-body] { font-style: italic; }
-  details.turn > summary { cursor: pointer; font-size: .82rem; opacity: .75; list-style: none; }
+  /**
+   * The chat rows, laid out and dressed the way DSH's are.
+   *
+   * DSH's chat is a centred column of rows with a **flow gap of 6px**, widened to 12px after a response and to
+   * 16px after a run of process rows — so a turn's reasoning and tool calls stay tight together while the
+   * answer they produced has room. Its user message is a right-aligned rounded bubble; its assistant answer is
+   * full width and carries no chrome at all; its reasoning and tool rows are compact one-line disclosures that
+   * open into their bodies. Those are the four shapes this block is.
+   */
+  #log { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 1.6; }
+  #log > * { min-width: 0; }
+  .turn { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /**
+   * The person's own message: a bubble against the right edge, capped at 82% of the column — DSH's
+   * `MessageItem` bubble, which is `padding: 10px 16px` at `radius-xl` on the specific-bubble surface.
+   */
+  .turn.user { align-self: flex-end; max-width: min(82%, 34rem); padding: .6rem 1rem; border-radius: 1.1rem; background: color-mix(in oklab, currentColor 11%, transparent); }
+  /** The answer: no border, no bubble, roomier leading — DSH's `AssistantMarkdown` root. */
+  .turn.assistant { margin-top: 6px; font-size: 14px; line-height: 1.75; }
+  .turn.assistant[data-state='running']::after { content: '▍'; margin-left: .1rem; opacity: .45; }
+  /** A refusal or a failure is a sentence, not a bordered quote. */
+  .turn.denied { color: #d14343; }
+  /** Process rows — reasoning and tool calls — are compact disclosures. */
+  details.turn { font-size: 13px; }
+  details.turn > summary {
+    display: flex; align-items: baseline; gap: .4rem;
+    cursor: pointer; list-style: none; opacity: .72; padding: .12rem 0; min-width: 0;
+  }
+  details.turn > summary:hover { opacity: 1; }
   details.turn > summary::-webkit-details-marker { display: none; }
-  details.turn > summary::before { content: '▸ '; }
-  details.turn[open] > summary::before { content: '▾ '; }
-  details.turn > [data-body] { margin-top: .35rem; white-space: pre-wrap; font-family: var(--code-font); font-size: .85em; }
-  .turn.tool { border-color: #8b5cf6; font-family: var(--code-font); font-size: .85em; }
-  .turn.denied { border-color: #d14343; color: #d14343; }
+  details.turn > summary::before { content: '▸'; flex: none; font-size: .7em; opacity: .8; }
+  details.turn[open] > summary::before { content: '▾'; }
+  /**
+   * The summary line DSH shows while a row is still arriving: its `data-streaming` summary fades out at the
+   * end rather than being clipped, because a truncated live line and a finished one look identical otherwise.
+   */
+  details.turn[data-state='running'] > summary { mask-image: linear-gradient(90deg, #000 calc(100% - 3rem), transparent); }
+  details.turn[data-state='error'] > summary { color: #d14343; opacity: .95; }
+  details.turn > [data-body] {
+    margin: .2rem 0 .3rem 1.15rem; padding-left: .6rem; border-left: 2px solid var(--line);
+    white-space: pre-wrap; font-family: var(--code-font); font-size: 12px; line-height: 19px;
+  }
+  details.turn.reasoning > [data-body] { font-style: italic; }
+  details.turn.tool > [data-body] { border-left-color: color-mix(in oklab, #8b5cf6 45%, var(--line)); }
+  details.turn.tool pre { margin: .2rem 0; overflow-x: auto; }
+  details.turn.tool [data-result] { opacity: .85; }
+  details.turn.tool[data-state='running'] > summary { opacity: .6; }
   nav#views { display: flex; gap: .25rem; padding: .5rem .75rem 0; border-bottom: 1px solid var(--line); }
   nav#views button { font: inherit; font-size: .82rem; padding: .3rem .7rem; background: none; border: 1px solid transparent; border-bottom: none; border-radius: .35rem .35rem 0 0; color: inherit; opacity: .6; cursor: pointer; }
   nav#views button[aria-current='true'] { opacity: 1; border-color: var(--line); background: color-mix(in oklab, currentColor 7%, transparent); }
@@ -314,7 +348,24 @@
    * `white-space: pre` with wrapping, because the one thing a viewer must not do is reflow source into
    * unreadable lines; and `tab-size` so an indented file does not walk off the panel.
    */
-  #file { flex: 1; overflow: auto; padding: 0; min-width: 0; }
+  /**
+   * The file pane is a **column**, so that the frame for an HTML document can fill the space left under the header.
+   *
+   * Measured: the frame was 300x150 — the size a browser gives an `iframe` with no dimensions — because this was not
+   * a flex container, so the frame's own `flex: 1` had nothing to resolve against. The text panes are unaffected:
+   * they scroll, and a scroll container as a flex child behaves as it did.
+   */
+  #file { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 0; min-width: 0; }
+  #file-body { flex: 1; overflow: auto; min-height: 0; }
+  /**
+   * The frame for a page fills what the header leaves, and the frame inside it fills that.
+   *
+   * Measured, and this is the second time the same cascade bit: a container with no height leaves an `iframe` at the
+   * 300x150 a browser gives one by default, whatever the frame's own rules say. So the whole chain is stated —
+   * container flexes and is a column, frame flexes and stretches.
+   */
+  #file-html { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #file-html iframe { flex: 1; width: 100%; min-height: 0; border: none; background: #ffffff; }
   #file-head {
     position: sticky;
     top: 0;
@@ -378,17 +429,114 @@
   #history { margin-top: .9rem; }
   #history > summary { cursor: pointer; font-size: .8rem; opacity: .6; }
   /**
-   * The composer is a flex row, and **this rule is load-bearing**: without it the form is a block, the
-   * textarea is an inline-level box, and the prompt occupies about a sixth of the panel with the run button
-   * beside it. Measured after it went missing: form 1046px wide, textarea 181px.
+   * The composer: the draft on top, its tool row underneath, and **this rule is load-bearing**.
    *
-   * It went missing because an edit that inserted the ledger's styles used this block as its anchor and
-   * replaced it without restoring it — a regression no test noticed, because nothing judged the composer's
-   * width. The check that exists now does.
+   * DSH's composer is the same shape — a text surface with a control row below it — and it is a flex
+   * **column** here, not a block. Without the rule the form is a block, the textarea is an inline-level box,
+   * and the prompt occupies about a sixth of the panel. Measured after it went missing once: form 1046px
+   * wide, textarea 181px. It went missing because an edit that inserted the ledger's styles used this block
+   * as its anchor and replaced it without restoring it — a regression no test noticed, which is why the
+   * check that exists now judges the composer's width. A column keeps that claim while it makes room for the
+   * row: the textarea still takes the form's own width.
    */
-  form { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid var(--line); }
+  form { display: flex; flex-direction: column; gap: .4rem; padding: .75rem; border-top: 1px solid var(--line); }
   textarea { flex: 1; resize: vertical; min-height: 3.5rem; font: inherit; padding: .5rem; }
   button { font: inherit; padding: .5rem 1rem; }
+  /**
+   * The tool row under the draft, in DSH's order: the model seat on the right, the submit action at the end.
+   *
+   * `margin-left: auto` is what puts the two at the right edge while the row stays a plain flex line, so the
+   * left of the row is free for the controls heddle does not have yet — the same space DSH fills with plan
+   * and permission controls.
+   */
+  #prompt-tools { display: flex; align-items: center; gap: .35rem; }
+  #model-seat { position: relative; margin-left: auto; min-width: 0; }
+  /**
+   * The seat's trigger: the current model as a label with a chevron, which is DSH's `ModelSelect` trigger.
+   *
+   * A quiet button rather than a `<select>` on purpose: the list is drawn by the page, so it can show an
+   * endpoint a session recorded that the configuration no longer holds — the one row a native select would
+   * silently drop, leaving a person unable to see why their session stopped answering.
+   */
+  #model-trigger {
+    display: inline-flex; align-items: center; gap: .3rem; max-width: 22rem;
+    font-size: .78rem; padding: .2rem .4rem; background: none; color: inherit;
+    border: 1px solid transparent; border-radius: .35rem; opacity: .72; cursor: pointer;
+  }
+  #model-trigger:hover, #model-trigger[aria-expanded='true'], #model-trigger:focus-visible {
+    opacity: 1; border-color: var(--line); background: color-mix(in oklab, currentColor 7%, transparent); outline: none;
+  }
+  #model-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #model-trigger .chevron { flex: none; }
+  /**
+   * The menu opens **upward**, because the seat sits at the bottom of the panel: a menu below the trigger
+   * would be laid out past the window's edge, which is the one thing a control for switching cannot do.
+   */
+  #model-menu {
+    position: absolute; bottom: calc(100% + .3rem); right: 0; z-index: 5;
+    min-width: 17rem; max-height: 18rem; overflow-y: auto; margin: 0; padding: .25rem;
+    border: 1px solid var(--line); border-radius: .5rem; background: Canvas;
+    box-shadow: 0 6px 24px color-mix(in oklab, currentColor 24%, transparent);
+  }
+  #model-menu button {
+    display: flex; align-items: baseline; gap: .45rem; width: 100%; text-align: left;
+    font: inherit; font-size: .8rem; padding: .3rem .45rem; background: none; border: none;
+    border-radius: .3rem; color: inherit; cursor: pointer;
+  }
+  #model-menu button:hover, #model-menu button:focus-visible { background: color-mix(in oklab, currentColor 10%, transparent); outline: none; }
+  #model-menu button::before { content: ''; display: inline-block; flex: none; width: .8em; opacity: .7; }
+  #model-menu button[aria-checked='true']::before { content: '✓'; }
+  #model-menu .model-name { flex: none; }
+  #model-menu .model-id { opacity: .5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #model-menu .model-missing { opacity: .55; font-style: italic; }
+  /**
+   * The submit action: DSH's arrow, in the roundish primary button DSH draws it in.
+   *
+   * The path is DSH's own (`IconArrowUp`), kept verbatim rather than redrawn: the shape is the one the owner
+   * is asking for by name, and an approximation would be a different control wearing the same word.
+   */
+  #send {
+    flex: none; display: grid; place-items: center; width: 2rem; height: 2rem; padding: 0;
+    border: 1px solid var(--line); border-radius: .5rem;
+    background: color-mix(in oklab, currentColor 12%, transparent); color: inherit; cursor: pointer;
+  }
+  #send:hover:not(:disabled) { background: color-mix(in oklab, currentColor 20%, transparent); }
+  #send:disabled { opacity: .45; cursor: default; }
+  /**
+   * The queue dock, above the composer — DSH's `QueueDock`, whose rules these follow.
+   *
+   * The panel is rounded on **top only** and sits flush against the composer below it, because the two are
+   * one stack visually: what is waiting attaches to the thing it is waiting for. A count header appears only
+   * for more than one item, and the list is collapsed by default, which is the behaviour that keeps a long
+   * queue from pushing the conversation off the screen.
+   */
+  #queue { flex: none; padding: .5rem .75rem 0; }
+  #queue .panel {
+    border: 1px solid var(--line); border-bottom: none; border-radius: .5rem .5rem 0 0;
+    background: color-mix(in oklab, currentColor 4%, transparent);
+  }
+  #queue .header {
+    display: flex; align-items: center; gap: .4rem; width: 100%; height: 2rem; padding: 0 .6rem;
+    font: inherit; font-size: .78rem; color: inherit; text-align: left;
+    background: none; border: none; cursor: pointer;
+  }
+  #queue .header:disabled { cursor: default; }
+  #queue .list { list-style: none; margin: 0; padding: 0 0 .2rem; max-height: 10rem; overflow-y: auto; }
+  /* The sidebar's own `li` rules are for navigation; a queued message is not a row you click. */
+  #queue .row { display: flex; align-items: center; gap: .5rem; padding: .2rem .3rem .2rem .6rem; cursor: default; }
+  #queue .row:hover { background: none; }
+  #queue .row + .row { border-top: 1px solid var(--line); }
+  #queue .preview { flex: 1 1 auto; min-width: 0; font-size: .8rem; opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #queue .row[data-status='sending'] .preview { opacity: .5; }
+  #queue .status { flex: none; font-size: .72rem; opacity: .6; }
+  #queue .actions { flex: none; display: flex; gap: .1rem; }
+  #queue .action {
+    display: grid; place-items: center; width: 1.6rem; height: 1.6rem; padding: 0;
+    font-size: .78rem; color: inherit; background: none; border: none; border-radius: .3rem;
+    opacity: .6; cursor: pointer;
+  }
+  #queue .action:hover:not(:disabled) { opacity: 1; background: color-mix(in oklab, currentColor 10%, transparent); }
+  #queue .action:disabled { opacity: .3; cursor: default; }
   h1 button { font: inherit; padding: 0 .35rem; line-height: 1.2; }
   /**
    * The file pane, by what the server decided to show.
@@ -442,15 +590,6 @@
   #brand-name { font-family: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif; font-size: 1.06rem; font-weight: 600; letter-spacing: .01em; }
   .untwisty { font: inherit; padding: 0 .3rem; opacity: .55; }
   .untwisty:hover { opacity: 1; }
-  /**
-   * One tool element, two halves: what was asked and what came back. The call and its result share a
-   * block, and the state is a colour on the summary rather than a second row — which is how DSH marks
-   * it, and what keeps a failure visible while the block is closed.
-   */
-  .turn.tool[data-state='running'] > summary { opacity: .75; }
-  .turn.tool[data-state='error'] > summary { color: #d14343; }
-  .turn.tool pre { margin: .25rem 0 0; padding: .35rem .5rem; background: color-mix(in oklab, currentColor 6%, transparent); border-radius: .25rem; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .turn.tool pre.result { border-left: 2px solid color-mix(in oklab, currentColor 25%, transparent); }
 </style>
 </head>
 <body>
@@ -505,10 +644,53 @@
       line-number gutter, and text verbatim — and `white-space` is what tells them apart.
     -->
     <div id="file-body" data-renderer="text"></div>
+    <!--
+      A page is shown in its own frame. `allow-same-origin` lets the frame fetch the document's images and stylesheets
+      through this server; every capability that could act is left out, so no script runs and no form submits. The
+      frame's own sanitising happens before anything is put inside it.
+    -->
+    <div id="file-html" hidden><iframe id="html-view" title="the document" sandbox="allow-same-origin"></iframe></div>
   </div>
+  <!--
+    The queue dock: messages that have been submitted and are waiting for their own turn.
+
+    DSH's `QueueDock`, reduced to what heddle has. DSH's queue is durable and host-owned — the agent runtime
+    drains it — while heddle's turns are one HTTP request each, driven by this page, so the queue lives here
+    and drains when the running turn's response ends. The **rules** are DSH's rather than invented:
+
+    - an empty queue renders nothing at all, so a person sees no furniture when nothing is waiting;
+    - one item renders directly, because a count header for one row is a click that reveals nothing;
+    - several items collapse behind a `N queued messages` header, closed by default, so a long queue cannot
+      push the conversation off the screen;
+    - every row offers the same three actions DSH's does — send now (`steer`), edit, remove.
+
+    The rows are drawn by `renderQueue()`; this element is the dock's slot in the panel, directly above the
+    composer, which is where DSH's `conversation.input.dock` sits.
+  -->
+  <div id="queue" hidden></div>
   <form id="prompt">
     <textarea name="prompt" placeholder="ask heddle something" autofocus></textarea>
-    <button>run</button>
+    <!--
+      The tool row: the model seat and the submit action, under the draft.
+
+      DSH's composer is a draft on top and a control row underneath, and the model selector is a seat in that
+      row (`conversation.input.model`) rather than a separate panel — which is exactly what "the LLM switcher
+      at the bottom of the chat panel" means in DSH's own layout. The submit action is DSH's primary button,
+      drawn with DSH's own arrow: the button's label changes with what pressing it will do while a turn is
+      running (`Send message` → `Queue message`), the way DSH's does.
+    -->
+    <div id="prompt-tools">
+      <div id="model-seat">
+        <button type="button" id="model-trigger" aria-haspopup="menu" aria-expanded="false" title="the model that answers this session">
+          <span id="model-label">model</span>
+          <svg class="chevron" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div id="model-menu" role="menu" aria-label="the model that answers this session" hidden></div>
+      </div>
+      <button id="send" type="submit" aria-label="Send message">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor"/></svg>
+      </button>
+    </div>
   </form>
 </main>
 <script type="module">
@@ -580,6 +762,7 @@ function add(kind, text, merge = true, label, tool) {
     // still looked for `[data-body]` on whatever the last child was, and a history render passes
     // merge=false... measured, that path is what threw and left the log holding one turn of nine.
     last.textContent += text
+    last.dataset.state = 'running'
     log.scrollTop = log.scrollHeight
     return
   }
@@ -590,9 +773,31 @@ function add(kind, text, merge = true, label, tool) {
   const node = document.createElement('div')
   node.className = 'turn ' + kind
   node.dataset.kind = kind
+  /**
+   * Whether this row is still arriving.
+   *
+   * DSH's assistant row carries a `status` of `running` while deltas are landing and `settled` once the turn
+   * ends, and the difference is visible: a running answer shows a caret, a settled one does not. A history
+   * render is settled by construction — those events all happened before the page asked for them.
+   */
+  node.dataset.state = merge ? 'running' : 'settled'
   node.textContent = text
   log.append(node)
   log.scrollTop = log.scrollHeight
+}
+
+/**
+ * A turn finished: nothing in the transcript is still arriving. Called from the turn's own `done`.
+ *
+ * The two vocabularies are DSH's own and they differ, which is why this is not one assignment: an **assistant**
+ * row is `running` or `settled` (its `AssistantChatData.status`), while a **tool** row is `running`, `ok` or
+ * `error` (its `ToolRow` state). A tool that is still marked running when the turn ends answered nothing, and
+ * `ok` is the honest word for it only because the loop records a result for every call it ran.
+ */
+function settleChat() {
+  for (const node of log.querySelectorAll('.turn[data-state="running"]')) {
+    node.dataset.state = node.dataset.kind === 'tool' ? 'ok' : 'settled'
+  }
 }
 
 /**
@@ -608,6 +813,7 @@ function addBlock(kind, text, merge, label, tool) {
   if (merge && last && last.dataset.kind === kind) {
     const body = last.querySelector('[data-body]')
     body.textContent += text
+    if (kind === 'reasoning') last.dataset.state = 'running'
     last.querySelector('summary').textContent = oneLiner(kind, body.textContent, label)
     log.scrollTop = log.scrollHeight
     return
@@ -621,12 +827,17 @@ function addBlock(kind, text, merge, label, tool) {
    * This is what the owner asked for and what DSH does: a call and its answer are one thing a reader can
    * open, not two rows to match up by eye. The call's id is on the element so a live result can find the
    * row it belongs to instead of appending a second one.
+   *
+   * The **state** is DSH's `ToolRow` state, and it is what the row's dressing answers to: a call that has not
+   * come back yet is `running`, a result is `settled`, a refusal or a tool error is `error`.
    */
   if (kind === 'tool') {
     const state = tool && tool.state ? tool.state : 'ok'
-    node.dataset.state = state
+    node.dataset.state = state === 'running' ? 'running' : state === 'error' ? 'error' : 'ok'
     if (tool && tool.toolCallId) node.dataset.toolCallId = tool.toolCallId
     if (tool && tool.name) node.dataset.toolName = tool.name
+  } else {
+    node.dataset.state = merge ? 'running' : 'settled'
   }
   // Named line, not summary: a local called summary shadows the global summary() for the type stripper,
   // which then read the call below as a call on a string. Measured.
@@ -680,11 +891,11 @@ function fillToolResult(toolCallId, result, failed) {
   return true
 }
 
-/** The one line a closed block shows: the label when there is one, otherwise the kind and its size. */
+/** The one line a closed block shows: a label and how much there is, which is DSH's title/summary row. */
 function oneLiner(kind, text, label) {
   const size = text.length + ' chars'
-  if (label) return label + '  (' + size + ')'
-  return (kind === 'reasoning' ? 'reasoning' : kind) + '  (' + size + ')'
+  if (label) return label + ' · ' + size
+  return (kind === 'reasoning' ? 'reasoning' : kind) + ' · ' + size
 }
 
 /**
@@ -959,6 +1170,8 @@ function renderLedger(data, timeline_ = { spans: [], durationMs: 0 }) {
 
 async function showSession(id) {
   current = id
+  /** The composer follows the conversation: its own queue, and the model that session is run with. */
+  adoptSession(id)
   await refreshSessions()
   syncSelectionToSession()
   if (view === 'trajectory') await showLedger(id)
@@ -973,6 +1186,12 @@ async function showSession(id) {
     const response = await fetch('/api/sessions/' + encodeURIComponent(id))
     if (!response.ok) return
     const body = await response.json()
+    /**
+     * The session's own model choice, when it has one. A session that has never recorded one leaves the
+     * seat where it is, which is what lets a person pick a backend **before** the turn that creates the
+     * session: the choice travels with the request and the server records it on the session it made.
+     */
+    applySessionModel(body.endpoint ?? null, body.model ?? null)
     /**
      * Each turn renders inside its own guard.
      *
@@ -1027,8 +1246,26 @@ async function refreshSessions() {
 const events = new EventSource('/api/events')
 events.addEventListener('session', (message) => {
   const payload = JSON.parse(message.data)
-  if (current && payload.session !== current) return
   const event = payload.event
+  /**
+   * Whether a turn is running, read before the session filter below and for **every** session.
+   *
+   * The composer needs it for the session it is attached to, and this stream is the only place a turn this
+   * page did not start becomes visible — another window's, or the CLI's. `model/request` is appended once
+   * per round and `turn/completed` once per turn, so the pair is a start and an end rather than a guess.
+   */
+  if (event.type === 'model/request') runningSessions.add(payload.session)
+  else if (event.type === 'turn/completed') {
+    runningSessions.delete(payload.session)
+    /**
+     * A turn just ended, which is exactly when a queued message becomes sendable — including one that was
+     * waiting on a turn this page never started. The pump refuses to run twice for one queue, so this can
+     * never double-send.
+     */
+    if (payload.session === composerKey) void pumpQueue()
+    renderComposerState()
+  }
+  if (current && payload.session !== current) return
   if (event.type === 'assistant/chunk' && event.chunk.type === 'text-delta') add('assistant', event.chunk.text)
   else if (event.type === 'assistant/chunk' && event.chunk.type === 'reasoning-delta') add('reasoning', event.chunk.text)
   else if (event.type === 'assistant/chunk' && event.chunk.type === 'tool-call') {
@@ -1179,44 +1416,510 @@ window.addEventListener('resize', () => setSidebarWidth(
 const rememberedSidebar = storedSidebarWidth()
 if (rememberedSidebar !== null) setSidebarWidth(rememberedSidebar, { persist: false })
 
-document.getElementById('prompt').addEventListener('submit', async (submitEvent) => {
-  submitEvent.preventDefault()
-  const textarea = submitEvent.target.elements.prompt
-  const prompt = textarea.value.trim()
-  if (prompt === '') return
-  textarea.value = ''
-  add('user', prompt)
-  const response = await fetch('/api/turn', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
+/**
+ * The composer: the draft, the queue it feeds, and the model seat — DSH's input bar, reduced to heddle's parts.
+ *
+ * DSH's rules are followed rather than re-invented, because they are the behaviour the owner asked for by
+ * reference and each one answers a question this page would otherwise guess at:
+ *
+ * - **Plain Enter submits; Shift+Enter is a newline.** DSH registers Enter on its editor's command layer and
+ *   leaves Shift+Enter to the editor's own line break.
+ * - **While a turn is running, plain Enter queues the message** — DSH's `busyEnter` preference, which
+ *   defaults to `queue` — and **Ctrl/Cmd+Enter is the accelerated gesture**, resolved to the opposite
+ *   delivery mode, so it goes next rather than last. DSH calls that delivery `steer` and injects into the
+ *   running turn; heddle's turns are one HTTP request each and its log takes one writer, so the honest
+ *   stand-in is "send this one next", which is what the mode means here and what a row's `Send now` does.
+ * - **An empty draft with Ctrl/Cmd+Enter steers everything still waiting, in FIFO order** — DSH's
+ *   `steerQueue`, and the reason the chord reads as "send the queued message".
+ * - **A submit while nothing is running starts its turn immediately.** `resolveSubmitMode` answers `queue`
+ *   when the agent is idle, and DSH's host drains a queue it can start at once; so does this page.
+ * - **The queue renders nothing when it is empty, one row when it holds one, and a collapsed count header
+ *   when it holds several** — DSH's `QueueDock`. A row offers send-now, edit and remove, which is DSH's
+ *   `QueueAction` set.
+ *
+ * Two differences are heddle's rather than DSH's, and both are forced rather than chosen: the queue lives in
+ * this page instead of on the host, because heddle has no agent runtime holding a delivery loop, and the
+ * `busyEnter` preference is the constant DSH defaults to rather than a setting, because heddle has no
+ * settings surface for it.
+ */
+
+/** The session the composer belongs to: the id on screen, or the empty string while a turn will start one. */
+const QUEUE_KEY_NONE = ''
+let composerKey = QUEUE_KEY_NONE
+/** One array per session, so switching conversations can never send one session's message into another. */
+const queues = new Map()
+/**
+ * Sessions a turn is running in **without this page driving it** — another window, or the CLI.
+ *
+ * DSH reads one host fact, `running`. This page has to reconstruct it from the two facts it can see: its own
+ * turn, known exactly from the queue item being sent, and a turn another client started, visible only in the
+ * event stream, which is what feeds this set. Only the page's own turn gates the pump — a stale "someone
+ * else is running" must never stall a queue that is ready to go.
+ */
+const runningSessions = new Set()
+
+const composer = document.getElementById('prompt')
+const field = composer.elements.prompt
+const sendButton = document.getElementById('send')
+const queueDock = document.getElementById('queue')
+const modelTrigger = document.getElementById('model-trigger')
+const modelMenu = document.getElementById('model-menu')
+const modelLabel = document.getElementById('model-label')
+
+/** DSH's `DEFAULT_BUSY_ENTER_BEHAVIOR`: plain Enter queues while the agent is busy. */
+const BUSY_ENTER = 'queue'
+
+function queueOf(key = composerKey) {
+  let queue = queues.get(key)
+  if (queue === undefined) {
+    queue = []
+    queues.set(key, queue)
+  }
+  return queue
+}
+
+/**
+ * Follow the session the panel shows, carrying anything queued before that session existed.
+ *
+ * The first turn of a fresh panel starts a session, and a message queued while that turn ran belongs to the
+ * session it created rather than to "no session" — so the loose queue moves with the id as the **same array**,
+ * which is what keeps the pump already holding it working on the right list.
+ */
+function adoptSession(id) {
+  if (typeof id !== 'string' || id.length === 0 || id === composerKey) return
+  if (composerKey === QUEUE_KEY_NONE) {
+    const loose = queues.get(QUEUE_KEY_NONE)
+    if (loose !== undefined) {
+      const existing = queues.get(id)
+      if (existing === undefined) queues.set(id, loose)
+      else existing.unshift(...loose.splice(0, loose.length))
+      queues.delete(QUEUE_KEY_NONE)
+    }
+  }
+  composerKey = id
+  renderQueue()
+}
+
+function sessionRunning() {
+  return runningSessions.has(composerKey)
+}
+function turnInFlight() {
+  return queueOf().some((item) => item.status === 'sending')
+}
+function anyRunning() {
+  return turnInFlight() || sessionRunning()
+}
+
+/**
+ * Resolve a submission gesture into a delivery mode — DSH's `resolveSubmitMode`.
+ *
+ * Written as DSH writes it — `if (!running) return 'queue'; if (gesture === 'enter') return preferred;
+ * return preferred === 'queue' ? 'steer' : 'queue'` — minus its `steeringAvailable` test, which is what
+ * refuses the accelerated gesture on a transport that cannot steer. heddle's `steer` means "send this next"
+ * rather than "inject into the running turn", so the gesture is always available and does something visible.
+ */
+function resolveSubmitMode(preferred, running, gesture) {
+  if (!running) return 'queue'
+  if (gesture === 'enter') return preferred
+  return preferred === 'queue' ? 'steer' : 'queue'
+}
+
+/** How much of a queued message a closed row shows, in characters — DSH's own preview length. */
+const QUEUE_PREVIEW_CHARS = 200
+let queueSeq = 0
+let queueExpanded = false
+let editing = null
+
+function previewOf(text) {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  const chars = Array.from(flat)
+  return chars.length > QUEUE_PREVIEW_CHARS ? `${chars.slice(0, QUEUE_PREVIEW_CHARS).join('')}…` : flat
+}
+
+/** Submit the draft, or steer what is waiting when there is nothing to submit. */
+function submitDraft(gesture) {
+  const text = field.value.trim()
+  if (text === '') {
+    if (gesture === 'accelerated') void steerQueue()
+    return
+  }
+  field.value = ''
+  const mode = resolveSubmitMode(BUSY_ENTER, anyRunning(), gesture)
+  if (mode === 'steer') {
+    void deliverSteered(text)
+    return
+  }
+  enqueue(text, 'queue')
+}
+
+/** Add one message to the wait: at the end for an ordinary submit, at the front for a steer that could not land. */
+function enqueue(text, where) {
+  const item = { id: `queued-${++queueSeq}`, text, status: 'pending' }
+  const queue = queueOf()
+  if (where === 'steer') queue.unshift(item)
+  else queue.push(item)
+  renderQueue()
+  void pumpQueue()
+}
+
+/**
+ * Deliver a message into the running turn, or queue it when there is no turn to steer into.
+ *
+ * DSH's host refuses a steer whose turn has ended (`session/steer-unavailable`), and the composer's answer to
+ * that refusal is a **queue** — the same thing DSH's own loop does with a submission that arrives after the
+ * window closed. So a refusal falls back rather than failing: the message is not lost, it is next in the wait.
+ */
+async function deliverSteered(text) {
+  if (await steerNow(text)) return
+  enqueue(text, 'steer')
+}
+
+/** One steer attempt. `true` means the message is in the running turn; `false` means it was refused. */
+async function steerNow(text) {
+  if (composerKey === QUEUE_KEY_NONE) return false
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(composerKey)}/steer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: text }),
+    })
+    if (response.ok) return true
+    if (response.status === 409) return false
+    const detail = await response.text().catch(() => '')
+    add('denied', `could not steer: ${detail.trim().replace(/\s+/g, ' ').slice(0, 200) || response.status}`)
+    return false
+  } catch (error) {
+    add('denied', `could not steer: ${(error && error.message) || error}`)
+    return false
+  }
+}
+
+/**
+ * Send now: the row a person pointed at is delivered into the running turn, or — with no turn to steer into —
+ * moved to the front of the wait.
+ *
+ * This is DSH's `QueueAction` of kind `steer`, which is the same operation the accelerated chord performs on
+ * whatever the composer holds; a row is that operation on a row.
+ */
+async function steerItem(id) {
+  const queue = queueOf()
+  const at = queue.findIndex((item) => item.id === id)
+  if (at === -1) return
+  const item = queue[at]
+  if (item !== undefined && item.status !== 'sending' && (await steerNow(item.text))) {
+    const landed = queue.findIndex((entry) => entry.id === id)
+    if (landed !== -1) queue.splice(landed, 1)
+    renderQueue()
+    void pumpQueue()
+    return
+  }
+  const [moved] = queue.splice(at, 1)
+  if (moved !== undefined && moved.status === 'failed') moved.status = 'pending'
+  if (moved !== undefined) queue.unshift(moved)
+  renderQueue()
+  void pumpQueue()
+}
+
+/**
+ * Steer everything still waiting, in FIFO order — DSH's `steerQueue`, which its empty-draft chord calls.
+ *
+ * DSH submits every pending item through `steer` and **stops at the first refusal**, because a refusal means
+ * the turn has ended and the rest are then the loop's own next-turn work rather than the chord's. The order is
+ * the queue's, so this walks it and does not reorder anything; whatever it could not deliver is pumped by the
+ * ordinary drain, which is what turns a closed window back into a queue.
+ */
+async function steerQueue() {
+  const queue = queueOf()
+  for (const item of queue) if (item.status === 'failed') item.status = 'pending'
+  renderQueue()
+  for (const item of [...queue]) {
+    if (item.status === 'sending') continue
+    if (!(await steerNow(item.text))) break
+    const at = queue.findIndex((entry) => entry.id === item.id)
+    if (at !== -1) queue.splice(at, 1)
+    renderQueue()
+  }
+  void pumpQueue()
+}
+
+function removeItem(id) {
+  const queue = queueOf()
+  const at = queue.findIndex((item) => item.id === id)
+  if (at === -1) return
+  queue.splice(at, 1)
+  if (editing !== null && editing.id === id) editing = null
+  renderQueue()
+}
+
+/** One row's action buttons. A row being sent refuses all three, which is DSH's rule. */
+function queueActions(item, isEditing) {
+  const wrap = document.createElement('div')
+  wrap.className = 'actions'
+  const sending = item.status === 'sending'
+  const action = (glyph, label, disabled, run) => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'action'
+    button.textContent = glyph
+    button.title = label
+    button.setAttribute('aria-label', label)
+    button.disabled = disabled
+    button.onclick = run
+    wrap.append(button)
+  }
+  if (isEditing) {
+    action('✓', 'Save queued message', false, () => {
+      const text = editing.text.trim()
+      if (text === '') return
+      item.text = text
+      editing = null
+      renderQueue()
+    })
+    action('✕', 'Cancel edit', false, () => {
+      editing = null
+      renderQueue()
+    })
+    return wrap
+  }
+  action('↥', 'Steer queued message', sending, () => void steerItem(item.id))
+  action('✎', 'Edit queued message', sending, () => {
+    editing = { id: item.id, text: item.text }
+    renderQueue()
+  })
+  action('✕', 'Remove queued message', sending, () => removeItem(item.id))
+  return wrap
+}
+
+function queueRow(item) {
+  const row = document.createElement('li')
+  row.className = 'row'
+  row.dataset.status = item.status
+  row.dataset.id = item.id
+  if (editing !== null && editing.id === item.id) {
+    const editor = document.createElement('textarea')
+    editor.className = 'editor'
+    editor.value = editing.text
+    editor.setAttribute('aria-label', 'Edit queued message')
+    editor.oninput = () => {
+      editing.text = editor.value
+    }
+    row.append(editor, queueActions(item, true))
+    return row
+  }
+  const preview = document.createElement('span')
+  preview.className = 'preview'
+  preview.textContent = previewOf(item.text)
+  preview.title = item.text
+  row.append(preview)
+  if (item.status === 'sending' || item.status === 'failed') {
+    const status = document.createElement('span')
+    status.className = 'status'
+    status.textContent = item.status === 'sending' ? 'Sending…' : 'Not sent'
+    row.append(status)
+  }
+  row.append(queueActions(item, false))
+  return row
+}
+
+/** The queue dock: nothing, one row, or a count header over the rows — DSH's `QueueDock` exactly. */
+function renderQueue() {
+  renderComposerState()
+  const queue = queueOf()
+  if (queue.length === 0) {
+    queueDock.hidden = true
+    queueDock.replaceChildren()
+    return
+  }
+  queueDock.hidden = false
+  const panel = document.createElement('div')
+  panel.className = 'panel'
+  /** One item is drawn directly; several fold behind the header, which starts closed. */
+  const visible = queue.length === 1 || queueExpanded
+  if (queue.length > 1) {
+    const header = document.createElement('button')
+    header.type = 'button'
+    header.className = 'header'
+    header.setAttribute('aria-expanded', String(visible))
+    header.textContent = `${queue.length} queued messages ${visible ? '▾' : '▸'}`
+    header.onclick = () => {
+      queueExpanded = !queueExpanded
+      renderQueue()
+    }
+    panel.append(header)
+  }
+  const list = document.createElement('ul')
+  list.className = 'list'
+  list.hidden = !visible
+  if (visible) for (const item of queue) list.append(queueRow(item))
+  panel.append(list)
+  queueDock.replaceChildren(panel)
+}
+
+/**
+ * Send what is waiting, one message at a time.
+ *
+ * One at a time is not a simplification: a session's log takes one writer, and the store's sequence number is
+ * derived from what has already been written, so two turns interleaved on one session would record two events
+ * with one seq. DSH's host drains its inbox at a turn boundary for the same reason.
+ *
+ * The guard is on the **queue array**, not on the session key, and that is a correction rather than a detail:
+ * the first turn of a fresh panel starts a session, `adoptSession` moves the loose queue onto the id it
+ * created — the same array — and a key-based guard then let a second pump start on the queue the first pump
+ * was already draining. Measured in `_verifiers_/80-web-ui/check-composer.mjs`: two messages went out
+ * concurrently and the rest of the queue stopped moving.
+ *
+ * A message the pump cannot send **stays** in the dock marked `Not sent`, where a person can steer it again or
+ * remove it — rather than being dropped or retried forever.
+ */
+const pumping = new WeakSet()
+async function pumpQueue(key = composerKey) {
+  const queue = queueOf(key)
+  if (pumping.has(queue)) return
+  pumping.add(queue)
+  try {
+    for (;;) {
+      const item = queue.find((entry) => entry.status === 'pending')
+      if (item === undefined) break
+      item.status = 'sending'
+      renderQueue()
+      try {
+        await runTurn(item.text, key)
+        const at = queue.findIndex((entry) => entry.id === item.id)
+        if (at !== -1) queue.splice(at, 1)
+      } catch (error) {
+        item.status = 'failed'
+        /**
+         * A refusal gives the message **back to the composer** when nothing new has been typed, which is what
+         * DSH does with a failed submission: the draft is restored only while it is untouched, so a person's
+         * words are never lost to a refusal they did not cause. A draft that has moved on keeps the row in the
+         * dock marked `Not sent`, so both halves of the refusal are still visible and neither overwrites the
+         * other.
+         */
+        if (field.value.trim() === '') {
+          field.value = item.text
+          const at = queue.findIndex((entry) => entry.id === item.id)
+          if (at !== -1) queue.splice(at, 1)
+        }
+        add('denied', `the message could not be sent: ${(error && error.message) || error}`)
+      }
+      renderQueue()
+    }
+  } finally {
+    pumping.delete(queue)
+  }
+}
+
+/**
+ * Send one message as a turn, and read the turn's own stream for what only it carries.
+ *
+ * `key` is the queue the message came from — the session it was submitted for, or the empty string while no
+ * session exists. The turn names that session rather than whatever the panel happens to show, because a
+ * person may switch conversations while a queued message is going out; the answer is recorded in the session
+ * it was asked in either way.
+ *
+ * **The deltas are not drawn here.** They are already drawn by the `EventSource` below, which is the page's
+ * one renderer of recorded events — and drawing them here as well is a real hazard rather than a theoretical
+ * one: the two paths would print every answer twice. What this response alone carries, and what is therefore
+ * read here, is the turn's own verdict — its denials, its completion, its failure.
+ */
+/**
+ * Statuses that mean the request never reached the harness.
+ *
+ * A local front door that forwards to the daemon answers one of these while the daemon is restarting, and the
+ * measurement behind this is the owner's report of 2026-10-12: `heddle-proxy: the upstream did not answer
+ * (connect ECONNREFUSED 127.0.0.1:3082)`, read as a failed message. Nothing was sent, so sending it again is
+ * not a repeat — which is the whole test for whether a retry is honest.
+ */
+const NOT_FORWARDED = new Set([502, 503, 504])
+
+/** How long to wait before the one retry, which is about how long a supervised daemon takes to come back. */
+const RETRY_DELAY_MS = 1200
+
+/**
+ * POST one turn, retrying **once** when it provably never arrived.
+ *
+ * The front door this project is served through re-handshakes by itself when the daemon restarts, and it says
+ * so in its own notes; the composer should be no more brittle than the door. A connection that never opened
+ * throws, and a gateway status means the door could not forward, so neither can have started a turn — while an
+ * error from the harness itself is **not** retried, because the message may already be in the log.
+ */
+async function sendTurn(body) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetch('/api/turn', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (response.ok || !NOT_FORWARDED.has(response.status) || attempt > 0) return response
+    } catch (error) {
+      if (attempt > 0) throw error
+    }
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
+  }
+}
+
+async function runTurn(text, key) {
+  const target = key === QUEUE_KEY_NONE ? null : key
+  const response = await sendTurn({
     /**
      * The folder is named when a tree node is selected, and the server continues **that folder's**
      * session. With no selection the request is what it always was — a session in the server's own
      * working directory — so a window opened without touching the tree still works.
+     *
+     * The endpoint and model named here are the composer's own choice, which is what makes the model seat
+     * more than a label: the turn asks the backend a person picked, and the server records it on the session
+     * so a reload comes back to it.
      */
-    body: JSON.stringify({ prompt, session: current, folder: activeFolder }),
+    prompt: text,
+    session: target,
+    folder: activeFolder,
+    ...selectionForTurn(),
   })
-  if (!response.ok) { add('denied', 'request refused: ' + response.status); return }
+  if (!response.ok) {
+    /**
+     * The server's own sentence, not only its status.
+     *
+     * Measured on 2026-10-12: a refusal here was reported as `the server refused it (400)`, and the sentence
+     * that said *why* — the name of an endpoint the run did not have — was read and thrown away. A status is
+     * not a diagnosis; the body is.
+     */
+    const detail = await response.text().catch(() => '')
+    throw new Error(detail.trim().replace(/\s+/g, ' ').slice(0, 300) || `the server refused it (${response.status})`)
+  }
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  /**
+   * Blocks are separated by a **blank line** — two real newlines. Measured while writing this, and the reason
+   * the literal is called out: it was written as `'\\n\\n'`, four characters rather than two, so the split
+   * never matched and only the first block of the stream was ever read. The live view survived because the
+   * `EventSource` renders the events independently; what silently did not work was everything only this
+   * response carries — a denial, and the redraw after a turn.
+   */
   for (;;) {
     const { value, done } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
-    for (const block of buffer.split('\\n\\n')) {
+    for (const block of buffer.split('\n\n')) {
       if (!block.trim().startsWith('event:')) continue
       const name = /event: (.+)/.exec(block)?.[1]
       const data = /data: (.+)/.exec(block)?.[1]
       if (!data) continue
       const payload = JSON.parse(data)
       if (name === 'session') {
-        current = payload.session
-        const event = payload.event
-        if (event.type === 'assistant/chunk' && event.chunk.type === 'text-delta') add('assistant', event.chunk.text)
-        else if (event.type === 'assistant/chunk' && event.chunk.type === 'reasoning-delta') add('reasoning', event.chunk.text)
+        /**
+         * A turn with no session starts one, and the panel follows it: the queue that was loose while the
+         * turn ran belongs to the session it created.
+         */
+        if (target === null) {
+          current = payload.session
+          adoptSession(payload.session)
+        }
       } else if (name === 'done') {
-        for (const denial of payload.denials ?? []) add('denied', denial.tool + ': ' + denial.message)
+        for (const denial of payload.denials ?? []) add('denied', `${denial.tool}: ${denial.message}`)
+        /** The turn is over, so nothing in the transcript is still arriving — DSH's rows become settled. */
+        settleChat()
         /**
          * The turn may have created **this folder's** session, so both the tree and the list are
          * re-read.
@@ -1226,12 +1929,233 @@ document.getElementById('prompt').addEventListener('submit', async (submitEvent)
          * registration appeared twice more at the end of the file. Measured: three handlers after one
          * turn, one more per turn after that. It is registered once, below.
          */
-        renderTree()
-        refreshSessions()
-      } else if (name === 'error') add('denied', payload.message)
+        await renderTree()
+        await refreshSessions()
+      } else if (name === 'error') {
+        add('denied', payload.message)
+        /** The turn ended without its own `turn/completed`, so the running state it set is cleared here. */
+        if (typeof payload.session === 'string') runningSessions.delete(payload.session)
+      }
     }
-    const lastBreak = buffer.lastIndexOf('\\n\\n')
+    const lastBreak = buffer.lastIndexOf('\n\n')
     if (lastBreak !== -1) buffer = buffer.slice(lastBreak + 2)
+  }
+}
+
+/**
+ * The keymap: Enter submits, Shift+Enter is a newline, Ctrl/Cmd+Enter is the accelerated gesture.
+ *
+ * The composition guard is DSH's and is not optional here: a Chinese or Japanese candidate list is confirmed
+ * with Enter, so submitting on a composition-closing key would send half a word. `isComposing` covers most
+ * engines and `keyCode === 229` is the legacy signal they emit without it — both are what DSH's keymap checks.
+ */
+field.addEventListener('keydown', (keyEvent) => {
+  if (keyEvent.key !== 'Enter') return
+  if (keyEvent.isComposing || keyEvent.keyCode === 229) return
+  if (keyEvent.shiftKey) return
+  keyEvent.preventDefault()
+  submitDraft(keyEvent.ctrlKey || keyEvent.metaKey ? 'accelerated' : 'enter')
+})
+
+/**
+ * The arrow button and plain Enter share one gesture, which is DSH's rule: plain Enter and the primary Send
+ * button deliver exactly what Enter would. The button is a submit button inside the form, so the browser
+ * gives it click, focus and keyboard behaviour for free.
+ */
+composer.addEventListener('submit', (submitEvent) => {
+  submitEvent.preventDefault()
+  submitDraft('enter')
+})
+
+/**
+ * The submit action's own label, which DSH changes with what pressing it will do.
+ *
+ * While a turn is running the arrow queues rather than sends, and the accessible name says so — a control
+ * whose meaning changed without saying so is the failure this avoids.
+ */
+function renderComposerState() {
+  const running = anyRunning()
+  const mode = resolveSubmitMode(BUSY_ENTER, running, 'enter')
+  const label = running ? (mode === 'steer' ? 'Steer message' : 'Queue message') : 'Send message'
+  sendButton.setAttribute('aria-label', label)
+  sendButton.title = running ? `${label} — Enter · Ctrl+Enter sends the queue` : `${label} — Enter · Shift+Enter for a new line`
+}
+
+/**
+ * The model seat: which backend answers this session.
+ *
+ * DSH's `conversation.input.model` seat in the composer's tool row, and its `/api/endpoints` counterpart rather
+ * than DSH's provider catalogue: heddle's configuration names **endpoints**, each already carrying the model it
+ * answers with, so the menu is one level where DSH's is two. Everything else follows DSH — the trigger shows
+ * the current selection, choosing one applies to **this session** rather than to the harness, and the choice is
+ * recorded so a reload comes back to it.
+ *
+ * The list comes from the server rather than from the configuration file, because an endpoint is resolved from
+ * several layers and a page that read one file would miss the environment overrides and the repository's own
+ * defaults.
+ */
+
+/** The endpoints the server offers, in its order, and the one it nominates. */
+let endpointOptions = []
+let endpointDefault = null
+/** What this page will ask with. `null` means "whatever the server defaults to". */
+let chosenEndpoint = null
+let chosenModel = null
+
+/** The name a person reads: the endpoint, and the model it answers with when it names one. */
+function endpointTitle(name) {
+  const found = endpointOptions.find((option) => option.name === name)
+  if (found === undefined) return `${name} (not configured)`
+  return typeof found.model === 'string' && found.model.length > 0 ? `${name} · ${found.model}` : name
+}
+
+/**
+ * What this turn will ask with, checked against the endpoints the run actually has.
+ *
+ * A page can be older than the server it is talking to: a tab left open across a configuration change, or a
+ * daemon restarted with a different endpoint list. The stale name it holds is then a name the run does not
+ * have, and sending it refuses **every** message with a complaint about a backend nobody chose — measured on
+ * 2026-10-12, after this machine's own configuration renamed an endpoint under an open tab.
+ *
+ * So the name is checked here. The run's nominated default answers instead, and the transcript says so rather
+ * than letting a different backend take over in silence; a model override belonged to the endpoint that is
+ * gone, so it goes with it.
+ */
+let staleEndpointNoted = null
+function selectionForTurn() {
+  const names = endpointOptions.map((option) => option.name)
+  if (chosenEndpoint === null) return chosenModel !== null ? { model: chosenModel } : {}
+  if (names.includes(chosenEndpoint)) {
+    return { endpoint: chosenEndpoint, ...(chosenModel !== null ? { model: chosenModel } : {}) }
+  }
+  const fallback = endpointDefault ?? names[0] ?? null
+  if (fallback === null) return {}
+  if (staleEndpointNoted !== chosenEndpoint) {
+    staleEndpointNoted = chosenEndpoint
+    add('denied', `this session is set to '${chosenEndpoint}', which this run does not have; '${fallback}' answers instead`)
+  }
+  return { endpoint: fallback }
+}
+
+/**
+ * Draw the seat and its menu.
+ *
+ * An endpoint the configuration no longer holds is **kept in the list**, as the session's own recorded value.
+ * That is the reason this is a menu the page draws rather than a native `<select>`: a session switched to an
+ * endpoint that was later removed still has to say what it is set to, or the first symptom is a turn that
+ * refuses and a control that looks perfectly fine.
+ */
+function renderModelSeat() {
+  const names = endpointOptions.map((option) => option.name)
+  const wanted = chosenEndpoint ?? endpointDefault ?? names[0] ?? null
+  chosenEndpoint = wanted
+  modelLabel.textContent =
+    wanted === null ? 'no model' : chosenModel !== null ? `${wanted} · ${chosenModel}` : endpointTitle(wanted)
+  modelTrigger.disabled = names.length === 0
+  const offered = wanted !== null && !names.includes(wanted) ? [wanted, ...names] : names
+  modelMenu.replaceChildren()
+  for (const name of offered) {
+    const option = endpointOptions.find((entry) => entry.name === name)
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.setAttribute('role', 'menuitemradio')
+    item.setAttribute('aria-checked', name === wanted ? 'true' : 'false')
+    const label = document.createElement('span')
+    label.className = 'model-name'
+    label.textContent = name
+    const model = document.createElement('span')
+    model.className = 'model-id'
+    if (option === undefined) {
+      model.classList.add('model-missing')
+      model.textContent = 'not configured'
+    } else {
+      model.textContent = typeof option.model === 'string' ? option.model : ''
+    }
+    item.append(label, model)
+    item.onclick = () => {
+      closeModelMenu()
+      void chooseEndpoint(name)
+    }
+    modelMenu.append(item)
+  }
+}
+
+function closeModelMenu() {
+  modelMenu.hidden = true
+  modelTrigger.setAttribute('aria-expanded', 'false')
+}
+
+/**
+ * Choose the endpoint that answers this session.
+ *
+ * The choice is local **and** recorded. Local, because the next turn names it — which is what makes a choice
+ * made before a session exists travel with the turn that creates one. Recorded, because the server writes it
+ * to the session's own metadata, which is what makes a reload come back to it. A failure is reported rather
+ * than swallowed: a switch that silently did nothing would leave a person talking to the backend they thought
+ * they had left.
+ */
+async function chooseEndpoint(name, model) {
+  chosenEndpoint = name
+  chosenModel = model ?? null
+  renderModelSeat()
+  if (current === null) return
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(current)}/model`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint: name, ...(model !== undefined ? { model } : {}) }),
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      setNote(body.error ?? `could not switch this session onto ${name}`)
+    } else setNote('')
+  } catch (error) {
+    setNote(`could not switch this session onto ${name}: ${(error && error.message) || error}`)
+  }
+}
+
+/** The model a session is recorded with, when it has one; a session with none keeps the page's own choice. */
+function applySessionModel(endpoint, model) {
+  if (typeof endpoint !== 'string' || endpoint.length === 0) return
+  chosenEndpoint = endpoint
+  chosenModel = typeof model === 'string' && model.length > 0 ? model : null
+  renderModelSeat()
+}
+
+/** The endpoint list, which is what the seat needs before it can offer anything. */
+async function loadEndpoints() {
+  try {
+    const response = await fetch('/api/endpoints')
+    if (!response.ok) {
+      setNote(`the endpoint list answered ${response.status}`)
+      return
+    }
+    const body = await response.json()
+    endpointOptions = Array.isArray(body.endpoints) ? body.endpoints : []
+    endpointDefault = typeof body.default === 'string' ? body.default : null
+  } catch (error) {
+    setNote(`could not read the endpoint list: ${(error && error.message) || error}`)
+  }
+  renderModelSeat()
+}
+
+modelTrigger.addEventListener('click', (clickEvent) => {
+  clickEvent.stopPropagation()
+  const open = modelMenu.hidden
+  modelMenu.hidden = !open
+  modelTrigger.setAttribute('aria-expanded', String(open))
+})
+
+/** Any click outside the seat dismisses the menu, which is what DSH's popup shell does. */
+document.addEventListener('click', (clickEvent) => {
+  if (modelMenu.hidden) return
+  if (!modelMenu.contains(clickEvent.target) && clickEvent.target !== modelTrigger) closeModelMenu()
+})
+
+document.addEventListener('keydown', (keyEvent) => {
+  if (keyEvent.key === 'Escape' && !modelMenu.hidden) {
+    closeModelMenu()
+    modelTrigger.focus()
   }
 })
 
@@ -1388,6 +2312,20 @@ async function showFile(node) {
      * which is what keeps one escaping rule in the project rather than two that can disagree.
      */
     fileBody.dataset.renderer = body.renderer ?? 'text'
+    /**
+     * A page is fetched and framed; everything else is markup the server already produced.
+     *
+     * The two are separate requests on purpose: the file route answers JSON about a file, while the HTML route answers
+     * the document itself with its resources rewritten, and mixing them would mean one route deciding whether its
+     * answer is data or a program.
+     */
+    if (body.renderer === 'html') {
+      fileHead.textContent = `${body.path}  ·  ${bits.join('  ·  ')}  ·  preview`
+      await showHtml(body.path, await (await fetch('/api/html?path=' + encodeURIComponent(body.path))).json())
+      return
+    }
+    fileHtml.hidden = true
+    fileBody.hidden = false
     if (typeof body.html === 'string') {
       fileBody.innerHTML = body.html
     } else {
@@ -1397,6 +2335,111 @@ async function showFile(node) {
     if (ticket !== fileFetches) return
     fileBody.textContent = 'could not read this file: ' + (error && error.message)
   }
+}
+
+/**
+ * The two panes a file can occupy: the text pane, and the frame an HTML document is shown in.
+ *
+ * A page cannot live in the text pane, because the text pane's rules are written for this project's own markup and a
+ * document's own CSS would repaint the harness around it. The frame is a separate document, so a page looks like a
+ * page and nothing it says can reach this one.
+ */
+const fileHtml = document.getElementById('file-html')
+const htmlView = document.getElementById('html-view')
+
+/** What a preview is allowed to contain, and it is **narrower** than DOMPurify's default rather than wider. */
+const PREVIEW_TAGS = [
+  'a', 'abbr', 'article', 'aside', 'b', 'blockquote', 'br', 'caption', 'cite', 'code', 'col', 'colgroup', 'dd',
+  'del', 'details', 'dfn', 'div', 'dl', 'dt', 'em', 'figcaption', 'figure', 'footer', 'h1', 'h2', 'h3', 'h4',
+  'h5', 'h6', 'header', 'hgroup', 'hr', 'i', 'img', 'ins', 'kbd', 'label', 'legend', 'li', 'main', 'mark', 'nav',
+  'ol', 'p', 'picture', 'pre', 'q', 's', 'samp', 'section', 'small', 'source', 'span', 'strong', 'sub', 'summary',
+  'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'time', 'tr', 'u', 'ul', 'var', 'wbr', 'link', 'style',
+]
+const PREVIEW_ATTRS = [
+  'abbr', 'align', 'alt', 'class', 'colspan', 'dir', 'height', 'href', 'hreflang', 'id', 'lang', 'media', 'name',
+  'rel', 'role', 'sizes', 'span', 'src', 'srcset', 'start', 'style', 'summary', 'title', 'type', 'valign', 'width',
+]
+
+/**
+ * Show an HTML document as a page.
+ *
+ * The order matters and is the whole safety argument: the sanitiser runs **before** anything is put in the frame, the
+ * frame allows no scripts, and the document carries a policy the browser enforces. If the sanitiser has a bug, the
+ * frame still cannot run a script; if both failed, the policy is what the browser reads. Three things have to fail
+ * for a document in a workspace to run code in this app, and none of them is the only one.
+ */
+/**
+ * The sanitiser, loaded on first use from this server's own copy of the package.
+ *
+ * Loaded here rather than by a `<script>` in the page's head, and the reason is a measurement: the first attempt
+ * inserted the tag before the **first** `</head>` in the file, which is inside this page's own documentation comment
+ * — so the tag never loaded, `DOMPurify` was undefined, and the whole module stopped at that point while the server
+ * was answering correctly. Loading it lazily means a document that is not HTML never pays for it either.
+ */
+let purifierPromise = null
+function loadPurifier() {
+  if (globalThis.DOMPurify !== undefined) return Promise.resolve(globalThis.DOMPurify)
+  if (purifierPromise === null) {
+    purifierPromise = new Promise((resolve, reject) => {
+      const element = document.createElement('script')
+      element.src = '/vendor/purify.js'
+      element.onload = () => resolve(globalThis.DOMPurify)
+      element.onerror = () => reject(new Error('the sanitiser did not load'))
+      document.head.append(element)
+    })
+  }
+  return purifierPromise
+}
+
+async function showHtml(path, body) {
+  let purifier = globalThis.DOMPurify
+  if (purifier === undefined) {
+    try {
+      purifier = await loadPurifier()
+    } catch {
+      purifier = undefined
+    }
+  }
+  if (purifier === undefined) {
+    fileHtml.hidden = true
+    fileBody.hidden = false
+    fileBody.dataset.renderer = 'text'
+    fileBody.textContent = 'the sanitiser did not load, so this document is shown as its source instead'
+    return
+  }
+  const clean = purifier.sanitize(body.html ?? '', {
+    ALLOWED_TAGS: PREVIEW_TAGS,
+    ALLOWED_ATTR: PREVIEW_ATTRS,
+    /** A style or a link element is kept for the document's own presentation, and `srcset` describes an image. */
+    ADD_ATTR: ['srcset', 'sizes', 'media'],
+    /** Nothing may be framed, and no URL may be followed that is not a resource. */
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea', 'select', 'base'],
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'srcdoc', 'formaction', 'ping'],
+    WHOLE_DOCUMENT: true,
+    RETURN_DOM: false,
+  })
+  /**
+   * The policy goes in as the first thing in the document, and `base` after it, so a relative reference the browser
+   * resolves itself — a `url()` inside a stylesheet, which the rewrite cannot see — still lands beside the document.
+   */
+  const base = path.slice(0, path.lastIndexOf('/') + 1)
+  const framed = clean.replace(
+    /<head([^>]*)>/i,
+    `<head$1><meta http-equiv="Content-Security-Policy" content="${body.csp ?? ''}"><base href="${base}">`,
+  )
+  htmlView.setAttribute('sandbox', 'allow-same-origin')
+  /**
+   * The sanitiser is asked for a whole document, so there is no branch that rebuilds one around a fragment.
+   *
+   * Measured, and it is why this is a sentence rather than code: the first version had such a fallback, and writing the
+   * closing document tag inside its template literal **closed this page** — the browser ended the harness document at
+   * that line, the body came out empty, and the server was answering correctly the whole time. The same trap caught the
+   * comment that explained it, which is why this paragraph names no tag. A fallback that cannot be reached is not worth
+   * a second way to write the document.
+   */
+  htmlView.srcdoc = framed
+  fileBody.hidden = true
+  fileHtml.hidden = false
 }
 
 /**
@@ -1949,8 +2992,17 @@ document.getElementById('add-workspace').onclick = async () => {
   await renderTree()
 }
 
-refreshSessions()
+/**
+ * The page starts with what the composer needs, in the order it needs it.
+ *
+ * The endpoint list first, because the model seat can draw nothing without it and a session that arrives with
+ * its own recorded model has to be shown against a list that exists. Then the session, then the tree. The queue
+ * is drawn last: it is empty at boot, and drawing it once is what gives the submit action its first label.
+ */
+await loadEndpoints()
+await refreshSessions()
 renderTree()
+renderQueue()
 </script>
 </body>
 </html>

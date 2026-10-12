@@ -88,11 +88,15 @@ export interface EndpointConfig {
   /** Stable name a request addresses this endpoint by. */
   readonly name: string
   /** Which wire shape this endpoint speaks. */
-  readonly kind: 'openai-chat' | 'openai-responses' | 'scripted'
+  readonly kind: 'openai-chat' | 'openai-responses' | 'anthropic-vertex' | 'scripted'
   /** Scheme, host and path prefix, without a trailing slash. */
   readonly baseUrl: string
   /** The endpoint's default model id. */
   readonly model?: string
+  /** The cloud project a publisher route is addressed under. Required by `anthropic-vertex`. */
+  readonly project?: string
+  /** The region of that project's endpoint, for example `global`. Required by `anthropic-vertex`. */
+  readonly region?: string
   /** Sent as a bearer token when present. Never logged; must not be committed. */
   readonly apiKey?: string
   /**
@@ -120,6 +124,15 @@ export interface EndpointConfig {
   readonly contextWindow?: number
   /** What this endpoint can do, for a caller choosing between them. */
   readonly capabilities?: readonly string[]
+  /**
+   * An HTTP forwarding proxy for this endpoint, as a URL.
+   *
+   * This exists for the shape an enterprise deployment usually has: the gateway is not reachable directly, and
+   * a small agent on loopback forwards for it — adding the identity the gateway checks on the way through. The
+   * request is sent to the proxy in a proxy's own form (an absolute request line), so the endpoint's `baseUrl`
+   * stays the gateway's real address and only this one field knows the hop.
+   */
+  readonly proxy?: string
   /** Milliseconds before a request is abandoned. */
   readonly timeoutMs?: number
 }

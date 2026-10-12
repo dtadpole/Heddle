@@ -21,13 +21,19 @@ const endpointSchema = Schema.object({
   kind: Schema.union([
     Schema.const('openai-chat' as const),
     Schema.const('openai-responses' as const),
+    Schema.const('anthropic-vertex' as const),
     Schema.const('scripted' as const),
   ]),
   baseUrl: Schema.string(),
   model: Schema.string(),
+  /** The cloud project and region a publisher route is addressed under. */
+  project: Schema.string(),
+  region: Schema.string(),
   apiKey: Schema.string(),
   apiKeyFile: Schema.string(),
   headers: Schema.dict(Schema.string()),
+  /** An HTTP forwarding proxy for this endpoint, as a URL. */
+  proxy: Schema.string(),
   stream: Schema.boolean(),
   maxOutputTokens: Schema.number(),
   /** The model's context window, when this route knows it; the budget resolves from it first. */

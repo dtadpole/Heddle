@@ -57,6 +57,14 @@ export interface WireRequest {
   readonly stream?: boolean
   readonly timeoutMs?: number
   readonly endpoint: string
+  /**
+   * An HTTP forwarding proxy, as a URL.
+   *
+   * The request is then addressed to the proxy and names the target absolutely, which is a proxy's own form.
+   * A forwarding agent that exists to add an identity to the request is the reason this exists; the target
+   * protocol stays `http:` because such an agent terminates TLS itself.
+   */
+  readonly proxy?: string
   readonly signal?: AbortSignal
 }
 
@@ -80,6 +88,63 @@ function isHttps(url: string): boolean {
   return new URL(url).protocol === 'https:'
 }
 
+/**
+ * Where one request actually goes, and what sends it.
+ *
+ * Two forms, and the difference is the whole of proxying: a direct request carries a **path** and a `Host` the
+ * socket already implies, while a proxied one carries the **absolute URL** and names the target in `Host`,
+ * because the proxy has to be told which host it is forwarding for.
+ *
+ * The two refusals are deliberate rather than missing work. An `https` proxy would have to tunnel (`CONNECT`)
+ * and then re-establish TLS, which no forwarding agent on loopback needs — the one this exists for accepts
+ * plaintext on loopback and is itself the client of the TLS origin. An `https` **target** through a proxy is
+ * refused for the same reason: the proxy would have to do the TLS, and its own form for that is a different
+ * mechanism. Both say so by name instead of silently connecting somewhere nobody asked for.
+ */
+function destination(
+  request: WireRequest,
+  target: URL,
+  headers: Record<string, string>,
+): { readonly send: typeof httpRequest; readonly options: import('node:http').RequestOptions } {
+  const method = request.method ?? 'POST'
+  if (request.proxy === undefined) {
+    return {
+      send: isHttps(request.url) ? httpsRequest : httpRequest,
+      options: {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port === '' ? undefined : Number(target.port),
+        path: `${target.pathname}${target.search}`,
+        method,
+        headers,
+      },
+    }
+  }
+  const proxy = new URL(request.proxy)
+  if (proxy.protocol !== 'http:') {
+    throw new ModelError(`'${request.endpoint}' is configured with a ${proxy.protocol} proxy; only an http forwarding proxy is supported`, {
+      endpoint: request.endpoint,
+      code: 'PROXY',
+    })
+  }
+  if (target.protocol !== 'http:') {
+    throw new ModelError(`'${request.endpoint}' is an ${target.protocol} endpoint behind a proxy; point the endpoint at the forwarding agent itself`, {
+      endpoint: request.endpoint,
+      code: 'PROXY',
+    })
+  }
+  return {
+    send: httpRequest,
+    options: {
+      hostname: proxy.hostname,
+      port: proxy.port === '' ? 80 : Number(proxy.port),
+      path: request.url,
+      method,
+      headers: { ...headers, host: target.host },
+    },
+  }
+}
+
 /** Send one request and resolve with its response, buffered or streamed. */
 export async function wire(request: WireRequest): Promise<WireResponse> {
   const target = new URL(request.url)
@@ -99,20 +164,10 @@ export async function wire(request: WireRequest): Promise<WireResponse> {
   if (body !== undefined) headers['Content-Length'] = String(body.byteLength)
 
   const timeoutMs = request.timeoutMs ?? 120_000
+  const { send, options } = destination(request, target, headers)
 
   const response = await new Promise<IncomingMessage>((resolve, reject) => {
-    const send = isHttps(request.url) ? httpsRequest : httpRequest
-    const clientRequest = send(
-      {
-        protocol: target.protocol,
-        hostname: target.hostname,
-        port: target.port === '' ? undefined : Number(target.port),
-        path: `${target.pathname}${target.search}`,
-        method: request.method ?? 'POST',
-        headers,
-      },
-      resolve,
-    )
+    const clientRequest = send(options, resolve)
     clientRequest.setTimeout(timeoutMs, () => {
       clientRequest.destroy(new Error(`timed out after ${timeoutMs}ms`))
     })
