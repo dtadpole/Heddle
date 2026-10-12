@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, join, sep } from 'node:path'
 
 import { canonicalPath, depthOf, isUnder } from '../paths.ts'
+import { readSessionDefinition } from './definition.ts'
 import type { SessionMeta } from './store.ts'
 
 /**
@@ -217,6 +218,8 @@ interface Context {
   readonly byPath: Map<string, TreeRoot>
   readonly generated: ReadonlySet<string>
   readonly sessions: Map<string, SessionMeta>
+  /** The same store records, by session id, for the sessions a `_sessions_` instance names. */
+  readonly byId: Map<string, SessionMeta>
   /** The nearest root strictly above a path, or `undefined` when there is none. */
   ownerOf(path: string): TreeRoot | undefined
 }
@@ -234,24 +237,18 @@ function buildContext(input: TreeInput): Context {
     byPath,
     generated: new Set(input.generated ?? []),
     sessions: currentByFolder(input.sessions),
+    byId: new Map(input.sessions.map((session) => [session.id, session])),
     ownerOf: (path) => ordered.find((root) => root.path !== path && isUnder(root.path, path)),
   }
 }
 
 function row(path: string, kind: NodeKind, label: string, context: Context): Omit<TreeNode, 'children'> {
   /**
-   * A session is shown on an **instance**, and nowhere else.
-   *
-   * The owner's rule, stated 2026-10-11: the type folders are the boundaries, and a session node
-   * exists only where the `_type_` plus `<instance>` pattern matches. So a workspace root, a plain
-   * container (`shared/`, `src/`) and a type folder itself carry no session — and neither does a
-   * folder nested inside an instance, which is the case a "the folder has a session, show it" rule
-   * gets wrong: several levels of ordinary structure may sit between a boundary and the `_type_`
-   * that follows it, and none of them is a place to work.
-   *
-   * A session bound to a folder that is not an instance is not lost. It is in the store, in
-   * `heddle sessions`, and in its workspace's account; it simply is not a node of this tree, because
-   * the tree is a view of the conventions' structure rather than a list of every conversation.
+   * A session **started in** a folder is shown on that folder when the conventions put a `_type_` boundary
+   * around it — an instance. Two additions since the same day: a `_sessions_` instance is hoisted into its
+   * branch as a `session` row and that row carries its own conversation (see `sessionOf`), and a session
+   * started at a workspace root appears under the root, because the owner's rule is that a branch shows its
+   * sessions and a root is a branch.
    */
   const meta = kind === 'instance' ? context.sessions.get(path) : undefined
   return {
@@ -263,6 +260,27 @@ function row(path: string, kind: NodeKind, label: string, context: Context): Omi
       meta === undefined
         ? null
         : { id: meta.id, turns: meta.turns, ...(meta.title !== undefined ? { title: meta.title } : {}) },
+  }
+}
+
+/**
+ * The session a `_sessions_` instance stands for.
+ *
+ * A **hoisted** session node is not bound to its folder the way an instance is bound to its `cwd`: the folder
+ * named here is the session's *definition*, and the session it defines is named inside it. So the node says
+ * which conversation it is — its id, and the store's turn count and title when the store still holds it — and
+ * a click on the row can open that conversation rather than only expand a folder. Measured reason for this:
+ * a row that named no session looked exactly like a row that named one, and clicking it did nothing.
+ */
+function sessionOf(dir: string, context: Context): TreeNode['session'] {
+  const definition = readSessionDefinition(dir)
+  if (definition === null) return null
+  const meta = context.byId.get(definition.id)
+  const title = meta?.title ?? definition.title
+  return {
+    id: definition.id,
+    turns: meta?.turns ?? 0,
+    ...(title !== undefined ? { title } : {}),
   }
 }
 
@@ -297,7 +315,8 @@ function childrenOf(dir: string, kind: NodeKind, context: Context): TreeNode[] {
       for (const session of entries(path).sort((left, right) => collator.compare(right.name, left.name))) {
         if (!session.directory) continue
         const sessionPath = canonicalPath(join(path, session.name))
-        sessions.push({ ...row(sessionPath, 'session', session.name, context), children: null })
+        const node = row(sessionPath, 'session', session.name, context)
+        sessions.push({ ...node, session: sessionOf(sessionPath, context), children: null })
       }
       continue
     }

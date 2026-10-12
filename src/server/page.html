@@ -1286,21 +1286,7 @@ function menuItemsFor(node) {
      */
     items.push({
       label: 'New session',
-      run: async () => {
-        const response = await fetch('/api/sessions', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ branch: node.path }),
-        })
-        const body = await response.json().catch(() => ({}))
-        if (!response.ok) {
-          setNote(body.error ?? 'could not start a session there')
-          return
-        }
-        setNote('')
-        await showSession(body.session)
-        await renderTree()
-      },
+      run: () => startSessionAt(node),
     })
     items.push({
       label: 'Rename…',
@@ -1350,21 +1336,7 @@ function menuItemsFor(node) {
      */
     items.push({
       label: 'New session here',
-      run: async () => {
-        const response = await fetch('/api/sessions', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ branch: node.path }),
-        })
-        const body = await response.json().catch(() => ({}))
-        if (!response.ok) {
-          setNote(body.error ?? 'could not start a session there')
-          return
-        }
-        setNote('')
-        await showSession(body.session)
-        await renderTree()
-      },
+      run: () => startSessionAt(node),
     })
     if (node.session) {
       items.push({
@@ -1390,6 +1362,33 @@ function menuItemsFor(node) {
     }
   }
   return items
+}
+
+/**
+ * Start a session at a branch, and make the act **visible**.
+ *
+ * Measured: the first version created the session correctly and then re-rendered the tree, and the owner
+ * reported that nothing happened — because the branch the session appeared in was **closed**, so the new row
+ * was inside a closed folder. Three things follow from that, and they are what this does: the branch is
+ * opened, the new session's own row is selected so the eye lands on it, and only then is the tree redrawn.
+ */
+async function startSessionAt(node) {
+  const response = await fetch('/api/sessions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ branch: node.path }),
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    setNote(body.error ?? 'could not start a session there')
+    return
+  }
+  setNote('')
+  expanded.add(node.path)
+  rememberExpanded()
+  if (typeof body.definition === 'string') chooseSelected(body.definition.replace(/\/session\.json$/, ''))
+  await showSession(body.session)
+  await renderTree()
 }
 
 /** The `…` control: a button, and the one list it opens. */
@@ -1504,6 +1503,17 @@ function nodeRow(node) {
       return
     }
     await toggle(node, li)
+    if (node.kind === 'session' && node.session) {
+      /**
+       * A session row is a conversation, so clicking it **opens that conversation** — the owner's point in
+       * asking what a session row is for. Before this the row toggled and nothing else, because the node
+       * named no session; the tree reads the session's definition now, so the row knows which log it stands
+       * for and the panel can show it.
+       */
+      chooseSelected(node.path)
+      await showSession(node.session.id)
+      return
+    }
     if (li.dataset.open === 'true' && node.kind === 'instance') selectNode(node)
   }
   row.onkeydown = (event) => {

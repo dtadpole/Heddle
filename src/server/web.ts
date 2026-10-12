@@ -828,16 +828,35 @@ export function rejectUntrusted(request: { headers: Record<string, string | stri
    */
   const origin = request.headers.origin
   if (typeof origin === 'string' && origin.length > 0) {
+    let hostname = ''
+    let host = ''
     try {
-      /**
-       * `null` is what a sandboxed frame and a `file://` page send, and it matches no authority — so a
-       * state-changing request from an opaque origin is refused here even though its read requests are
-       * allowed. This check is what carries the weight once cross-site reads are permitted.
-       */
-      if (new URL(origin).host !== authority) return `refused: Origin ${origin} does not match ${authority}`
+      const parsed = new URL(origin)
+      hostname = parsed.hostname
+      host = parsed.host
     } catch {
+      /**
+       * `null` is what a sandboxed frame and a `file://` page send. It is not an origin at all, so it is
+       * refused here even though the request's read requests are allowed — and this is the one Origin case
+       * that still carries weight once a credential decides the rest.
+       */
       return `refused: Origin ${origin} is not a URL`
     }
+    /**
+     * **A same-machine origin is not a foreign origin**, and it was the deployment that broke.
+     *
+     * Measured 2026-10-11: the owner opens heddle through a token-supplying gate on `127.0.0.1:8082`, which
+     * forwards to the server on `127.0.0.1:3082` — so every write arrived with `Origin:
+     * http://127.0.0.1:8082` and was refused with `403`, while every read was served. The tree drew, and
+     * **New session did nothing**: the button was there, the request was rejected, and the only report was
+     * one line in a note. The gate is same-machine by construction, and the credential — which this fence
+     * does not hold — is what separates the owner from an attacker: a foreign page cannot carry a
+     * `SameSite=Strict` cookie, and cannot know the launch token. The rule below is therefore the one the
+     * comment above already states, applied to both headers: a foreign **site** is judged by its credential,
+     * and an origin that is not this machine is refused outright, because no deployment of this server comes
+     * from one.
+     */
+    if (host !== authority && !isLoopback(hostname)) return `refused: Origin ${origin} is not this machine`
   }
   return null
 }

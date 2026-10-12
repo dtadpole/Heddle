@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { canonicalPath } from '../paths.ts'
@@ -127,5 +127,16 @@ export function existingSessionNames(branch: string): string[] {
       .map((entry) => entry.name)
   } catch {
     return []
+  }
+}
+
+/** What a definition says, read back from disk; `null` when there is none or it is not readable. */
+export function readSessionDefinition(dir: string): SessionDefinitionFields | null {
+  try {
+    const fields = JSON.parse(readFileSync(join(dir, DEFINITION_FILE), 'utf8')) as SessionDefinitionFields
+    if (typeof fields?.id !== 'string' || fields.id.length === 0) return null
+    return fields
+  } catch {
+    return null
   }
 }

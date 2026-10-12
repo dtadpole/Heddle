@@ -1466,10 +1466,17 @@ test('New session here, on an instance row, starts a session and writes its defi
         await wait(800)
       }
       const rows = [...reopened.parentElement.querySelectorAll(':scope > ul[role=group] > li')].map((child) => (child.dataset.kind === 'session' ? 'session' : child.dataset.kind) + ':' + child.querySelector('.label')?.textContent)
-      return JSON.stringify({ rows })
+      return JSON.stringify({ rows, branchOpen: reopened.parentElement.dataset.open === 'true', selected: document.querySelector('#tree .row[aria-current="true"]')?.querySelector('.label')?.textContent ?? null })
     })()`)
     const outcome = JSON.parse(clicked)
     assert.equal(outcome.error, undefined, `the menu opened and the item was there\\nsaw: ${clicked}`)
+    /**
+     * And the act leaves a **visible** result. Measured: the first version created the session correctly and
+     * re-rendered the tree, and the owner reported that nothing happened — the branch the session appeared in
+     * was closed, so the new row sat inside a closed folder. Opening the branch and selecting the new row is
+     * the fix, and this is what pins it.
+     */
+    assert.equal(outcome.branchOpen, true, 'the branch is open when the tree comes back, so the new session is on screen')
     assert.equal(outcome.rows[0]?.startsWith('session:'), true, `the session appears first in the branch it belongs to\\nsaw: ${outcome.rows.join(', ')}`)
     const name = String(outcome.rows[0]).slice('session:'.length)
     assert.match(name, /^session-\d{8}-\d{4}$/, `named for the clock, as the convention requires\nsaw: ${name}`)
@@ -1478,6 +1485,15 @@ test('New session here, on an instance row, starts a session and writes its defi
     assert.ok(existsSync(definition), `and its definition is on disk at ${definition}`)
     const fields = JSON.parse(readFileSync(definition, 'utf8'))
     assert.equal(fields.cwd, join(h.work, '_tools_', 'some-tool'), 'the definition names the folder the session is bound to')
+    /**
+     * And the **tree** says which conversation the row is, which is what makes clicking it open that
+     * conversation rather than only expand a folder. Before this the node carried `session: null`, so a row
+     * that named no session looked exactly like one that did.
+     */
+    const drawn = await treeAt(h, join(h.work, '_tools_', 'some-tool'))
+    const sessionNode = (drawn.tree.children ?? []).find((node) => node.kind === 'session')
+    assert.equal(sessionNode?.session?.id, fields.id, 'the row names the session its definition names')
+
     assert.ok(!isUnder(h.work, String(fields.log)), `while the transcript stays outside the repository\\nsaw: ${fields.log}`)
   } finally {
     browser?.close()

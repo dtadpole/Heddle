@@ -306,7 +306,25 @@ test('a request from another site is refused before any token is compared', asyn
     const foreignOrigin = await fetch(new URL('/api/sessions', server.url), {
       headers: { cookie, origin: 'https://evil.example' },
     })
-    assert.equal(foreignOrigin.status, 403, 'while an Origin that is not this server is refused')
+    assert.equal(foreignOrigin.status, 403, 'while an Origin that is not this machine is refused')
+
+    /**
+     * The deployment the owner actually uses, and the one the fence used to break.
+     *
+     * heddle is opened through a token-supplying gate on a **second loopback port**, so every write arrives
+     * with a same-machine Origin that is not the server's own authority. Judging that as foreign made reads
+     * work and every write fail — the tree drew and `New session` did nothing — while the credential, which
+     * is what actually separates the owner from a foreign page, said the request was fine.
+     */
+    const gateOrigin = await fetch(new URL('/api/sessions', server.url), {
+      headers: { cookie, origin: 'http://127.0.0.1:8082' },
+    })
+    assert.equal(gateOrigin.status, 200, 'a same-machine origin on another port is served, which is how the gate opens heddle')
+
+    const gateOriginAnonymous = await fetch(new URL('/api/sessions', server.url), {
+      headers: { origin: 'http://127.0.0.1:8082' },
+    })
+    assert.equal(gateOriginAnonymous.status, 401, 'and the credential, not the origin, is what a same-machine caller still needs')
 
     const sameOrigin = await fetch(new URL('/api/sessions', server.url), {
       headers: { cookie, origin: `http://127.0.0.1:${new URL(server.url).port}` },
