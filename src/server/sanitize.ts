@@ -32,8 +32,17 @@ const DROP_WITH_CONTENT = new Set(['script', 'style', 'iframe', 'object', 'embed
 const URL_ATTRS = new Set(['href', 'src'])
 
 export interface SanitizeOptions {
-  /** Decide whether a URL attribute may survive. Returning `null` drops the attribute. */
-  readonly url?: (value: string) => string | null
+  /**
+   * Decide whether a URL attribute may survive. Returning `null` drops the attribute.
+   *
+   * The **tag and attribute** are handed over as well as the value, because the two URL attributes are not the
+   * same question: a link goes where it says, while a document's embedded image is *beside the document* and has
+   * to be resolved against it. Measured: a caller that could see only the value had to decide by the string, so a
+   * raw-HTML `<img src="icon.svg">` — which is how a centred image is written, since markdown cannot centre one
+   * — was left unresolved and the browser asked the server root for it, which is the broken image this renderer
+   * already fixed once for markdown images.
+   */
+  readonly url?: (value: string, at: { readonly tag: string; readonly attribute: string }) => string | null
 }
 
 /** Read an attribute whose value is quoted. Handles `"`, `'` and unquoted values, and entities are left alone. */
@@ -123,7 +132,8 @@ export function sanitizeHtml(html: string, options: SanitizeOptions = {}): strin
       cursor = attribute.end
       if (!ATTRS.has(attribute.name)) continue
       if (URL_ATTRS.has(attribute.name)) {
-        const decided = options.url === undefined ? attribute.value : options.url(attribute.value)
+        const decided =
+          options.url === undefined ? attribute.value : options.url(attribute.value, { tag: name, attribute: attribute.name })
         if (decided === null) continue
         attributes.push(`${attribute.name}="${decided.replace(/"/g, '&quot;')}"`)
         continue

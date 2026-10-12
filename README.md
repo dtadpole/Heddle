@@ -10,7 +10,9 @@ grounded_in:
 
 # Heddle
 
-![The Heddle icon](heddle.svg)
+<p align="center">
+  <img src="heddle.svg" alt="The Heddle icon" width="160">
+</p>
 
 A harness and agent framework built on [Cordis](https://github.com/cordiverse/cordis), in TypeScript.
 

@@ -212,5 +212,27 @@ export function renderMarkdown(source: string, options: { readonly base?: string
     front === null
       ? ''
       : `<section class="frontmatter"><h2>frontmatter</h2><pre><code>${escapeHtml((front[1] ?? '').trim())}</code></pre></section>\n`
-  return sanitizeHtml(frontHtml + (marked.parse(escapeLeadingUnderscores(body)) as string), { url: safeUrl })
+  return sanitizeHtml(frontHtml + (marked.parse(escapeLeadingUnderscores(body)) as string), {
+    /**
+     * One rule for images, wherever the tag came from.
+     *
+     * `marked` resolves a **markdown** image against the document's folder in its own renderer; raw HTML goes
+     * around that renderer, so an `<img>` written by hand — which is the only way to centre one, since markdown
+     * has no alignment — arrived here as a relative path the browser then resolved against the page URL, which
+     * is the server root. The renderer and the fence now agree: a relative `src` on an image is beside the
+     * document, and everything else is only scheme-checked.
+     */
+    url: (value, at) => {
+      const safe = safeUrl(value)
+      if (safe === null) return null
+      /**
+       * Only a **relative** reference is resolved here. `marked`'s own renderer has already done it for a markdown
+       * image, so resolving again wrapped the route in itself (`/api/raw?path=%2Fapi%2Fraw…`) — measured as two
+       * failing unit tests rather than as a broken page, because the tests came first.
+       */
+      const relative = !/^[a-z][a-z0-9+.-]*:/i.test(safe) && !safe.startsWith('/') && !safe.startsWith('#')
+      if (at.tag === 'img' && at.attribute === 'src' && relative) return resolveImage(safe, imageBase) ?? safe
+      return safe
+    },
+  })
 }

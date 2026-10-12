@@ -184,6 +184,25 @@ test('an embedded image is served by the raw route, resolved beside its document
   assert.match(nested, /%2FUsers%2Fzhenc%2Fheddle%2Fheddle\.svg/, 'a parent reference resolves to the same file')
 })
 
+test('an image written as HTML resolves beside its document too, which is what centring one requires', () => {
+  /**
+   * The owner asked for the icon centred and not huge, and markdown has no alignment — so the README writes
+   * `<p align="center"><img src="heddle.svg" width="160"></p>`, which goes **around** marked's image renderer.
+   * Measured: the raw tag arrived unresolved, so the browser asked the server root for it, which is the same broken
+   * image the renderer had already fixed for markdown images. The fence now tells its callback which tag and
+   * attribute it is deciding, and the document's own resolution applies to both spellings of an image.
+   */
+  const centred = String(
+    renderSource('/Users/zhenc/heddle/README.md', '<p align="center">\n  <img src="heddle.svg" alt="icon" width="256">\n</p>').html,
+  )
+  assert.match(centred, /align="center"/, 'the wrapper survives, since markdown cannot centre anything')
+  assert.match(centred, /src="\/api\/raw\?path=%2FUsers%2Fzhenc%2Fheddle%2Fheddle\.svg"/, 'and the image resolves beside the document')
+
+  /** And a reference that is already resolved is left alone: resolving twice wraps the route in itself. */
+  const twice = String(renderSource('/Users/zhenc/heddle/README.md', '![icon](heddle.svg)').html)
+  assert.ok(!twice.includes('%2Fapi%2Fraw'), 'an already-resolved reference is not resolved again')
+})
+
 test('an image cannot make the server fetch somewhere else, or carry a payload', () => {
   /**
    * The rules matter more than the feature: a document is untrusted text, and an image reference is a URL it can
