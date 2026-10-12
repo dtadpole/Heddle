@@ -77,3 +77,35 @@ test('sanitizing twice changes nothing the second time', () => {
   const once = sanitizeHtml('<p onclick="x">a <script>bad()</script><b>b</b></p>')
   assert.equal(sanitizeHtml(once), once)
 })
+
+test('the one attribute this project writes survives, and no other data attribute does', () => {
+  /**
+   * The allow-list has a second list for the attribute this project adds itself, and it is a **name** rather than the
+   * `data-` prefix. Measured why: a link that names a workspace file is marked with `data-heddle-path`, the sanitizer
+   * dropped it with the other unknown attributes, and the panel had no way to know the link was one to follow — the
+   * markup looked correct and clicking it navigated away or did nothing.
+   */
+  assert.equal(
+    sanitizeHtml('<a href="/x" data-heddle-path="/Users/zhenc/heddle/README.md">x</a>'),
+    '<a href="/x" data-heddle-path="/Users/zhenc/heddle/README.md">x</a>',
+    'the path attribute survives',
+  )
+  assert.equal(
+    sanitizeHtml('<a href="/x" data-onclick="steal()">x</a>'),
+    '<a href="/x">x</a>',
+    'while another data attribute does not, because the rule is a name and not a prefix',
+  )
+})
+
+test('a link may open beside the document, and `target` is allowed deliberately', () => {
+  /**
+   * Measured: the renderer wrote `target="_blank"` on a link to another site and this dropped it with the other
+   * unknown attributes, so following a link out of a document replaced the panel. It is allowed by name, and `rel`
+   * with it — `target="_blank"` without `noopener` lets the opened page reach back through `window.opener`.
+   */
+  assert.equal(
+    sanitizeHtml('<a href="https://x.example" target="_blank" rel="noreferrer noopener">x</a>'),
+    '<a href="https://x.example" target="_blank" rel="noreferrer noopener">x</a>',
+    'both survive together',
+  )
+})

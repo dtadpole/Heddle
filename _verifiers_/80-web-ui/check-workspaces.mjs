@@ -193,11 +193,27 @@ test('the page can register a workspace with its own control', async (context) =
     await browser.waitFor('document.getElementById("tree") !== null', 10_000)
 
     /**
-     * The page asks with `prompt()`, which a headless browser dismisses. The check answers it the way a
-     * person would rather than driving a different code path: the control's own handler runs, and what it
-     * does with the answer is what is judged.
+     * The `+` asks the **server** for the platform's folder dialog, and this check answers that request
+     * rather than a person: a real dialog cannot be driven from a check, but the decision the page makes
+     * about the answer can be. Two answers are judged, because they are the two a person produces —
+     * a cancel mounts nothing, and a path mounts that path.
      */
-    await browser.evaluate(`window.prompt = () => ${JSON.stringify(wanted)}`)
+    await browser.evaluate(`(() => {
+      window.__picked = { kind: 'cancelled' }
+      const real = window.fetch
+      window.fetch = async (input, init) => {
+        if (String(input).includes('/api/workspaces/pick')) {
+          return new Response(JSON.stringify(window.__picked), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        return real(input, init)
+      }
+    })()`)
+    await browser.evaluate('document.getElementById("add-workspace").click()')
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const afterCancel = await browser.evaluate('document.querySelectorAll("#tree .row").length')
+    assert.equal(afterCancel, 0, 'a cancelled dialog mounts nothing')
+
+    await browser.evaluate(`window.__picked = { kind: 'picked', path: ${JSON.stringify(wanted)} }`)
     await browser.evaluate('document.getElementById("add-workspace").click()')
     const appeared = await browser.waitFor(`document.getElementById("tree").innerText.includes(${JSON.stringify(wanted.split('/').filter(Boolean).pop())})`, 10_000)
     assert.ok(appeared, 'the folder the person named appears in the tree')

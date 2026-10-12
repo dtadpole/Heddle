@@ -65,16 +65,49 @@ export function safeUrl(url: string): string | null {
  * `safeUrl` has already refused the schemes that would run code. A `data:` image is not a file at all, so it is
  * refused here — the alternative is a document smuggling an arbitrary payload into the page.
  */
-function resolveImage(href: string, base: string | undefined): string | null {
+interface ResolvedSubresource {
+  /** The file this reference names, as an absolute path. */
+  readonly path: string
+  /** The `#part` of the reference, without its `#`, or an empty string. */
+  readonly fragment: string
+}
+
+/**
+ * The file a relative subresource names, or `null` when the reference is not this server's to resolve.
+ *
+ * The return is two named pieces rather than one assembled string, and that is a correction: the first version
+ * returned a `data-heddle-path=…` fragment for a link and then took it apart again with a **slice whose length was
+ * the attribute name's** — so a raw HTML `<a href="README.md">` came out as
+ * `href="data-heddle-path=%2FUsers…"`, a link to nowhere. Two pieces cannot be mis-split, and the caller builds the
+ * markup it needs.
+ */
+function resolveSubresource(href: string, base: string | undefined): ResolvedSubresource | null {
   const trimmed = href.trim()
   if (trimmed.length === 0) return null
-  if (/^(?:https?:)?\/\//i.test(trimmed) || trimmed.startsWith('data:')) return null
-  if (base === undefined) return null
-  /** A fragment or an absolute URL is not a file to look for beside the document. */
+  /** A remote URL is the author's choice and is left exactly as written. */
+  if (/^(?:https?:)?\/\//i.test(trimmed)) return null
+  /** A `data:` image is a payload rather than a file, and a document that can embed one can smuggle one. */
+  if (trimmed.startsWith('data:')) return null
+  /** A fragment inside this document is not a file to look for beside it. */
   if (trimmed.startsWith('#')) return null
-  const absolute = isAbsolute(trimmed) ? trimmed : resolve(base, trimmed)
-  return `/api/raw?path=${encodeURIComponent(absolute)}`
+  if (base === undefined) return null
+  const [target, fragment] = splitFragment(trimmed)
+  return { path: isAbsolute(target) ? target : resolve(base, target), fragment }
 }
+
+/** The route that serves a file's bytes, which is what an `<img>` and a followed link both need. */
+function rawUrl(resolved: ResolvedSubresource): string {
+  return `/api/raw?path=${encodeURIComponent(resolved.path)}${resolved.fragment.length > 0 ? `#${resolved.fragment}` : ''}`
+}
+
+/** A URL split at its `#`, which a browser treats as a place inside the document rather than part of its name. */
+function splitFragment(url: string): [string, string] {
+  const at = url.indexOf('#')
+  return at === -1 ? [url, ''] : [url.slice(0, at), url.slice(at + 1)]
+}
+
+/** The attribute a link carries the file it names in, so the page can open it instead of navigating away. */
+export const LINK_DATA_ATTRIBUTE = 'data-heddle-path'
 
 /**
  * The parser, configured once.
@@ -172,7 +205,19 @@ marked.use({
       const target = safeUrl(href)
       if (target === null) return `${label} (link refused)`
       const heading = title === null || title === undefined ? '' : ` title="${escapeHtml(title)}"`
-      return `<a href="${escapeHtml(target)}" rel="noreferrer noopener"${heading}>${label}</a>`
+      const resolved = resolveSubresource(target, imageBase)
+      /**
+       * A link to a file in the workspace keeps its `href` as the **raw** address, so the status bar and a
+       * middle-click both still point somewhere real, and carries the absolute path in an attribute so a plain click
+       * opens it in this panel instead of navigating the page to a path the server does not serve. Measured before
+       * this: `[x](DEPLOY.md)` asked for `/DEPLOY.md`, which answered `404`, and the reader lost the page they were
+       * reading. A remote link is untouched and opens in a new tab.
+       */
+      if (resolved !== null) {
+        return `<a href="${escapeHtml(rawUrl(resolved))}" ${LINK_DATA_ATTRIBUTE}="${escapeHtml(resolved.path)}"${heading}>${label}</a>`
+      }
+      const external = /^(?:https?:)?\/\//i.test(target)
+      return `<a href="${escapeHtml(target)}"${external ? ' target="_blank"' : ''} rel="noreferrer noopener"${heading}>${label}</a>`
     },
     /** An image with a refused source becomes its alt text, so nothing is fetched and nothing is lost. */
     image(this: { parser: { parseInline(tokens: unknown[]): string } }, { href, title, text, tokens }: Tokens.Image): string {
@@ -180,7 +225,8 @@ marked.use({
       const target = safeUrl(href)
       if (target === null) return label
       /** The base is set per parse, so one document's relative images do not resolve against another's. */
-      const source = resolveImage(target, imageBase) ?? target
+      const resolved = resolveSubresource(target, imageBase)
+      const source = resolved === null ? target : rawUrl(resolved)
       const heading = title === null || title === undefined ? '' : ` title="${escapeHtml(title)}"`
       return `<img src="${escapeHtml(source)}" alt="${escapeHtml(text)}"${heading}>`
     },
@@ -214,25 +260,29 @@ export function renderMarkdown(source: string, options: { readonly base?: string
       : `<section class="frontmatter"><h2>frontmatter</h2><pre><code>${escapeHtml((front[1] ?? '').trim())}</code></pre></section>\n`
   return sanitizeHtml(frontHtml + (marked.parse(escapeLeadingUnderscores(body)) as string), {
     /**
-     * One rule for images, wherever the tag came from.
+     * One rule for a subresource, **wherever the tag came from**.
      *
-     * `marked` resolves a **markdown** image against the document's folder in its own renderer; raw HTML goes
-     * around that renderer, so an `<img>` written by hand — which is the only way to centre one, since markdown
-     * has no alignment — arrived here as a relative path the browser then resolved against the page URL, which
-     * is the server root. The renderer and the fence now agree: a relative `src` on an image is beside the
-     * document, and everything else is only scheme-checked.
+     * The renderer above handles what `marked` produces. Raw HTML goes around that renderer, so an `<img>` or an `<a>`
+     * written by hand would otherwise keep a relative address the browser resolves against the page URL — which is the
+     * server root, and measured as a `404`. The callback is handed the tag and the attribute, so both are resolved by
+     * the same function the renderer uses: an image to the route that serves bytes, and a link to the attribute the
+     * panel follows.
      */
     url: (value, at) => {
       const safe = safeUrl(value)
       if (safe === null) return null
-      /**
-       * Only a **relative** reference is resolved here. `marked`'s own renderer has already done it for a markdown
-       * image, so resolving again wrapped the route in itself (`/api/raw?path=%2Fapi%2Fraw…`) — measured as two
-       * failing unit tests rather than as a broken page, because the tests came first.
-       */
+      /** A reference with a scheme, or one already absolute, is not a file beside the document. */
       const relative = !/^[a-z][a-z0-9+.-]*:/i.test(safe) && !safe.startsWith('/') && !safe.startsWith('#')
-      if (at.tag === 'img' && at.attribute === 'src' && relative) return resolveImage(safe, imageBase) ?? safe
-      return safe
+      if (!relative) return safe
+      const resolved = resolveSubresource(safe, imageBase)
+      if (resolved === null) return safe
+      /**
+       * A raw HTML link arrives here rather than at the renderer, because `marked` passes an HTML block straight
+       * through — so a hand-written `<a href="README.md">` gets the served address from this callback. The path for
+       * the page to follow rides in that address (see the page's click handler), since an attribute cannot be added
+       * from inside a callback that answers for one attribute's value.
+       */
+      return rawUrl(resolved)
     },
   })
 }

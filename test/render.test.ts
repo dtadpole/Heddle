@@ -244,3 +244,41 @@ test('one document\'s relative image does not resolve against another\'s folder'
   assert.match(second, /%2Ftwo%2Fx\.png/, 'and the second in its own')
   assert.ok(!second.includes('%2Fone%2F'), 'with nothing carried over')
 })
+
+test('a link to a file in the workspace is one the panel can follow', () => {
+  /**
+   * The owner's report: navigation in the preview hit broken links. Measured: `[x](DEPLOY.md)` asked the browser for
+   * `/DEPLOY.md`, which answered `404`, so following a link lost the document being read. A link to a workspace file
+   * therefore keeps a real address for the status bar and a middle-click, and carries the absolute path so a plain
+   * click opens it in this panel.
+   */
+  const html = String(renderSource('/Users/zhenc/heddle/_context_/notes.md', '[the goal](ULTIMATE_GOAL.md)').html)
+  assert.match(html, /href="\/api\/raw\?path=%2FUsers%2Fzhenc%2Fheddle%2F_context_%2FULTIMATE_GOAL\.md"/, 'with a real address')
+  assert.match(html, /data-heddle-path="\/Users\/zhenc\/heddle\/_context_\/ULTIMATE_GOAL\.md"/, 'and the path to open')
+
+  /** A fragment is kept, so a link into a section can still land on it. */
+  const fragment = String(renderSource('/Users/zhenc/heddle/a.md', '[part](README.md#layout)').html)
+  assert.match(fragment, /href="[^"]*README\.md#layout"/, 'the fragment survives in the address')
+  assert.match(fragment, /data-heddle-path="\/Users\/zhenc\/heddle\/README\.md"/, 'and the path is the file, without it')
+})
+
+test('a link this server cannot resolve is left alone, and a refused one is text', () => {
+  const remote = String(renderSource('/x/a.md', '[site](https://example.com/a)').html)
+  assert.match(remote, /href="https:\/\/example\.com\/a"/, 'a remote link keeps its address')
+  assert.ok(!remote.includes('data-heddle-path'), 'and is not marked for the panel to open')
+  assert.match(remote, /target="_blank"/, 'so it opens in a new tab rather than replacing the page')
+
+  const refused = String(renderSource('/x/a.md', '[bad](javascript:alert(1))').html)
+  assert.ok(!refused.includes('<a '), 'a refused scheme produces no anchor')
+  assert.match(refused, /bad \(link refused\)/, 'with its label kept')
+
+  /**
+   * A hand-written anchor goes through the same resolver, and arrives in a different shape.
+   *
+   * `marked` passes an HTML block straight through, so a raw `<a>` never reaches the renderer — the sanitizer's URL
+   * callback resolves it, and a callback answers for one attribute's **value**, so it cannot add the path attribute
+   * a markdown link carries. The page therefore also follows the address, which is the only thing a raw link has.
+   */
+  const raw = String(renderSource('/x/a.md', '<a href="README.md">raw</a>').html)
+  assert.match(raw, /href="\/api\/raw\?path=%2Fx%2FREADME\.md"/, 'a raw HTML link is resolved to the served address')
+})

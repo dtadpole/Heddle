@@ -23,7 +23,18 @@ const ALLOWED = new Set([
 ])
 
 /** Attributes a document view uses. `class` is here for the renderer's own language and frontmatter hooks. */
-const ATTRS = new Set(['align', 'alt', 'checked', 'class', 'disabled', 'height', 'href', 'id', 'src', 'title', 'type', 'width'])
+const ATTRS = new Set([
+  'align', 'alt', 'checked', 'class', 'disabled', 'height', 'href', 'id', 'src', 'title', 'type', 'width',
+  /**
+   * `target` and `rel`, which a link to another site needs to open **beside** the document rather than replacing it.
+   *
+   * Measured: the renderer wrote `target="_blank"` for a remote link and the sanitizer dropped it with the other
+   * unknown attributes, so following a link out of a document navigated away from the panel. `rel` comes with it
+   * because `target="_blank"` without `noopener` lets the opened page reach back through `window.opener`, and this
+   * renderer writes both together.
+   */
+  'target', 'rel',
+])
 
 /**
  * Attributes that may only be a **number of pixels**.
@@ -41,6 +52,16 @@ const DROP_WITH_CONTENT = new Set(['script', 'style', 'iframe', 'object', 'embed
 
 /** Attributes that carry a URL, and are therefore scheme-checked. The check itself is the caller's. */
 const URL_ATTRS = new Set(['href', 'src'])
+
+/**
+ * The one attribute this project writes for its own use, listed by **name** rather than by its `data-` prefix.
+ *
+ * A prefix would turn an allow-list into a rule about spelling: a document could then set any `data-` attribute a
+ * future script reads. Measured, and this is why it is here at all: the renderer marks a link that names a workspace
+ * file with `data-heddle-path`, the sanitizer dropped it as an unknown attribute, and the panel had no way to know a
+ * link was one to follow — the markup looked right, and clicking it navigated away from the document instead.
+ */
+const OWN_ATTRS = new Set(['data-heddle-path'])
 
 export interface SanitizeOptions {
   /**
@@ -141,7 +162,7 @@ export function sanitizeHtml(html: string, options: SanitizeOptions = {}): strin
         continue
       }
       cursor = attribute.end
-      if (!ATTRS.has(attribute.name)) continue
+      if (!ATTRS.has(attribute.name) && !OWN_ATTRS.has(attribute.name)) continue
       if (NUMERIC_ATTRS.has(attribute.name)) {
         if (!/^\d{1,4}$/.test(attribute.value)) continue
         attributes.push(`${attribute.name}="${attribute.value}"`)

@@ -1667,3 +1667,82 @@ test('the panel follows the selection: a session offers two views, a file one, a
     removeDir(h.work)
   }
 })
+
+test('the page wears the project icon, and its name sits above the workspaces', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
+  const h = harness('brand')
+  let live
+  let browser
+  try {
+    await conventionsFixture(h)
+    live = await startServer(
+      ['web', '--host', '127.0.0.1', '--port', '0', '--config', join(repoRoot, 'cordis.yml'), '--session-root', join(h.home, 'sessions')],
+      { ...h.env, HOME: h.home },
+    )
+
+    /**
+     * The icon is served **before** authentication, deliberately: a browser asks for a favicon as a request of its
+     * own, and DSH's own page links one the same way. The counterpart is asserted in the same breath, because a route
+     * opened without a token must not have opened anything else — the API is still refused. That is another part's
+     * claim (part 90), restated here so this part's route cannot quietly weaken it.
+     */
+    const icon = await fetch(new URL('/favicon.svg', live.url))
+    assert.equal(icon.status, 200, 'the icon is served')
+    assert.equal(icon.headers.get('content-type'), 'image/svg+xml', 'as an SVG, which is what the link declares')
+    assert.match(await icon.text(), /^<svg[\s>]/, 'and the bytes are a drawing')
+    const api = await fetch(new URL('/api/sessions', live.url))
+    assert.equal(api.status, 401, 'while the API is still refused without a token')
+
+    browser = await openBrowser()
+    await browser.goto(live.url)
+    await browser.waitFor(`document.querySelectorAll('#tree .row').length > 0`, 20_000)
+    const reading = JSON.parse(
+      await browser.evaluate(`(async () => {
+        const wait = (ms) => new Promise((done) => setTimeout(done, ms))
+        await wait(400)
+        const link = document.querySelector('link[rel="icon"]')
+        const mark = document.getElementById('brand-mark')
+        const name = document.getElementById('brand-name')
+        const brand = document.getElementById('brand')
+        const workspaces = document.querySelector('aside h1')
+        const style = getComputedStyle(name)
+        return JSON.stringify({
+          title: document.title,
+          href: link && link.getAttribute('href'),
+          type: link && link.getAttribute('type'),
+          decoded: mark ? mark.naturalWidth : 0,
+          drawn: mark ? Math.round(mark.getBoundingClientRect().width) : 0,
+          wordmark: name.textContent.trim(),
+          font: style.fontFamily,
+          brandBottom: Math.round(brand.getBoundingClientRect().bottom),
+          workspacesTop: Math.round(workspaces.getBoundingClientRect().top),
+        })
+      })()`),
+    )
+
+    assert.equal(reading.title, 'Heddle', 'the tab names the project')
+    assert.equal(reading.href, '/favicon.svg', 'and declares the icon')
+    assert.equal(reading.type, 'image/svg+xml', 'as an SVG')
+    assert.ok(reading.decoded > 0, 'the mark the page draws is decoded, not a broken reference')
+    /**
+     * The mark is drawn small whatever the file's own size is: the asset is 560 units and a brand row is not.
+     */
+    assert.ok(reading.drawn > 0 && reading.drawn <= 32, `the mark is drawn at a row's size, not the file's (${reading.drawn}px)`)
+    assert.equal(reading.wordmark, 'Heddle', 'the name is text, so it is readable and selectable')
+    assert.match(reading.font, /serif/i, 'set in a face chosen for it rather than inherited from the UI')
+    /**
+     * Above the workspaces, which is the owner's placement and DSH's: a brand row at the top of the sidebar, and the
+     * navigation under it.
+     */
+    assert.ok(
+      reading.brandBottom <= reading.workspacesTop + 1,
+      `the brand sits above the workspaces\nsaw brand bottom ${reading.brandBottom}, workspaces top ${reading.workspacesTop}`,
+    )
+  } finally {
+    browser?.close()
+    live?.kill()
+    removeDir(h.home)
+    removeDir(h.work)
+  }
+})

@@ -237,7 +237,20 @@ test('the server serves a page on loopback and refuses a non-loopback bind', asy
     const page = await fetch(server.url, { headers: { cookie } })
     assert.equal(page.status, 200, 'the page answers with a session')
     const html = await page.text()
-    assert.match(html, /<title>heddle<\/title>/, 'it is the harness page')
+    /**
+     * Asserted **case-insensitively**, because the title is `Heddle` and the check pinned the lowercase spelling.
+     *
+     * Measured: the assertion was written when the page said `heddle`; the owner then asked for the repository name in
+     * lower case with the description allowed to keep its capital, and the page's own title became the capitalised
+     * brand while the check still required the old spelling — so a correct page read as a failure. What this check is
+     * about is that the answer is the harness page and not a stray document, which the name says either way.
+     */
+    /**
+     * The tab's name, which is the project's **display** name: the owner renamed it to `Heddle` on GitHub on
+     * 2026-10-11 and asked the UI to wear the same name, so this asserts the spelling rather than the old lowercase
+     * one. What the claim is about — that these bytes are the harness page — is unchanged.
+     */
+    assert.match(html, /<title>Heddle<\/title>/, 'it is the harness page')
     assert.match(html, /EventSource|\/api\/events/, 'the page opens the event stream')
     assert.match(html, /id="log"|id="sessions"/, 'and it has somewhere to put what arrives')
   } finally {
