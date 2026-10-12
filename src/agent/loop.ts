@@ -157,7 +157,7 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
      * steps; heddle has no runtime between steps, so the message is appended to the session and the loop has
      * to look for it, which is what this pair of readings does.
      */
-    const inputBefore = userInputSeqs(ctx, options.session)
+    let inputBefore = userInputSeqs(ctx, options.session)
 
     /**
      * The context step: derive from the surface, prune, and summarise only if pruning did not
@@ -207,6 +207,15 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     const calls: { id: string; name: string; arguments: string }[] = []
     let roundText = ''
     for (let attempt = 0; ; attempt += 1) {
+      /**
+       * The comparison window is the **model call itself**.
+       *
+       * Measured while wiring steering: taken one step earlier, at the top of the round, it also counted
+       * whatever `ctx.context.prepare` appended to the surface while building the request — so every turn
+       * looked as if a message had arrived, every turn took an extra round, and the endpoint was asked twice
+       * for one message. What the rule is about is a message that arrives *while the model is answering*.
+       */
+      inputBefore = userInputSeqs(ctx, options.session)
       const request = {
         endpoint: options.endpoint,
         messages: prepared.messages,
