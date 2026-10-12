@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="560" height="560" viewBox="0 0 560 560" role="img" aria-labelledby="title desc">
   <title id="title">Heddle woven HD icon</title>
-  <desc id="desc">Cool-gray H and orange D with uniform 12-unit separation cuts. The D has a constant 72-unit ribbon width and a centered horizontal cut.</desc>
+  <desc id="desc">Pewter-gray H and orange D with uniform 12-unit separation cuts. The D has a constant 72-unit ribbon width and a centered horizontal cut.</desc>
   <metadata>
-    Colors: cool gray #858D95; orange #E68000.
+    Colors: pewter gray #8C939A; orange #E68000.
     D outer radius: 152; inner radius: 80; center: (312,218).
     D ribbon width: 72 throughout. All cuts: 12 units. Center cut: y=212..224.
     D inner bottom: y=298, aligned to the lower edge of the shared H cut.
@@ -24,8 +24,8 @@
     </mask>
   </defs>
   <g transform="translate(0 64)">
-    <rect x="64" y="56" width="80" height="320" rx="20" fill="#858D95" mask="url(#left-cuts)"/>
-    <rect x="200" y="56" width="80" height="320" rx="20" fill="#858D95" mask="url(#shared-cuts)"/>
+    <rect x="64" y="56" width="80" height="320" rx="20" fill="#8C939A" mask="url(#left-cuts)"/>
+    <rect x="200" y="56" width="80" height="320" rx="20" fill="#8C939A" mask="url(#shared-cuts)"/>
     <rect x="64" y="190" width="124" height="60" fill="#E68000"/>
     <path d="M292 66H312A152 152 0 0 1 312 370H292V298H312A80 80 0 0 0 312 138H292Z"
           fill="#E68000" mask="url(#d-cut)"/>
