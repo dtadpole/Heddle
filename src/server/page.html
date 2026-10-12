@@ -152,19 +152,24 @@
    * positioned by their own start and duration, coloured by what they did. A pick scrolls the ledger to that
    * turn, which is the whole point: a long ledger is otherwise navigated by scrolling and hoping.
    */
-  #docs { flex: 1; display: flex; min-height: 0; }
-  #docs-list { width: 16rem; flex: none; overflow-y: auto; margin: 0; padding: .4rem .25rem .4rem .8rem; border-right: 1px solid var(--line); font-size: .76rem; }
-  #docs-list li { padding: .2rem .35rem; border-radius: .3rem; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #docs-list li:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
-  #docs-list li[aria-current='true'] { background: color-mix(in oklab, currentColor 14%, transparent); }
-  #doc { flex: 1; overflow-y: auto; padding: .8rem 1rem 1.5rem; min-width: 0; font-size: .9rem; line-height: 1.5; }
-  #doc h1, #doc h2, #doc h3, #doc h4 { line-height: 1.3; margin: 1.2em 0 .4em; }
-  #doc h1 { font-size: 1.35rem; } #doc h2 { font-size: 1.15rem; } #doc h3 { font-size: 1rem; }
-  #doc p, #doc ul, #doc ol, #doc blockquote, #doc pre { margin: .6em 0; }
-  #doc ul, #doc ol { padding-left: 1.3rem; }
-  #doc code { font-family: ui-monospace, monospace; font-size: .88em; background: color-mix(in oklab, currentColor 8%, transparent); padding: .08rem .25rem; border-radius: .2rem; }
-  #doc pre { background: color-mix(in oklab, currentColor 7%, transparent); padding: .7rem .8rem; border-radius: .35rem; overflow-x: auto; }
-  #doc pre code { background: none; padding: 0; }
+  /**
+   * Rendering a document is **one** thing, so its styles hang off the class the renderer writes.
+   *
+   * Measured, and it is what the owner saw: clicking a markdown file in the left panel rendered the
+   * document through a second path — tables, frontmatter and all — but every one of these rules named
+   * `#doc`, the Docs pane's own element, so the file pane received the markup and none of the styling.
+   * A table arrived as borderless rows of text and an inline code span showed its backticks. The class
+   * is `markdown`, because that is what the server writes in **both** places, and one selector for both is
+   * what stops them drifting apart again.
+   */
+  .markdown { min-width: 0; font-size: .9rem; line-height: 1.5; }
+  .markdown h1, .markdown h2, .markdown h3, .markdown h4 { line-height: 1.3; margin: 1.2em 0 .4em; }
+  .markdown h1 { font-size: 1.35rem; } .markdown h2 { font-size: 1.15rem; } .markdown h3 { font-size: 1rem; }
+  .markdown p, .markdown ul, .markdown ol, .markdown blockquote, .markdown pre { margin: .6em 0; }
+  .markdown ul, .markdown ol { padding-left: 1.3rem; }
+  .markdown code { font-family: ui-monospace, monospace; font-size: .88em; background: color-mix(in oklab, currentColor 8%, transparent); padding: .08rem .25rem; border-radius: .2rem; }
+  .markdown pre { background: color-mix(in oklab, currentColor 7%, transparent); padding: .7rem .8rem; border-radius: .35rem; overflow-x: auto; }
+  .markdown pre code { background: none; padding: 0; }
   /**
    * The highlighter's own class names, coloured here rather than by shipping its theme file.
    *
@@ -173,29 +178,29 @@
    * a function name. The class names are the library's, so a theme can replace this wholesale later without
    * touching the renderer.
    */
-  #doc .hljs-keyword, #doc .hljs-selector-tag, #doc .hljs-literal, #doc .hljs-doctag { color: #c792ea; }
-  #doc .hljs-string, #doc .hljs-regexp, #doc .hljs-addition { color: #a5d6a7; }
-  #doc .hljs-number, #doc .hljs-symbol, #doc .hljs-bullet { color: #f78c6c; }
-  #doc .hljs-comment, #doc .hljs-quote { color: #7c8a99; font-style: italic; }
-  #doc .hljs-title, #doc .hljs-section, #doc .hljs-name { color: #82aaff; }
-  #doc .hljs-attr, #doc .hljs-attribute, #doc .hljs-variable, #doc .hljs-template-variable { color: #ffcb6b; }
-  #doc .hljs-type, #doc .hljs-built_in, #doc .hljs-class { color: #ffcb6b; }
-  #doc .hljs-meta, #doc .hljs-deletion { color: #d14343; }
-  #doc .hljs-punctuation, #doc .hljs-operator { color: inherit; opacity: .75; }
-  #doc blockquote { border-left: 3px solid var(--line); margin-left: 0; padding-left: .8rem; opacity: .85; }
-  #doc hr { border: none; border-top: 1px solid var(--line); margin: 1.2rem 0; }
-  #doc a { color: #6aa6ff; }
-  #doc img { max-width: 100%; }
+  .markdown .hljs-keyword, .markdown .hljs-selector-tag, .markdown .hljs-literal, .markdown .hljs-doctag { color: #c792ea; }
+  .markdown .hljs-string, .markdown .hljs-regexp, .markdown .hljs-addition { color: #a5d6a7; }
+  .markdown .hljs-number, .markdown .hljs-symbol, .markdown .hljs-bullet { color: #f78c6c; }
+  .markdown .hljs-comment, .markdown .hljs-quote { color: #7c8a99; font-style: italic; }
+  .markdown .hljs-title, .markdown .hljs-section, .markdown .hljs-name { color: #82aaff; }
+  .markdown .hljs-attr, .markdown .hljs-attribute, .markdown .hljs-variable, .markdown .hljs-template-variable { color: #ffcb6b; }
+  .markdown .hljs-type, .markdown .hljs-built_in, .markdown .hljs-class { color: #ffcb6b; }
+  .markdown .hljs-meta, .markdown .hljs-deletion { color: #d14343; }
+  .markdown .hljs-punctuation, .markdown .hljs-operator { color: inherit; opacity: .75; }
+  .markdown blockquote { border-left: 3px solid var(--line); margin-left: 0; padding-left: .8rem; opacity: .85; }
+  .markdown hr { border: none; border-top: 1px solid var(--line); margin: 1.2rem 0; }
+  .markdown a { color: #6aa6ff; }
+  .markdown img { max-width: 100%; }
   /**
    * A table is a table: bordered cells, a header rule, and its own horizontal scroll when it is wider than the
    * pane. Measured before this — the markup was right and the cells ran together with no borders, which reads as
    * a paragraph of pipes rather than a table.
    */
-  #doc table { border-collapse: collapse; margin: .8em 0; display: block; overflow-x: auto; max-width: 100%; }
-  #doc th, #doc td { border: 1px solid var(--line); padding: .3rem .55rem; text-align: left; vertical-align: top; }
-  #doc thead th { background: color-mix(in oklab, currentColor 7%, transparent); font-weight: 600; }
-  #doc .frontmatter { border: 1px solid var(--line); border-radius: .35rem; padding: .2rem .7rem .7rem; opacity: .85; margin-bottom: 1rem; }
-  #doc .frontmatter h2 { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; opacity: .6; }
+  .markdown table { border-collapse: collapse; margin: .8em 0; display: block; overflow-x: auto; max-width: 100%; }
+  .markdown th, .markdown td { border: 1px solid var(--line); padding: .3rem .55rem; text-align: left; vertical-align: top; }
+  .markdown thead th { background: color-mix(in oklab, currentColor 7%, transparent); font-weight: 600; }
+  .markdown .frontmatter { border: 1px solid var(--line); border-radius: .35rem; padding: .2rem .7rem .7rem; opacity: .85; margin-bottom: 1rem; }
+  .markdown .frontmatter h2 { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; opacity: .6; }
   #timeline { position: relative; height: 1.6rem; margin: .1rem 0 .7rem; border-radius: .25rem; background: color-mix(in oklab, currentColor 7%, transparent); overflow: hidden; }
   #timeline:empty { display: none; }
   #timeline button { position: absolute; top: 0; bottom: 0; padding: 0; border: none; border-right: 1px solid var(--line); background: color-mix(in oklab, #4b8bf5 45%, transparent); cursor: pointer; }
@@ -316,7 +321,6 @@
   <nav id="views" aria-label="view">
     <button type="button" data-view="chat" aria-current="true">Chat</button>
     <button type="button" data-view="trajectory">Trajectory</button>
-    <button type="button" data-view="docs">Docs</button>
   </nav>
   <div id="log" data-view="chat"></div>
   <!--
@@ -328,18 +332,6 @@
   -->
   <div id="timeline" data-view="trajectory" aria-label="timeline" role="navigation" hidden></div>
   <div id="ledger" data-view="trajectory" hidden></div>
-  <!--
-    The Docs view: a document, rendered.
-
-    A repository is largely markdown, and reading one as source is the wrong default — so this is the default
-    renderer for it. The list and the document are two panes of one view, and the text is rendered **on the
-    server** by the renderer its unit tests judge, rather than by markup in this file.
-  -->
-  <div id="docs" data-view="docs" hidden>
-    <ol id="docs-list" aria-label="documents"></ol>
-    <article id="doc"></article>
-  </div>
-  <!-- The file a tree row opened: a header that says what it is, and its text. -->
   <div id="file" data-view="file" hidden>
     <header id="file-head"></header>
     <!--
@@ -357,9 +349,6 @@
 const log = document.getElementById('log')
 const ledger = document.getElementById('ledger')
 const timeline = document.getElementById('timeline')
-const docs = document.getElementById('docs')
-const docsList = document.getElementById('docs-list')
-const docPane = document.getElementById('doc')
 const filePane = document.getElementById('file')
 const fileHead = document.getElementById('file-head')
 const fileBody = document.getElementById('file-body')
@@ -487,6 +476,35 @@ function oneLiner(kind, text, label) {
  */
 let view = 'chat'
 
+/**
+ * Which tabs the ring offers, decided by **what is selected**.
+ *
+ * The owner's rules of 2026-10-11, and each is a statement about one kind of row:
+ *
+ * - a **session** row shows `Chat` and `Trajectory` — the two projections of that conversation;
+ * - a **file** row shows only its own preview, so the ring holds one tab and none of the session's views
+ *   is offered, because none of them has anything to say about a file;
+ * - anything else — a folder, or nothing at all — changes **nothing**, so the ring is left as it was. A
+ *   folder click is navigation, and navigation does not retarget the panel.
+ */
+function renderRing(selection) {
+  const ring = document.getElementById('views')
+  for (const button of ring.querySelectorAll('button[data-view="file"]')) button.remove()
+  if (selection === 'file') {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.dataset.view = 'file'
+    button.textContent = 'File'
+    ring.prepend(button)
+  }
+  const offered = selection === 'file' ? ['file'] : ['chat', 'trajectory']
+  for (const button of ring.querySelectorAll('button')) button.hidden = !offered.includes(button.dataset.view)
+  for (const button of ring.querySelectorAll('button')) {
+    if (button.dataset.view === view) button.setAttribute('aria-current', 'true')
+    else button.removeAttribute('aria-current')
+  }
+}
+
 /** Switch views without refetching the session list, and fill the one being shown. */
 async function showView(next) {
   view = next
@@ -497,8 +515,6 @@ async function showView(next) {
   log.hidden = view !== 'chat'
   ledger.hidden = view !== 'trajectory'
   timeline.hidden = view !== 'trajectory'
-  docs.hidden = view !== 'docs'
-  if (view === 'docs' && docsList.children.length === 0) await loadDocList()
   filePane.hidden = view !== 'file'
   if (view === 'trajectory' && current !== null) {
     followTail = true
@@ -719,63 +735,6 @@ function renderLedger(data, timeline_ = { spans: [], durationMs: 0 }) {
     box.append(header)
     for (const record of data.loose) box.append(recordNode(record))
     ledger.append(box)
-  }
-}
-
-/**
- * The document list, read once per page.
- *
- * The root is the directory the harness was started in — the workspace the session ran against — and the server
- * is what decides which files are inside it. Nothing here can widen that: the page only asks for a path the
- * listing gave it.
- */
-let docListLoaded = false
-async function loadDocList() {
-  if (docListLoaded) return
-  docsList.replaceChildren()
-  try {
-    const body = await (await fetch('/api/docs')).json()
-    for (const entry of body.docs ?? []) {
-      const item = document.createElement('li')
-      item.textContent = entry.path
-      item.title = entry.path
-      item.dataset.path = entry.path
-      item.onclick = () => showDoc(entry.path)
-      docsList.append(item)
-    }
-    docListLoaded = true
-    const first = docsList.querySelector('li')
-    if (first !== null) await showDoc(first.dataset.path)
-  } catch (error) {
-    const note = document.createElement('div')
-    note.className = 'turn denied'
-    note.textContent = 'could not list documents: ' + (error && error.message)
-    docPane.replaceChildren(note)
-  }
-}
-
-/** Render one document, marking which is being shown. */
-async function showDoc(path) {
-  for (const item of docsList.children) {
-    if (item.dataset.path === path) item.setAttribute('aria-current', 'true')
-    else item.removeAttribute('aria-current')
-  }
-  try {
-    const response = await fetch('/api/docs?path=' + encodeURIComponent(path))
-    const body = await response.json()
-    if (body.error !== undefined) {
-      docPane.replaceChildren(Object.assign(document.createElement('p'), { className: 'turn denied', textContent: body.error }))
-      return
-    }
-    /**
-     * The HTML is written as innerHTML because the **server** produced it with the renderer its tests judge:
-     * every path escapes before it writes a tag, and a unit test asserts that no document can inject one. The
-     * page therefore never renders a document's own text as markup.
-     */
-    docPane.innerHTML = body.html ?? ''
-    docPane.scrollTop = 0
-  } catch (error) {
-    docPane.replaceChildren(Object.assign(document.createElement('p'), { className: 'turn denied', textContent: String(error && error.message) }))
   }
 }
 
@@ -1173,6 +1132,11 @@ let fileFetches = 0
 async function showFile(node) {
   const ticket = ++fileFetches
   chooseSelected(node.path)
+  /**
+   * A file is shown in the panel **on its own**: the ring holds the file's tab and nothing else, because
+   * Chat, Trajectory and Docs are all statements about a session and a file has none of them (owner's rule).
+   */
+  renderRing('file')
   fileHead.textContent = node.path
   fileBody.textContent = 'reading…'
   await showView('file')
@@ -1204,28 +1168,25 @@ async function showFile(node) {
   }
 }
 
-function selectNode(node) {
-  if (node.session) {
-    activeFolder = node.path
-    setNote('')
-    chooseSelected(node.path)
-    showSession(node.session.id)
-    return
-  }
-  if (node.kind === 'instance') {
-    /**
-     * An instance with no session yet is where work starts: selecting it points the prompt box at the
-     * folder and clears the pane, and the first prompt creates the session through `/api/turn`.
-     */
-    activeFolder = node.path
-    current = null
-    chooseSelected(node.path)
-    log.replaceChildren()
-    ledger.replaceChildren()
-    setNote('a new conversation in ' + node.label)
-    return
-  }
-  setNote('a session lives in an instance — open the folder inside a type folder')
+/**
+ * Select a session row: show its conversation, and offer its two views.
+ *
+ * The prompt box keeps working because the session's **branch** — the folder its definition sits under — is
+ * what work goes to. It is derived rather than stored, since the row's path is the definition and the branch
+ * is always its grandparent: `<branch>/_sessions_/<session>`.
+ */
+async function selectSession(node) {
+  activeFolder = node.path.replace(/\/_sessions_\/[^/]+$/, '')
+  setNote('')
+  if (view !== 'chat' && view !== 'trajectory') await showView('chat')
+  renderRing('session')
+  await showSession(node.session.id)
+  /**
+   * The mark is put on the row that was **clicked**, and last, because `showSession` resynchronises the
+   * selection to whichever row claims the session. Before the tree stopped showing a captured conversation
+   * twice, that moved the mark to the instance row — the session was shown once but claimed by two rows.
+   */
+  chooseSelected(node.path)
 }
 
 /**
@@ -1384,6 +1345,7 @@ async function startSessionAt(node) {
     return
   }
   setNote('')
+  activeFolder = node.path
   expanded.add(node.path)
   rememberExpanded()
   if (typeof body.definition === 'string') chooseSelected(body.definition.replace(/\/session\.json$/, ''))
@@ -1491,30 +1453,22 @@ function nodeRow(node) {
 
   row.onclick = async () => {
     /**
-     * A row is one of two things, and the click says which.
+     * Three kinds of row, three different acts — the owner's rules of 2026-10-11.
      *
-     * A **file** opens its content in the right panel. A **folder expands or closes** — the owner's rule
-     * of 2026-10-11, and what the folder glyph on the left reports — and opening an instance also makes it
-     * the folder being worked in, so expanding one with a conversation shows that conversation. Closing is
-     * a pure navigation act: it puts the contents away without changing what the panel is showing.
+     * A **file** is selected and shown in the panel, on its own. A **session** is selected and its
+     * conversation is shown, with its trajectory a tab away. Everything else is a **folder**, and clicking
+     * one only opens or closes it: navigation does not change what the panel is showing, so a person can
+     * read a file and open three folders to look for another one without losing their place.
      */
     if (node.kind === 'file') {
-      showFile(node)
+      await showFile(node)
+      return
+    }
+    if (node.kind === 'session') {
+      await selectSession(node)
       return
     }
     await toggle(node, li)
-    if (node.kind === 'session' && node.session) {
-      /**
-       * A session row is a conversation, so clicking it **opens that conversation** — the owner's point in
-       * asking what a session row is for. Before this the row toggled and nothing else, because the node
-       * named no session; the tree reads the session's definition now, so the row knows which log it stands
-       * for and the panel can show it.
-       */
-      chooseSelected(node.path)
-      await showSession(node.session.id)
-      return
-    }
-    if (li.dataset.open === 'true' && node.kind === 'instance') selectNode(node)
   }
   row.onkeydown = (event) => {
     if (event.key === 'Enter' || event.key === ' ') {

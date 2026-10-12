@@ -266,6 +266,17 @@ test('a _sessions_ folder is not a node, and its sessions come first in the bran
       'and the folder that holds them is not a node at all',
     )
 
+    /**
+     * A session is a leaf: its definition folder holds `INDEX.md` and `session.json`, and the tree shows
+     * neither, because the panel shows the conversation rather than the filing.
+     */
+    const session = (instance.children ?? [])[0]
+    assert.deepEqual(session.children, [], 'a session row is a leaf, not a folder to open')
+    assert.ok(
+      !(session.children ?? []).some((node) => node.label === 'INDEX.md' || node.label === 'session.json'),
+      'and nothing from its definition folder is offered as a row',
+    )
+
     const level = tree(join(root, '_tools_'), input)
     assert.ok(
       !(level.children ?? []).some((node) => node.label === '_sessions_'),

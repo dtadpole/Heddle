@@ -226,3 +226,33 @@ test('an escape for a name never becomes visible inside code', () => {
   assert.ok(!span.includes('\\_'), 'nor a code span')
   assert.match(span, /<code>_tools_<\/code>/, 'which keeps its underscores without help')
 })
+
+test('a code span inside link text is code, not literal backticks', () => {
+  /**
+   * Measured in the browser: "See [`_verifiers_/`](…)" rendered as an anchor whose text was a backtick, a name, and
+   * another backtick — and this repository's index tables are full of exactly that shape, so every table of parts
+   * showed stray backticks. The renderer hook was passing the label's **raw text** through instead of the tokens the
+   * parser had already produced.
+   */
+  assert.match(
+    renderMarkdown('See [`_verifiers_/`](_verifiers_/INDEX.md) here.'),
+    /<a href="_verifiers_\/INDEX\.md"><code>_verifiers_\/<\/code><\/a>/,
+    'the label is a code element, and the name keeps its underscores',
+  )
+  assert.match(renderMarkdown('[**bold** label](a.md)'), /<a href="a\.md"><strong>bold<\/strong> label<\/a>/, 'emphasis in a label too')
+  assert.ok(!renderMarkdown('[`x`](a.md)').includes('`x`'), 'and no backtick survives as text')
+})
+
+test('a table cell whose link label holds a code span stays one cell', () => {
+  /** The shape that made it visible: an index table, where a stray backtick wraps the cell onto a second line. */
+  const html = renderMarkdown('| a | b |\n| --- | --- |\n| [`_tools_/`](_tools_/INDEX.md) | a claim |\n')
+  assert.equal((html.match(/<td[\\s>]/g) ?? []).length, 2, 'two cells, not three')
+  assert.match(html, /<td><a href="_tools_\/INDEX\.md"><code>_tools_\/<\/code><\/a><\/td>/, 'and the label is code inside the link')
+})
+
+test('refusing a link keeps its rendered label', () => {
+  /** The refusal must not throw away what the label meant: bold and code in it are still rendered. */
+  const html = renderMarkdown('[**danger**](javascript:alert(1))')
+  assert.ok(!html.includes('<a '), 'no anchor is produced')
+  assert.match(html, /<strong>danger<\/strong> \(link refused\)/, 'and the label is rendered, with the reason')
+})

@@ -121,22 +121,30 @@ marked.use(
   }),
 )
 
+/**
+ * The two renderer hooks that exist for safety, rather than for formatting.
+ *
+ * Both passed the label's **raw text** through at first, and that was a measured bug: a code span inside link text
+ * rendered its backticks literally, so `[`x`](a.md)` — the shape this repository's index tables are full of — came
+ * out as an anchor containing a backtick instead of a `code` element. `tokens` is what the parser already decided
+ * the label means, and `this.parser` writes it exactly as it would be written outside a link, so emphasis and code
+ * spans behave the same in both places. A label whose scheme is refused keeps its text, with the reason beside it,
+ * so a reader who saw a link in the source sees what became of it.
+ */
 marked.use({
   renderer: {
-    /**
-     * Refuse a scheme rather than emit it, and keep the label so the document still reads with the reason beside
-     * it — a reader who saw a link in the source should see what became of it.
-     */
-    link({ href, title, text }: Tokens.Link): string {
+    link(this: { parser: { parseInline(tokens: unknown[]): string } }, { href, title, tokens }: Tokens.Link): string {
+      const label = this.parser.parseInline(tokens as unknown[])
       const target = safeUrl(href)
-      if (target === null) return `${text} (link refused)`
+      if (target === null) return `${label} (link refused)`
       const heading = title === null || title === undefined ? '' : ` title="${escapeHtml(title)}"`
-      return `<a href="${escapeHtml(target)}" rel="noreferrer noopener"${heading}>${text}</a>`
+      return `<a href="${escapeHtml(target)}" rel="noreferrer noopener"${heading}>${label}</a>`
     },
     /** An image with a refused source becomes its alt text, so nothing is fetched and nothing is lost. */
-    image({ href, title, text }: Tokens.Image): string {
+    image(this: { parser: { parseInline(tokens: unknown[]): string } }, { href, title, text, tokens }: Tokens.Image): string {
+      const label = tokens === undefined ? escapeHtml(text) : this.parser.parseInline(tokens as unknown[])
       const target = safeUrl(href)
-      if (target === null) return escapeHtml(text)
+      if (target === null) return label
       const heading = title === null || title === undefined ? '' : ` title="${escapeHtml(title)}"`
       return `<img src="${escapeHtml(target)}" alt="${escapeHtml(text)}"${heading}>`
     },

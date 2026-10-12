@@ -27,6 +27,7 @@ document here is untrusted text: it comes from a model, a repository, or a perso
 | 3 | a document that opens with YAML frontmatter shows it as metadata | every document in this repository does, and as prose it reads as a sentence |
 | 4 | a document cannot produce a `script` element, or an attribute of its own | the property that fails silently |
 | 7 | a fence in a registered language is tokenised and **coloured**, and one outside the set is still rendered | spans can be present in the markup and invisible without a theme |
+| 8 | a document opened from the left panel — the **file pane**, not the Docs pane — is styled the same way | two panes, one renderer: markup can be right while every style names the other pane |
 | 5 | a path outside the document root, and a file that is not markdown, are refused | a document view that can be asked for any file is disclosure with a renderer in front |
 | 6 | the listing is stable and holds no dependency trees | a listing that reshuffles, or lists `node_modules`, is unusable |
 

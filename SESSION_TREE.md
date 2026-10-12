@@ -109,6 +109,22 @@ A `type` may appear at any depth, including inside an instance (`_projects_/a-pr
 and an `instance` may hold content and further type folders — the conventions place no depth limit,
 and the observed maximum is four.
 
+**The right panel follows the selection, and each kind of row behaves differently.** The owner's rules of
+2026-10-11, and they are one idea: *the panel shows the thing that was chosen, and navigation is not a
+choice of thing.*
+
+| The row clicked | What happens to the tree | What the panel shows |
+|---|---|---|
+| a **session** | nothing: it is a **leaf**, and the files of its definition folder (`INDEX.md`, `session.json`) are never rows | that conversation, with `Chat` and `Trajectory` as its two views |
+| a **file** | nothing | that file, and **only** its preview: no `Chat`, no `Trajectory`, no `Docs`, because all three are statements about a session and a file has none |
+| anything else — a folder | it opens or closes | nothing changes: the panel keeps showing whatever it was showing |
+
+**A conversation is shown once.** A session can be attached to a folder twice over — bound by its `cwd`, and
+captured as an instance under that folder's `_sessions_` — and then the tree drew one conversation as two
+rows, with the instance row coming first. Measured: clicking the session row moved the selection mark to the
+instance row. A branch therefore drops its own binding when a definition under it names the same session:
+the conversation belongs to the row that *is* the session, and the folder is only where it worked.
+
 **A session can be created at any branch, the workspace root included.** The owner's rule of
 2026-10-11: `heddle session new [<branch>]`, the `New session` item on a workspace or instance row, and
 `POST /api/sessions` all start a session and write its **definition** into that branch, leaving the

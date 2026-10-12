@@ -242,7 +242,14 @@ function buildContext(input: TreeInput): Context {
   }
 }
 
-function row(path: string, kind: NodeKind, label: string, context: Context): Omit<TreeNode, 'children'> {
+function row(
+  path: string,
+  kind: NodeKind,
+  label: string,
+  context: Context,
+  /** `true` when the caller knows this folder's session is shown somewhere else — on its own session row. */
+  suppressSession = false,
+): Omit<TreeNode, 'children'> {
   /**
    * A session **started in** a folder is shown on that folder when the conventions put a `_type_` boundary
    * around it — an instance. Two additions since the same day: a `_sessions_` instance is hoisted into its
@@ -250,7 +257,7 @@ function row(path: string, kind: NodeKind, label: string, context: Context): Omi
    * started at a workspace root appears under the root, because the owner's rule is that a branch shows its
    * sessions and a root is a branch.
    */
-  const meta = kind === 'instance' ? context.sessions.get(path) : undefined
+  const meta = kind === 'instance' && !suppressSession ? context.sessions.get(path) : undefined
   return {
     path,
     kind,
@@ -261,6 +268,25 @@ function row(path: string, kind: NodeKind, label: string, context: Context): Omi
         ? null
         : { id: meta.id, turns: meta.turns, ...(meta.title !== undefined ? { title: meta.title } : {}) },
   }
+}
+
+/**
+ * The session ids a folder's `_sessions_` folder names in its definitions.
+ *
+ * A conversation can be bound to a folder by its `cwd` **and** captured as an instance under that folder's
+ * `_sessions_`, and then the tree would show one conversation twice — measured: clicking the session row
+ * moved the mark to the instance row, because both rows claimed the same session id and the instance came
+ * first. The instance's own binding is therefore dropped when a definition under it names the same session:
+ * the conversation is shown once, on the row that is the session.
+ */
+function capturedIn(dir: string): ReadonlySet<string> {
+  const ids = new Set<string>()
+  for (const entry of entries(join(dir, SESSIONS_FOLDER))) {
+    if (!entry.directory) continue
+    const definition = readSessionDefinition(join(dir, SESSIONS_FOLDER, entry.name))
+    if (definition !== null) ids.add(definition.id)
+  }
+  return ids
 }
 
 /**
@@ -316,7 +342,14 @@ function childrenOf(dir: string, kind: NodeKind, context: Context): TreeNode[] {
         if (!session.directory) continue
         const sessionPath = canonicalPath(join(path, session.name))
         const node = row(sessionPath, 'session', session.name, context)
-        sessions.push({ ...node, session: sessionOf(sessionPath, context), children: null })
+        /**
+         * A session is a **leaf**, and the files in its definition folder are deliberately not shown — the
+         * owner's rule of 2026-10-11: what a person wants from a session is the conversation and its
+         * trajectory, which the right panel shows, rather than the `INDEX.md` and `session.json` that make
+         * the folder. `children: []` is the leaf's answer ("asked for, and there is nothing to show"), as
+         * opposed to the `null` of a folder nobody has opened yet.
+         */
+        sessions.push({ ...node, session: sessionOf(sessionPath, context), children: [] })
       }
       continue
     }
@@ -334,8 +367,10 @@ function childrenOf(dir: string, kind: NodeKind, context: Context): TreeNode[] {
       rest.push({ ...row(path, 'workspace', root.title, context), children: null })
       continue
     }
+    const nodeKind = parentIsSessions ? 'session' : classify(entry.name, kind, context.generated)
+    const own = context.sessions.get(path)
     rest.push({
-      ...row(path, parentIsSessions ? 'session' : classify(entry.name, kind, context.generated), entry.name, context),
+      ...row(path, nodeKind, entry.name, context, own !== undefined && capturedIn(path).has(own.id)),
       children: null,
     })
   }

@@ -1037,8 +1037,10 @@ test('a folder opens and closes with the same control, including a leaf with not
     assert.equal(toggled.leftClosed.glyph, 'closed', 'and it closes again, leaving the tree where the next assertions expect it')
 
     /**
-     * Opening an **instance** also makes it the folder being worked in, which is why a conversation appears
-     * with the folder rather than behind a second click.
+     * Opening an **instance** opens it and nothing else — the owner's rule of 2026-10-11: a folder click is
+     * navigation, so it must not retarget the panel. This assertion used to be its opposite (opening an
+     * instance selected it, and the note said a new conversation had started there); the rule changed and the
+     * claim moved with it, rather than the check being loosened.
      */
     // The folder is reopened first: a row that is not drawn cannot be clicked, and the block above
     // deliberately leaves `_tools_` closed.
@@ -1049,14 +1051,14 @@ test('a folder opens and closes with the same control, including a leaf with not
     await browser.evaluate(
       `[...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === 'some-tool').click()`,
     )
-    await browser.waitFor(`document.getElementById("tree-note").textContent.includes("a new conversation in some-tool")`, 20_000)
     const openedInstance = JSON.parse(
       await browser.evaluate(`JSON.stringify({
         selected: [...document.querySelectorAll('#tree .row[aria-current="true"]')].map((entry) => entry.querySelector('.label').textContent),
-        note: document.getElementById('tree-note').textContent,
+        open: [...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === 'some-tool').parentElement.dataset.open,
       })`),
     )
-    assert.deepEqual(openedInstance.selected, ['some-tool'], 'opening an instance selects it, and only it')
+    assert.equal(openedInstance.open, 'true', 'opening an instance opens it')
+    assert.deepEqual(openedInstance.selected, [], 'and chooses nothing: a folder is navigation, not a selection')
 
     // Closed again, because the assertions that follow drive the disclosure from a known state.
     await browser.evaluate(
@@ -1138,7 +1140,12 @@ test('a folder opens and closes with the same control, including a leaf with not
     const fileView = JSON.parse(
       await browser.evaluate(`JSON.stringify((() => {
         const row = [...document.querySelectorAll('#tree .row')].find((entry) => entry.querySelector('.label').textContent === 'INDEX.md')
-        const ring = [...document.querySelectorAll('#views button')].map((button) => button.textContent)
+        /**
+         * The **offered** tabs, which is what a person sees: a tab can be in the ring and hidden, because the
+         * ring keeps its buttons and the selection decides which of them are shown. Listing them all would make
+         * this probe measure the markup rather than the panel.
+         */
+        const ring = [...document.querySelectorAll('#views button')].filter((button) => !button.hidden).map((button) => button.textContent)
         return {
           hidden: document.getElementById('file').hidden,
           head: document.getElementById('file-head').textContent,
@@ -1175,10 +1182,12 @@ test('a folder opens and closes with the same control, including a leaf with not
      */
     assert.deepEqual(fileView.selected, ['INDEX.md'], 'the file being shown is the selected row, and only it')
     /**
-     * The file panel is not a tab. Which tabs the ring carries is not this part's claim — another part owns
-     * the Docs view — so the assertion is the absence of one, not the contents of the list.
+     * A file is shown on **its own**, and the ring says so: one tab, the file's. This assertion has been its
+     * own opposite twice — first that a file was not a tab, then that a file's tab was absent — and the
+     * owner's rule of 2026-10-11 is the third statement of it: chat, trajectory and docs are all statements
+     * about a session, so a file offers none of them and offers its preview instead.
      */
-    assert.ok(!fileView.ring.includes('File'), `a file is shown in the panel, not as a tab of its own\nsaw: ${fileView.ring.join(', ')}`)
+    assert.deepEqual(fileView.ring, ['File'], `a file offers its preview and nothing else\nsaw: ${fileView.ring.join(', ')}`)
 
     /**
      * A file that is not markdown is shown verbatim: the same pane, a different renderer. The branch is
@@ -1546,6 +1555,107 @@ test('a new session is filed under its workspace, and an old one keeps the shape
     assert.equal(read.code, 0, `and it still reads\n${read.stdout}${read.stderr}`)
     assert.match(read.stdout, /session\/created/, 'with its own log')
   } finally {
+    removeDir(h.home)
+    removeDir(h.work)
+  }
+})
+
+test('the panel follows the selection: a session offers two views, a file one, and a folder changes nothing', async (context) => {
+  if (!skipUnless(context, await supportsCommands(), CAPABILITY)) return
+  if (!skipUnless(context, await supportsFolderTree(), TREE_CAPABILITY)) return
+  if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
+  const h = harness('panel-follows-selection')
+  let live
+  let browser
+  try {
+    await conventionsFixture(h)
+    /**
+     * A real session, created by the CLI, because the three rules are about rows that stand for something:
+     * a session row with a conversation behind it, a file with a document behind it, and a folder that is
+     * only a folder.
+     */
+    const created = await runCli(adminArgs(h, ['session', 'new', join(h.work, '_tools_', 'some-tool'), '--json']), { env: h.env, cwd: h.work })
+    assert.equal(created.code, 0, `the session was created\n${created.stdout}${created.stderr}`)
+
+    live = await startServer(
+      ['web', '--host', '127.0.0.1', '--port', '0', '--config', join(repoRoot, 'cordis.yml'), '--session-root', join(h.home, 'sessions')],
+      { ...h.env, HOME: h.home },
+    )
+    browser = await openBrowser()
+    await browser.goto(live.url)
+    await browser.waitFor(`document.querySelectorAll('#tree .row').length > 0`, 20_000)
+
+    /**
+     * `await`s the page's promise and stringifies **its** value. Measured the hard way: with the
+     * `JSON.stringify` outside the call it stringifies the pending promise, which is `{}` — and a probe that
+     * reads `{}` reports every field as undefined while looking like it worked.
+     */
+    const reading = JSON.parse(await browser.evaluate(`(async () => {
+      const wait = (ms) => new Promise((done) => setTimeout(done, ms))
+      const rows = () => [...document.querySelectorAll('#tree .row')]
+      const rowFor = (label) => rows().find((entry) => entry.querySelector('.label')?.textContent === label)
+      const ring = () => [...document.querySelectorAll('#views button')].filter((b) => !b.hidden).map((b) => b.textContent)
+      const current = () => document.querySelector('#tree .row[aria-current="true"]')?.querySelector('.label')?.textContent ?? null
+      const openState = (label) => rowFor(label)?.parentElement.dataset.open ?? null
+
+      ;[...document.querySelectorAll('#tree .row')][0].click(); await wait(600)
+      rowFor('_tools_').click(); await wait(700)
+      rowFor('some-tool').click(); await wait(800)
+
+      // 1. A session row is a leaf that shows its conversation, with two views.
+      const sessionRow = rows().find((entry) => entry.parentElement.dataset.kind === 'session')
+      if (sessionRow === undefined) return { error: 'no session row was drawn' }
+      const sessionLabel = sessionRow.querySelector('.label').textContent
+      sessionRow.click(); await wait(1200)
+      const afterSession = { ring: ring(), current: current(), leaf: sessionRow.parentElement.querySelector(':scope > ul[role=group]') === null }
+
+      /**
+       * 2. A folder only opens and closes, and the panel is not retargeted.
+       *
+       * The folder clicked is an UNRELATED one — the second type folder, which holds nothing this
+       * conversation touches. A folder that contains the selected row cannot judge this rule, because closing
+       * it takes the row (and therefore its mark) off the screen no matter what the rule says.
+       */
+      const beforeFolder = { current: current(), ring: ring(), open: openState('_verifiers_') }
+      rowFor('_verifiers_').click(); await wait(700)
+      const afterFolder = { current: current(), ring: ring(), open: openState('_verifiers_') }
+      rowFor('_verifiers_').click(); await wait(500)
+      const closedAgain = openState('_verifiers_')
+
+      // 3. A file is selected on its own: one tab, and it is the file's.
+      rowFor('some-tool').click(); await wait(600)
+      const fileRow = rows().find((entry) => entry.parentElement.dataset.kind === 'file')
+      if (fileRow === undefined) return { error: 'no file row was drawn', afterSession, afterFolder }
+      const fileLabel = fileRow.querySelector('.label').textContent
+      fileRow.click(); await wait(1200)
+      const afterFile = { ring: ring(), current: current() }
+
+      return { sessionLabel, afterSession, beforeFolder, afterFolder, closedAgain, fileLabel, afterFile }
+    })().then((value) => JSON.stringify(value))`))
+
+    assert.equal(reading.error, undefined, `the fixture drew the rows the rules are about\nsaw: ${JSON.stringify(reading)}`)
+
+    /** 1. A session is a leaf, and its two views are the two projections of a conversation. */
+    assert.deepEqual(reading.afterSession.ring, ['Chat', 'Trajectory'], `a session offers its chat and its trajectory\nsaw: ${reading.afterSession.ring.join(', ')}`)
+    assert.equal(reading.afterSession.leaf, true, 'and the row is a leaf: nothing to open under a session')
+    assert.equal(reading.afterSession.current, reading.sessionLabel, 'and selecting it shows it')
+
+    /** 2. A folder is navigation: it opens, it closes, and the panel is not retargeted. */
+    assert.equal(
+      reading.afterFolder.open,
+      String(reading.beforeFolder.open !== 'true'),
+      'clicking a folder flips it: an open folder closes and a closed one opens',
+    )
+    assert.equal(reading.closedAgain, reading.beforeFolder.open, 'and clicking it again puts it back')
+    assert.equal(reading.afterFolder.current, reading.beforeFolder.current, `and neither click moves the selection\nsaw: ${reading.afterFolder.current}`)
+    assert.deepEqual(reading.afterFolder.ring, reading.beforeFolder.ring, 'nor changes which views are offered')
+
+    /** 3. A file is shown on its own: one tab, no session views. */
+    assert.deepEqual(reading.afterFile.ring, ['File'], `a file offers its preview and nothing else\nsaw: ${reading.afterFile.ring.join(', ')}`)
+    assert.equal(reading.afterFile.current, reading.fileLabel, 'and selecting it shows it')
+  } finally {
+    browser?.close()
+    live?.kill()
     removeDir(h.home)
     removeDir(h.work)
   }
