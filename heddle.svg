@@ -4,7 +4,7 @@
   <metadata>
     Colors: neutral gray #858585; orange #E68000.
     D outer radius: 152; inner radius: 80; center: (312,218).
-    H vertical stroke width: 80; horizontal stroke width: 72 (y=184..256).
+    H vertical stroke width: 80; horizontal stroke width: 66 (y=187..253).
     D ribbon width: 72 throughout. All cuts: 14 units. Center cut: y=211..225.
     D inner bottom: y=298, aligned to the lower edge of the shared H cut.
     H-to-D vertical separation: x=280..294. Crossbar-to-stem separation: x=186..200.
@@ -13,7 +13,7 @@
   <defs>
     <mask id="left-cuts" maskUnits="userSpaceOnUse" x="0" y="0" width="560" height="432" style="mask-type:luminance">
       <rect width="560" height="432" fill="white"/>
-      <path d="M56 170h96v14H56z M56 256h96v14H56z" fill="black"/>
+      <path d="M56 173h96v14H56z M56 253h96v14H56z" fill="black"/>
     </mask>
     <mask id="shared-cuts" maskUnits="userSpaceOnUse" x="0" y="0" width="560" height="432" style="mask-type:luminance">
       <rect width="560" height="432" fill="white"/>
@@ -27,7 +27,7 @@
   <g transform="translate(0 64)">
     <rect x="64" y="56" width="80" height="320" rx="20" fill="#858585" mask="url(#left-cuts)"/>
     <rect x="200" y="56" width="80" height="320" rx="20" fill="#858585" mask="url(#shared-cuts)"/>
-    <rect x="64" y="184" width="122" height="72" fill="#E68000"/>
+    <rect x="64" y="187" width="122" height="66" fill="#E68000"/>
     <path d="M294 66H312A152 152 0 0 1 312 370H294V298H312A80 80 0 0 0 312 138H294Z"
           fill="#E68000" mask="url(#d-cut)"/>
   </g>
