@@ -999,7 +999,17 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
            */
           endpoint: meta?.endpoint ?? null,
           model: meta?.model ?? null,
-          turns: transcriptTurns(events),
+          /**
+           * An answer travels as the document it is, not only as its source.
+           *
+           * DSH renders an assistant row's markdown once the row is **settled**, and this is the same decision
+           * made on the server: the transcript is read once, so rendering here costs one pass and the page
+           * never has to ask per turn. The live path (a turn that just ended) asks `/api/markdown` for the one
+           * answer it has, and both go through `renderMarkdown`, so there is one renderer and one allow-list.
+           */
+          turns: transcriptTurns(events).map((turn) =>
+            turn.kind === 'assistant' ? { ...turn, html: renderMarkdown(turn.text) } : turn,
+          ),
         },
         null,
         2,
@@ -1012,6 +1022,25 @@ async function handle(ctx: Context, request: IncomingMessage, response: ServerRe
     respondSse(response)
     state.subscribers.add(response)
     request.on('close', () => state.subscribers.delete(response))
+    return
+  }
+
+  /**
+   * Draw text as a document.
+   *
+   * The page's answer arrives as deltas and is plain text until the turn ends; at that point it is the same
+   * document a transcript read would have carried, so it is rendered by the same function. A `POST` because
+   * the body is the text, and behind the token like every other route — the output is an allow-listed
+   * reduction of somebody else's characters, which is exactly the work `sanitizeHtml` exists for.
+   */
+  if (url.pathname === '/api/markdown' && request.method === 'POST') {
+    const body = await readJson(request, response)
+    if (body === null) return
+    if (typeof body.text !== 'string') {
+      respond(response, 400, 'application/json', `${JSON.stringify({ error: 'text is required' })}\n`)
+      return
+    }
+    respond(response, 200, 'application/json', `${JSON.stringify({ html: renderMarkdown(body.text) })}\n`)
     return
   }
 

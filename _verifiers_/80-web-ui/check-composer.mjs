@@ -26,6 +26,20 @@ import { chatDouble, fixtureDir, isolatedHome, removeDir, skipUnless, writeJson 
 
 const CAPABILITY = 'a Web UI on localhost with a live stream'
 
+/**
+ * Wait for a node-side fact — what a double received — to become true.
+ *
+ * A page-side condition is waited for with `browser.waitFor`, but the double's request count is on this side
+ * of the socket and lands a moment **after** the page has marked the message as sent. Asserting it
+ * immediately is a race, and one this check lost: measured, the composer drew the queue and the request had
+ * not arrived yet.
+ */
+async function until(predicate, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50))
+  return predicate()
+}
+
 /** A run whose server prints its URL, with a double that holds its terminator open so a turn is observably running. */
 async function startServer(label, options = {}) {
   const home = isolatedHome(`composer-${label}`)
@@ -218,6 +232,48 @@ test('Ctrl+Enter on an empty draft sends everything still queued, in order', asy
     assert.ok(order.every((at) => at !== -1), `every queued message was sent (${log})`)
     assert.deepEqual([...order].sort((left, right) => left - right), order, 'in FIFO order')
     assert.equal(server.double.requests.length, 4, 'one turn per message, including the one that was running')
+  } finally {
+    browser.close()
+    await server.close()
+  }
+})
+
+test('a steered message is answered by the running turn, and a steer with nothing running is refused', async (context) => {
+  /**
+   * The half of steering the composer cannot do alone, and the reason it is not just a queue reorder.
+   *
+   * DSH's agent runtime injects a steered message between steps; heddle appends it to the session and the
+   * **loop** has to take another round, because an answer with no tool calls used to end the turn and leave the
+   * message sitting in the transcript unanswered. The route's refusal is DSH's too: `session/steer-unavailable`
+   * when the turn it would be delivered into has ended.
+   */
+  if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
+  const server = await startServer('steer', { holdOpenMs: 1500 })
+  const browser = await openBrowser()
+  try {
+    await browser.goto(server.url)
+    await browser.waitFor('document.getElementById("model-trigger") !== null', 20_000)
+
+    const refused = await browser.evaluate(`fetch('/api/sessions/session-00000000-0000-0000-0000-000000000000/steer', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'nobody is running' })
+    }).then((response) => response.status)`)
+    assert.equal(refused, 409, 'a steer with no running turn is refused, as DSH refuses it')
+
+    await type(browser, 'the first question')
+    await press(browser, { key: 'Enter' })
+    assert.ok(await browser.waitFor('document.getElementById("queue").hidden === false', 10_000), 'the turn is running')
+    assert.ok(await until(() => server.double.requests.length === 1), 'one model call is in flight')
+
+    await type(browser, 'answer this too')
+    await press(browser, { key: 'Enter', ctrlKey: true })
+    assert.ok(
+      await browser.waitFor('document.getElementById("log").innerText.includes("answer this too")', 15_000),
+      'the steered message reached the transcript',
+    )
+    assert.ok(await browser.waitFor('document.getElementById("queue").hidden === true', 40_000), 'the turn ends')
+    assert.ok(await until(() => server.double.requests.length === 2), 'and the running turn asked the model again for it')
+    const log = await browser.evaluate('document.getElementById("log").innerText')
+    assert.ok(log.includes('the answer'), 'the steered message was answered inside that turn')
   } finally {
     browser.close()
     await server.close()

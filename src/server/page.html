@@ -105,6 +105,13 @@
   /** The answer: no border, no bubble, roomier leading — DSH's `AssistantMarkdown` root. */
   .turn.assistant { margin-top: 6px; font-size: 14px; line-height: 1.75; }
   .turn.assistant[data-state='running']::after { content: '▍'; margin-left: .1rem; opacity: .45; }
+  /**
+   * A drawn answer is a document, so it follows the document's whitespace rather than the row's `pre-wrap`
+   * (which would double every newline the markup already carries), and its first and last blocks sit flush.
+   */
+  .turn.assistant.markdown { white-space: normal; }
+  .turn.assistant.markdown > :first-child { margin-top: 0; }
+  .turn.assistant.markdown > :last-child { margin-bottom: 0; }
   /** A refusal or a failure is a sentence, not a bordered quote. */
   .turn.denied { color: #d14343; }
   /** Process rows — reasoning and tool calls — are compact disclosures. */
@@ -781,9 +788,60 @@ function add(kind, text, merge = true, label, tool) {
    * render is settled by construction — those events all happened before the page asked for them.
    */
   node.dataset.state = merge ? 'running' : 'settled'
-  node.textContent = text
+  /**
+   * A settled answer is drawn as the document it is — DSH's `AssistantMarkdown`, whose markdown is rendered
+   * only once the row is settled (its `finalNode` exists then and not before).
+   *
+   * History arrives already rendered: the transcript route folds the answer through the server's markdown
+   * renderer, so reading a session costs one pass and this page never asks per turn. A **live** answer is
+   * plain text until its turn ends, and `renderSettledAnswers()` asks for the one document it needs.
+   */
+  if (kind === 'assistant' && tool !== undefined && typeof tool.html === 'string') {
+    node.classList.add('markdown')
+    node.dataset.rendered = 'true'
+    node.innerHTML = tool.html
+  } else {
+    node.textContent = text
+  }
   log.append(node)
   log.scrollTop = log.scrollHeight
+}
+
+/**
+ * Draw every settled answer that is still plain text.
+ *
+ * The renderer is the **server's** — `POST /api/markdown`, which is `renderMarkdown` and an allow-list — and
+ * that is the repository's rule rather than a shortcut: escaping belongs where the renderer is, and one
+ * renderer means the chat and a file preview cannot disagree about what a document is. A row that cannot be
+ * rendered keeps its plain text and says so on itself, because an answer that failed to be drawn is still an
+ * answer.
+ */
+async function renderSettledAnswers() {
+  for (const row of log.querySelectorAll('.turn.assistant:not([data-rendered])')) {
+    const text = row.textContent
+    if (text === undefined || text.trim() === '') {
+      row.dataset.rendered = 'empty'
+      continue
+    }
+    row.dataset.rendered = 'pending'
+    try {
+      const response = await fetch('/api/markdown', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      const body = response.ok ? await response.json() : null
+      if (body !== null && typeof body.html === 'string') {
+        row.classList.add('markdown')
+        row.innerHTML = body.html
+        row.dataset.rendered = 'true'
+      } else {
+        row.dataset.rendered = 'failed'
+      }
+    } catch (error) {
+      row.dataset.rendered = 'failed'
+    }
+  }
 }
 
 /**
@@ -1264,6 +1322,22 @@ events.addEventListener('session', (message) => {
      */
     if (payload.session === composerKey) void pumpQueue()
     renderComposerState()
+    /**
+     * And it is when the answer stops arriving, so the rows settle and the document is drawn.
+     *
+     * Driven from the **event** rather than only from the page's own response, because a turn posted by
+     * anything else — the CLI, another window — settles here and nowhere else, and the reader should not be
+     * able to tell whose turn it was by how the answer looks.
+     */
+    /**
+     * The same "is this the panel's session" test the rows below use, including the case where the panel has
+     * adopted nothing yet: a page that has only ever watched a turn — the CLI's, another window's — is showing
+     * that session, and its answer settles here like anyone else's.
+     */
+    if (current === null || payload.session === current) {
+      settleChat()
+      void renderSettledAnswers()
+    }
   }
   if (current && payload.session !== current) return
   if (event.type === 'assistant/chunk' && event.chunk.type === 'text-delta') add('assistant', event.chunk.text)
@@ -1782,8 +1856,19 @@ async function pumpQueue(key = composerKey) {
       if (item === undefined) break
       item.status = 'sending'
       renderQueue()
+      /**
+       * The session is resolved **when the message is sent**, not when it was queued.
+       *
+       * Measured on 2026-10-12, and it was the queue's worst failure: a message queued behind the very first
+       * turn of a fresh panel is queued under "no session yet", and the turn that was running created one. Sent
+       * with the stale key, every message after it carried `session: null` — so the server started **a new
+       * session for each one**, they were recorded somewhere the panel was not showing, and the person saw
+       * their words vanish while four turns quietly ran. `adoptSession` moves the queue onto the id the first
+       * turn created; this reads that id at send time.
+       */
+      const forKey = key === QUEUE_KEY_NONE && composerKey !== QUEUE_KEY_NONE ? composerKey : key
       try {
-        await runTurn(item.text, key)
+        await runTurn(item.text, forKey)
         const at = queue.findIndex((entry) => entry.id === item.id)
         if (at !== -1) queue.splice(at, 1)
       } catch (error) {
@@ -1920,6 +2005,7 @@ async function runTurn(text, key) {
         for (const denial of payload.denials ?? []) add('denied', `${denial.tool}: ${denial.message}`)
         /** The turn is over, so nothing in the transcript is still arriving — DSH's rows become settled. */
         settleChat()
+        void renderSettledAnswers()
         /**
          * The turn may have created **this folder's** session, so both the tree and the list are
          * re-read.

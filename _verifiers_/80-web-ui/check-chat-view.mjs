@@ -158,3 +158,72 @@ test('a tool call and its result fold into one turn, and the page draws them as 
     await server.close()
   }
 })
+
+test('a settled answer is drawn as the document it is, and the renderer is the server’s', async (context) => {
+  /**
+   * DSH's assistant row renders markdown, and its `finalNode` exists only once the row is **settled** — which
+   * is the same place heddle draws the document, for the same reason and with one difference: the renderer is
+   * the server's, because that is where the escaping and the allow-list live (`src/server/markdown.ts`), while
+   * while the answer is still arriving the row is the plain text the deltas are.
+   *
+   * Both halves are judged: an answer with emphasis and a fenced block comes out as markup after the turn, and
+   * the render route drops what the allow-list does not want — a `<script>` in the answer is text, not code.
+   */
+  if (!skipUnless(context, /web/.test((await runCli(['--help'])).stdout), CAPABILITY)) return
+  if (!skipUnless(context, browserAvailable(), 'a browser on this machine')) return
+  const home = isolatedHome('chat-markdown')
+  const work = fixtureDir('chat-markdown-work')
+  const { config } = scriptedConfig({ home, steps: [{ text: 'a **bold** word\n\n```js\nconst x = 1\n```' }] })
+  const child = await startCli(
+    ['web', '--host', '127.0.0.1', '--port', '0', '--config', join(repoRoot, 'cordis.yml'), '--endpoint', 'scripted', '--session-root', join(home, 'sessions')],
+    { env: { HEDDLE_HOME: home, HEDDLE_CONFIG: config }, cwd: work },
+  )
+  const browser = await openBrowser()
+  try {
+    await browser.goto(child.url)
+    assert.ok(await browser.waitFor('document.getElementById("log") !== null', 20_000), 'the panel is up')
+    const cookie = await cookieFor(child.url)
+
+    const turn = await fetch(new URL('/api/turn', child.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ prompt: 'show me markdown' }),
+    })
+    assert.equal(turn.status, 200, 'the turn ran')
+    await turn.text()
+
+    assert.ok(await browser.waitFor('document.querySelector("#log .turn.assistant") !== null', 20_000), 'the answer is drawn')
+    assert.ok(
+      await browser.waitFor('document.querySelector("#log .turn.assistant strong") !== null', 20_000),
+      'and a settled answer is markup rather than the raw text',
+    )
+    const drawn = JSON.parse(
+      await browser.evaluate(`JSON.stringify({
+        rendered: document.querySelector('#log .turn.assistant')?.dataset.rendered ?? null,
+        bold: document.querySelector('#log .turn.assistant strong')?.textContent ?? null,
+        code: document.querySelector('#log .turn.assistant pre code')?.textContent ?? null,
+        text: document.querySelector('#log .turn.assistant')?.textContent ?? ''
+      })`),
+    )
+    assert.equal(drawn.rendered, 'true', 'the row says the document was drawn')
+    assert.equal(drawn.bold, 'bold', 'the emphasis is an element')
+    assert.match(String(drawn.code), /const x = 1/, 'and the fenced block is code')
+    assert.doesNotMatch(drawn.text, /\*\*/, 'with no markdown left showing as characters')
+
+    /** The route is the renderer, so the allow-list is judged where it runs. */
+    const rendered = await fetch(new URL('/api/markdown', child.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ text: 'a **bold** word <script>alert(1)</script>' }),
+    })
+    assert.equal(rendered.status, 200, 'the render route answers')
+    const html = (await rendered.json()).html
+    assert.match(html, /<strong>bold<\/strong>/, 'it renders the markdown it is given')
+    assert.doesNotMatch(html, /<script/i, 'and drops what the allow-list does not want')
+  } finally {
+    browser.close()
+    child.kill()
+    removeDir(home)
+    removeDir(work)
+  }
+})
