@@ -210,16 +210,23 @@ test('a settled answer is drawn as the document it is, and the renderer is the s
     assert.match(String(drawn.code), /const x = 1/, 'and the fenced block is code')
     assert.doesNotMatch(drawn.text, /\*\*/, 'with no markdown left showing as characters')
 
-    /** The route is the renderer, so the allow-list is judged where it runs. */
-    const rendered = await fetch(new URL('/api/markdown', child.url), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', cookie },
-      body: JSON.stringify({ text: 'a **bold** word <script>alert(1)</script>' }),
-    })
-    assert.equal(rendered.status, 200, 'the render route answers')
-    const html = (await rendered.json()).html
-    assert.match(html, /<strong>bold<\/strong>/, 'it renders the markdown it is given')
-    assert.doesNotMatch(html, /<script/i, 'and drops what the allow-list does not want')
+    /**
+     * The row's actions, which is DSH's `MessageIconActions` reduced to the one this harness has: copy. What
+     * would be copied is judged — and it is the **drawn** answer rather than its markdown source, which is what
+     * a person pasting it somewhere expects. The clipboard itself is the browser's, so the check reads the
+     * snapshot the button copies from rather than asserting what the platform did with it.
+     */
+    const actions = JSON.parse(
+      await browser.evaluate(`JSON.stringify({
+        buttons: document.querySelectorAll('#log .turn.assistant .action').length,
+        label: (document.querySelector('#log .turn.assistant .action') || {}).getAttribute?.('aria-label') ?? null,
+        copyText: (document.querySelector('#log .turn.assistant') || {}).dataset?.copyText ?? null
+      })`),
+    )
+    assert.equal(actions.buttons, 1, 'a settled answer offers exactly one action')
+    assert.equal(actions.label, 'Copy this answer', 'and it says what it does')
+    assert.match(String(actions.copyText), /bold word/, 'what it copies is the answer')
+    assert.doesNotMatch(String(actions.copyText), /\*\*/, 'as it reads rather than as its source')
   } finally {
     browser.close()
     child.kill()

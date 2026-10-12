@@ -110,6 +110,20 @@
    * (which would double every newline the markup already carries), and its first and last blocks sit flush.
    */
   .turn.assistant.markdown { white-space: normal; }
+  /**
+   * The row's own actions, under the answer — DSH's `AssistantMarkdown` action row (`margin-top: 16px`,
+   * pulled left so the glyph lines up with the text rather than centring under it). They are quiet until the
+   * row is hovered or the button is focused, because an answer is read far more often than it is copied.
+   */
+  .turn .actions { display: flex; gap: .15rem; margin-top: .3rem; margin-left: -.3rem; }
+  .turn .action {
+    width: 1.5rem; height: 1.5rem; display: grid; place-items: center; padding: 0;
+    font: inherit; font-size: .78rem; color: inherit; background: none; border: none;
+    border-radius: .3rem; opacity: 0; cursor: pointer; transition: opacity .12s;
+  }
+  .turn:hover .action, .turn .action:focus-visible, .turn .action[data-copied='true'] { opacity: .6; }
+  .turn .action:hover { opacity: 1; background: color-mix(in oklab, currentColor 10%, transparent); }
+  .turn .action[data-copied='true'] { opacity: 1; }
   .turn.assistant.markdown > :first-child { margin-top: 0; }
   .turn.assistant.markdown > :last-child { margin-bottom: 0; }
   /** A refusal or a failure is a sentence, not a bordered quote. */
@@ -800,6 +814,12 @@ function add(kind, text, merge = true, label, tool) {
     node.classList.add('markdown')
     node.dataset.rendered = 'true'
     node.innerHTML = tool.html
+    /**
+     * A history row is settled by construction, so it gets its actions here — the same ones the live path
+     * attaches; `dataset.copyText` is snapshotted before the button is inside the row.
+     */
+    node.dataset.copyText = node.innerText
+    node.append(messageActions(node))
   } else {
     node.textContent = text
   }
@@ -816,6 +836,46 @@ function add(kind, text, merge = true, label, tool) {
  * rendered keeps its plain text and says so on itself, because an answer that failed to be drawn is still an
  * answer.
  */
+/**
+ * The actions a settled row offers, which is DSH's `MessageIconActions` reduced to the one this harness has:
+ * **copy the answer**.
+ *
+ * The text is snapshotted onto the row when the row settles rather than read at click time, because the button
+ * lives inside the row and a copy that included its own glyph would be copying the wrong thing. What is copied
+ * is the answer as it reads — the drawn document's text, not its markdown source — which is what a person
+ * pasting it somewhere expects.
+ */
+function messageActions(row) {
+  const bar = document.createElement('div')
+  bar.className = 'actions'
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'action'
+  button.textContent = '⧉'
+  button.title = 'Copy this answer'
+  button.setAttribute('aria-label', 'Copy this answer')
+  button.onclick = async () => {
+    const text = row.dataset.copyText ?? row.innerText
+    try {
+      await navigator.clipboard.writeText(text)
+      button.dataset.copied = 'true'
+      button.textContent = '✓'
+      setTimeout(() => {
+        delete button.dataset.copied
+        button.textContent = '⧉'
+      }, 1500)
+    } catch (error) {
+      /**
+       * A clipboard the browser refuses — no permission, or a page not focused — is reported rather than
+       * silently doing nothing, because a copy that did not happen is worse than one that says so.
+       */
+      button.title = `could not copy: ${(error && error.message) || error}`
+    }
+  }
+  bar.append(button)
+  return bar
+}
+
 async function renderSettledAnswers() {
   for (const row of log.querySelectorAll('.turn.assistant:not([data-rendered])')) {
     const text = row.textContent
@@ -824,6 +884,7 @@ async function renderSettledAnswers() {
       continue
     }
     row.dataset.rendered = 'pending'
+    row.dataset.copyText = text
     try {
       const response = await fetch('/api/markdown', {
         method: 'POST',
@@ -835,12 +896,15 @@ async function renderSettledAnswers() {
         row.classList.add('markdown')
         row.innerHTML = body.html
         row.dataset.rendered = 'true'
+        /** What a copy should yield is the **drawn** answer, so the snapshot is refreshed after drawing. */
+        row.dataset.copyText = row.innerText
       } else {
         row.dataset.rendered = 'failed'
       }
     } catch (error) {
       row.dataset.rendered = 'failed'
     }
+    if (row.querySelector('.actions') === null) row.append(messageActions(row))
   }
 }
 
