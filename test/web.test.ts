@@ -173,3 +173,43 @@ test('the page needs a session, and a refusal says which situation the caller is
     'a credential that was offered and refused is called stale, which is a different message',
   )
 })
+
+test('a streamed answer is one turn however many deltas it arrived in', () => {
+  /**
+   * Measured in a browser on 2026-10-17: opening a session drew an answer as dozens of rows, one per
+   * `text-delta` the provider had sent. The live view merges deltas into one node; the history fold did
+   * not, so the same answer read as a different conversation after a reload.
+   */
+  const turns = transcriptTurns([
+    { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'one ' } },
+    { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'answer ' } },
+    { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'in three parts' } },
+  ])
+  assert.deepEqual(turns, [{ kind: 'assistant', text: 'one answer in three parts' }])
+})
+
+test('a reasoning run is one turn too, and the answer is a turn of its own', () => {
+  const turns = transcriptTurns([
+    { type: 'assistant/chunk', chunk: { type: 'reasoning-delta', text: 'think ' } },
+    { type: 'assistant/chunk', chunk: { type: 'reasoning-delta', text: 'harder' } },
+    { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'the ' } },
+    { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'answer' } },
+  ])
+  assert.deepEqual(turns, [
+    { kind: 'reasoning', text: 'think harder' },
+    { kind: 'assistant', text: 'the answer' },
+  ])
+})
+
+test('a tool call separates the text runs around it', () => {
+  const turns = transcriptTurns([
+    { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'let me check. ' } },
+    { type: 'assistant/chunk', chunk: { type: 'tool-call', id: 'c1', name: 'bash', arguments: '{"command":"pwd"}' } },
+    { type: 'message', message: { role: 'tool', toolCallId: 'c1', content: [{ type: 'text', text: '/tmp' }] } },
+    { type: 'assistant/chunk', chunk: { type: 'text-delta', text: 'done.' } },
+  ])
+  assert.deepEqual(turns.map((turn) => turn.kind), ['assistant', 'tool', 'assistant'])
+  assert.equal(turns[0]?.text, 'let me check. ', 'the text before the call stays one turn')
+  assert.equal(turns[1]?.result, '/tmp', 'the result still fills the call it answers')
+  assert.equal(turns[2]?.text, 'done.', 'and the text after it is a new one')
+})

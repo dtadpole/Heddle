@@ -1435,6 +1435,31 @@ export function transcriptTurns(
   const open = new Map<string, number>()
   /** The newest call without a result, for a provider that sends no ids at all. */
   let lastOpen = -1
+  /**
+   * The turn a run of deltas is still being appended to, or `-1` when no run is open.
+   *
+   * A provider streams an answer as many `text-delta` chunks and a reasoning block as many
+   * `reasoning-delta` chunks; a transcript that made each chunk a row drew one sentence as dozens of
+   * rows, which is what a browser showed on 2026-10-17. The live view already merges them into one
+   * node, so the fold has to as well or the same answer reads differently after a reload. A run ends
+   * at anything that is not its own delta — another kind of delta, a call, a message, a completion.
+   */
+  let openAssistant = -1
+  let openReasoning = -1
+  const closeRuns = (): void => {
+    openAssistant = -1
+    openReasoning = -1
+  }
+  /** Append to the open run when there is one, and otherwise open a new turn for it. */
+  const append = (kind: 'assistant' | 'reasoning', text: string, index: number): number => {
+    const turn = index >= 0 ? turns[index] : undefined
+    if (turn !== undefined) {
+      turns[index] = { ...turn, text: turn.text + text }
+      return index
+    }
+    turns.push({ kind, text })
+    return turns.length - 1
+  }
 
   const close = (index: number, result: string): void => {
     const turn = turns[index]
@@ -1444,6 +1469,8 @@ export function transcriptTurns(
 
   for (const event of events) {
     if (event.type === 'message') {
+      /** A message is a whole thing, not a delta, so whatever run was open has ended. */
+      closeRuns()
       const message = event.message as
         | { role?: string; content?: readonly { type?: string; text?: string }[]; toolCallId?: string }
         | undefined
@@ -1473,11 +1500,20 @@ export function transcriptTurns(
       }
       continue
     }
-    if (event.type !== 'assistant/chunk') continue
+    if (event.type !== 'assistant/chunk') {
+      /** A completion or any other record ends the run of deltas that preceded it. */
+      closeRuns()
+      continue
+    }
     const chunk = event.chunk as { type?: string; text?: string; id?: string; name?: string; arguments?: string } | undefined
     if (chunk === undefined) continue
-    if (chunk.type === 'text-delta' && chunk.text !== undefined) turns.push({ kind: 'assistant', text: chunk.text })
-    else if (chunk.type === 'reasoning-delta' && chunk.text !== undefined) turns.push({ kind: 'reasoning', text: chunk.text })
+    if (chunk.type === 'text-delta' && chunk.text !== undefined) {
+      openAssistant = append('assistant', chunk.text, openAssistant)
+      openReasoning = -1
+    } else if (chunk.type === 'reasoning-delta' && chunk.text !== undefined) {
+      openReasoning = append('reasoning', chunk.text, openReasoning)
+      openAssistant = -1
+    }
     /**
      * A call opens one turn, and keeps its **name apart from its arguments**.
      *
@@ -1496,6 +1532,8 @@ export function transcriptTurns(
       })
       lastOpen = turns.length - 1
       if (chunk.id !== undefined) open.set(chunk.id, lastOpen)
+      /** A call is its own row, so text on either side of it is two runs rather than one. */
+      closeRuns()
     }
   }
   return turns
